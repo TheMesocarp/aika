@@ -14,37 +14,20 @@ pub struct Time {
 }
 
 /// A hierarchical timing wheel for scheduling events in a simulation.
-pub struct Clock {
-    wheels: Vec<VecDeque<Vec<Event>>>,
-    slots: usize,
-    height: usize,
-    epoch: usize,
+pub struct Clock<const SLOTS: usize, const HEIGHT: usize> {
+    wheels: [[Vec<Event>; SLOTS]; HEIGHT],
     pub time: Time,
 }
 
-impl Clock {
-    pub fn new(
-        slots: usize,
-        height: usize,
-        timestep: f64,
-        terminal: Option<f64>,
-    ) -> Result<Self, SimError> {
-        if height < 1 {
+impl<const SLOTS: usize, const HEIGHT: usize> Clock<SLOTS, HEIGHT> {
+    pub fn new(timestep: f64, terminal: Option<f64>) -> Result<Self, SimError> {
+        if HEIGHT < 1 {
             return Err(SimError::NoClock);
         }
-        let mut wheels = Vec::new();
-        for _ in 0..height {
-            let mut wheel = VecDeque::new();
-            for _ in 0..slots {
-                wheel.push_back(Vec::new());
-            }
-            wheels.push(wheel);
-        }
+        let wheels = std::array::from_fn(|_| std::array::from_fn(|_| Vec::new()));
+
         Ok(Clock {
             wheels,
-            slots,
-            height,
-            epoch: 0,
             time: Time {
                 time: 0.0,
                 step: 0,
@@ -61,16 +44,14 @@ impl Clock {
         let time = event.time();
         let delta = time - self.time.time - self.time.timestep;
 
-        for k in 0..self.height {
-            let startidx = ((self.slots).pow(1 + k as u32) - self.slots) / (self.slots - 1);
+        for k in 0..HEIGHT {
+            let startidx = ((SLOTS).pow(1 + k as u32) - SLOTS) / (SLOTS - 1);
             let futurestep = (delta / self.time.timestep) as usize;
             if futurestep >= startidx {
-                if futurestep
-                    >= ((self.slots).pow(1 + self.height as u32) - self.slots) / (self.slots - 1)
-                {
+                if futurestep >= ((SLOTS).pow(1 + HEIGHT as u32) - SLOTS) / (SLOTS - 1) {
                     return Err(event);
                 }
-                let offset = (futurestep - startidx) / self.slots.pow(k as u32);
+                let offset = (futurestep - startidx) / SLOTS.pow(k as u32);
                 self.wheels[k][offset].push(event);
                 return Ok(());
             }
@@ -83,15 +64,15 @@ impl Clock {
         &mut self,
         overflow: &mut BTreeSet<Reverse<Event>>,
     ) -> Result<Vec<Event>, SimError> {
-        let events: Vec<Event> = self.wheels[0].pop_front().unwrap();
+        let row: &mut [Vec<Event>] = &mut self.wheels[0];
+        let events = std::mem::replace(&mut row[0], Vec::new());
+        row.rotate_left(1);
         if !events.is_empty() && events[0].time() < self.time.time {
             return Err(SimError::TimeTravel);
         }
-        self.wheels[0].push_back(Vec::new());
         self.time.time += self.time.timestep;
         self.time.step += 1;
-        if (self.time.time / self.time.timestep) as u64 % self.slots as u64 == 0 {
-            self.epoch += 1;
+        if (self.time.time / self.time.timestep) as u64 % SLOTS as u64 == 0 {
             self.rotate(overflow);
         }
         if events.is_empty() {
@@ -104,20 +85,22 @@ impl Clock {
     pub fn rotate(&mut self, overflow: &mut BTreeSet<Reverse<Event>>) {
         let current_step = self.time.step as u64 + 1;
 
-        for k in 1..self.height {
-            let wheel_period = self.slots.pow(k as u32);
+        for k in 1..HEIGHT {
+            let wheel_period = SLOTS.pow(k as u32);
             if current_step % (wheel_period as u64) == 0 {
-                if self.height == k {
-                    for _ in 0..self.slots.pow(self.height as u32 - 1) {
+                if HEIGHT == k {
+                    for _ in 0..SLOTS.pow(HEIGHT as u32 - 1) {
                         overflow.pop_first().map(|event| self.insert(event.0));
                     }
                     return;
                 }
-                if let Some(higher_events) = self.wheels[k].pop_front() {
-                    for event in higher_events {
-                        self.insert(event).unwrap();
-                    }
-                    self.wheels[k].push_back(Vec::new());
+                let row = &mut self.wheels[k];
+                let higher_events = std::mem::replace(&mut row[0], Vec::new());
+                row.rotate_left(1);
+                for event in higher_events {
+                    self.insert(event).map_err(|event| {
+                        overflow.insert(Reverse(event));
+                    });
                 }
             }
         }

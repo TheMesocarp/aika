@@ -7,11 +7,11 @@ mod mailbox;
 mod message;
 mod world;
 
-pub use agent::{Agent, Loggable};
+pub use agent::Agent;
 pub use clock::{Clock, Time};
 pub use config::Config;
 pub use error::SimError;
 pub use event::{Action, Event};
 pub use mailbox::Mailbox;
 pub use message::Message;
-pub use world::{State, World};
+pub use world::World;

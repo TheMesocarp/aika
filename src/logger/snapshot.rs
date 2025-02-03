@@ -1,12 +1,11 @@
-use crate::worlds::State;
 use std::collections::BTreeMap;
 
 /// A snapshot of the world at a given time.
 #[derive(Clone)]
 pub struct Snapshot {
     pub timestamp: f64,
-    pub shared_state: Option<State>,
-    pub agent_states: BTreeMap<usize, State>,
+    pub shared_state: Option<Vec<u8>>,
+    pub agent_states: BTreeMap<usize, Vec<u8>>,
 }
 
 impl PartialEq for Snapshot {

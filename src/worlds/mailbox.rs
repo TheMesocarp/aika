@@ -5,14 +5,14 @@ use tokio::sync::{
 };
 
 /// A mailbox for agents to send and receive messages. WIP
-pub struct Mailbox<T: Send + Sync + Clone> {
-    tx: Sender<Message<T>>,
-    rx: Receiver<Message<T>>,
-    mailbox: Vec<Message<T>>,
+pub struct Mailbox<'a> {
+    tx: Sender<Message<'a>>,
+    rx: Receiver<Message<'a>>,
+    mailbox: Vec<Message<'a>>,
     pause_rx: watch::Receiver<bool>,
 }
 
-impl<T: Send + Sync + Clone> Mailbox<T> {
+impl<'a> Mailbox<'a> {
     pub fn new(buffer_size: usize, pause_rx: watch::Receiver<bool>) -> Self {
         let (tx, rx) = channel(buffer_size);
         Mailbox {
@@ -33,15 +33,15 @@ impl<T: Send + Sync + Clone> Mailbox<T> {
         }
     }
 
-    pub async fn send(&self, msg: Message<T>) -> Result<(), error::SendError<Message<T>>> {
+    pub async fn send(&self, msg: Message<'a>) -> Result<(), error::SendError<Message<'a>>> {
         self.tx.send(msg).await
     }
 
-    pub async fn receive(&mut self) -> Option<Message<T>> {
+    pub async fn receive(&mut self) -> Option<Message<'a>> {
         self.rx.recv().await
     }
 
-    pub fn peek_messages(&self) -> &[Message<T>] {
+    pub fn peek_messages(&self) -> &[Message<'a>] {
         &self.mailbox
     }
 

@@ -1,4 +1,4 @@
-use crate::worlds::{Event, State};
+use crate::worlds::Event;
 use std::collections::{BTreeMap, BinaryHeap};
 
 mod snapshot;
@@ -23,8 +23,8 @@ impl Logger {
     pub fn log(
         &mut self,
         timestamp: f64,
-        shared_state: Option<State>,
-        agent_states: BTreeMap<usize, State>,
+        shared_state: Option<Vec<u8>>,
+        agent_states: BTreeMap<usize, Vec<u8>>,
         event: Event,
     ) {
         self.snapshots.push(Snapshot {
