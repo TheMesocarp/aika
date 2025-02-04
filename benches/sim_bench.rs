@@ -21,7 +21,7 @@ fn sim_bench(c: &mut Criterion) {
     let terminal = Some(duration_secs as f64);
 
     // minimal config world, no logs, no mail, no live for base processing speed benchmark
-    let config = Config::new(timestep, terminal, 1000, 1000, false, false, false, false);
+    let config = Config::new(timestep, terminal, 1000, 1000, false, false, false);
 
     let id: usize = 0;
 

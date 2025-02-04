@@ -1,6 +1,6 @@
 use crate::worlds::SimError;
 use anyhow::Result;
-use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
+use rayon::iter::{IntoParallelRefMutIterator, ParallelIterator};
 
 use super::worlds::*;
 
@@ -47,7 +47,7 @@ impl<const SLOTS: usize, const HEIGHT: usize> Universe<'static, SLOTS, HEIGHT> {
     pub fn pause_all(&mut self) -> Result<(), Vec<SimError>> {
         let errors: Vec<_> = self
             .worlds
-            .par_iter()
+            .par_iter_mut()
             .filter_map(|world| world.pause().err())
             .collect();
         if errors.is_empty() {
@@ -60,7 +60,7 @@ impl<const SLOTS: usize, const HEIGHT: usize> Universe<'static, SLOTS, HEIGHT> {
     pub fn resume_all(&mut self) -> Result<(), Vec<SimError>> {
         let errors: Vec<_> = self
             .worlds
-            .par_iter()
+            .par_iter_mut()
             .filter_map(|world| world.resume().err())
             .collect();
         if errors.is_empty() {

@@ -1,6 +1,6 @@
 use anyhow::Result;
 use std::cmp::Reverse;
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::BTreeSet;
 
 use super::{Event, SimError};
 
@@ -100,7 +100,7 @@ impl<const SLOTS: usize, const HEIGHT: usize> Clock<SLOTS, HEIGHT> {
                 let higher_events = std::mem::replace(&mut row[self.current_idxs[k]], Vec::new());
                 self.current_idxs[k] = (self.current_idxs[k] + 1) % SLOTS;
                 for event in higher_events {
-                    self.insert(event).map_err(|event| {
+                    let _ = self.insert(event).map_err(|event| {
                         overflow.insert(Reverse(event));
                     });
                 }

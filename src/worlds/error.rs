@@ -9,5 +9,6 @@ pub enum SimError {
     NoEvents,
     NoClock,
     InvalidIndex,
+    NotRealtime,
     TokioError(String),
 }

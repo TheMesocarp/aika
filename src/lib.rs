@@ -1,5 +1,4 @@
 use futures::future::BoxFuture;
-use serde::Serialize;
 use worlds::{Action, Agent, Event, Mailbox, Message};
 
 extern crate tokio;
@@ -71,8 +70,6 @@ impl MessengerAgent {
     }
 }
 
-const MESSAGE: &str = "Hello";
-
 impl Agent for MessengerAgent {
     fn step<'a>(
         &mut self,
@@ -105,7 +102,7 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn test_run() {
-        let config = Config::new(1.0, Some(2000000.0), 100, 100, false, false, false, false);
+        let config = Config::new(1.0, Some(2000000.0), 100, 100, false, false, false);
         let mut world = World::<256, 1>::create(config);
         let agent_test = TestAgent::new(0, "Test".to_string());
         world.spawn(Box::new(agent_test));
@@ -120,8 +117,8 @@ mod tests {
         let terminal = Some(duration_secs as f64);
 
         // minimal config world, no logs, no mail, no live for base processing speed benchmark
-        let config = Config::new(timestep, terminal, 1000, 1000, false, false, false, false);
-        let mut world = World::<256, 1>::create(config);
+        let config = Config::new(timestep, terminal, 10, 10, false, false, false);
+        let mut world = World::<128, 1>::create(config);
 
         let agent = TestAgent::new(0, format!("Test{}", 0));
         world.spawn(Box::new(agent));
@@ -148,7 +145,7 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn test_periphery() {
-        let config = Config::new(1.0, Some(1000.0), 100, 100, false, true, false, false);
+        let config = Config::new(1.0, Some(1000.0), 100, 100, false, true, false);
         let mut world = World::<256, 1>::create(config);
         let agent_test = SingleStepAgent::new(0, "Test".to_string());
         world.spawn(Box::new(agent_test));
