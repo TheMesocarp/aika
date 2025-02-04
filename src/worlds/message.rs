@@ -1,5 +1,6 @@
 use std::cmp::Ordering;
 
+#[derive(Debug, Clone)]
 /// A message that can be sent between agents.
 pub struct Message<'a> {
     pub data: &'a [u8],

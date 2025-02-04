@@ -8,7 +8,7 @@ pub trait Agent: Send {
         &mut self,
         state: &mut Option<&[u8]>,
         time: &f64,
-        mailbox: &mut Mailbox<'a>,
+        mailbox: &mut Option<Mailbox<'a>>,
     ) -> BoxFuture<'a, Event>;
     fn get_state(&self) -> Option<&[u8]>;
 }

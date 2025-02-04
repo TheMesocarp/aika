@@ -23,7 +23,7 @@ impl Agent for TestAgent {
         &mut self,
         _state: &mut Option<&[u8]>,
         time: &f64,
-        _mailbox: &mut Mailbox<'a>,
+        _mailbox: &mut Option<Mailbox<'a>>,
     ) -> BoxFuture<'a, Event> {
         let event = Event::new(*time, self.id, Action::Timeout(1.0));
         Box::pin(async { event })
@@ -49,7 +49,7 @@ impl Agent for SingleStepAgent {
         &mut self,
         _state: &mut Option<&[u8]>,
         time: &f64,
-        _mailbox: &mut Mailbox<'a>,
+        _mailbox: &mut Option<Mailbox<'a>>,
     ) -> BoxFuture<'a, Event> {
         let event = Event::new(*time, self.id, Action::Wait);
         Box::pin(async { event })
@@ -75,16 +75,17 @@ impl Agent for MessengerAgent {
         &mut self,
         _state: &mut Option<&[u8]>,
         time: &f64,
-        mailbox: &mut Mailbox<'a>,
+        mailbox: &mut Option<Mailbox<'a>>,
     ) -> BoxFuture<'a, Event> {
-        let _mailtome = mailbox
+        let mb = mailbox.as_mut().unwrap();
+        let _mailtome = mb
             .peek_messages()
             .iter()
             .filter(|m| m.to == self.id)
             .collect::<Vec<_>>();
 
         let returnmessage = Message::new("Hello".as_bytes(), time + 1.0, self.id, 1);
-        mailbox.send(returnmessage);
+        mb.send(returnmessage);
         let event = Event::new(*time, self.id, Action::Wait);
         Box::pin(async { event })
     }
