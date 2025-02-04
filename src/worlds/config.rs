@@ -8,7 +8,6 @@ pub struct Config {
     pub live: bool,
     pub logs: bool,
     pub mail: bool,
-    pub asyncronous: bool,
 }
 
 impl Config {
@@ -20,7 +19,6 @@ impl Config {
         live: bool,
         logs: bool,
         mail: bool,
-        asyncronous: bool,
     ) -> Self {
         Config {
             timestep,
@@ -30,7 +28,6 @@ impl Config {
             live,
             logs,
             mail,
-            asyncronous,
         }
     }
 }

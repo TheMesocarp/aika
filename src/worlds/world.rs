@@ -1,19 +1,11 @@
-use std::any::Any;
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::io::AsyncBufReadExt;
-use tokio::sync::{
-    mpsc::{channel, Receiver, Sender},
-    watch,
-};
+use tokio::sync::{mpsc::Sender, watch};
 
-use super::{Action, Agent, Clock, Config, Event, Loggable, Mailbox, Message, SimError};
+use super::{Action, Agent, Clock, Config, Event, Mailbox, Message, SimError};
 use crate::logger::Logger;
-
-/// Thread-safe loggable generic state type
-pub type State = Arc<Mutex<Vec<Box<dyn Any + Send + Sync>>>>;
 
 /// Control commands for the real-time simulation
 pub enum ControlCommand {
@@ -25,48 +17,49 @@ pub enum ControlCommand {
 }
 
 /// A world that can contain multiple agents and run a simulation.
-pub struct World<T: Send + Sync + Clone> {
+pub struct World<'a, const SLOTS: usize, const HEIGHT: usize> {
     overflow: BTreeSet<Reverse<Event>>,
-    clock: Clock,
-    _savedmail: BTreeSet<Message<T>>,
-    agents: Vec<Box<dyn Agent<T>>>,
-    mailbox: Mailbox<T>,
-    state: Option<State>,
-    runtype: (bool, bool, bool, bool),
-    runtime: Receiver<Event>,
-    pub sender: Sender<Event>,
-    pub pause_tx: watch::Sender<bool>,
-    pub pause_rx: watch::Receiver<bool>,
+    clock: Clock<SLOTS, HEIGHT>,
+    _savedmail: BTreeSet<Message<'a>>,
+    agents: Vec<Box<dyn Agent>>,
+    mailbox: Option<Mailbox<'a>>,
+    state: Option<&'a [u8]>,
+    runtype: (bool, bool, bool),
+    pub pause: Option<(watch::Sender<bool>, watch::Receiver<bool>)>,
     pub logger: Logger,
 }
 
-unsafe impl<T: Send + Sync + Clone> Send for World<T> {}
-unsafe impl<T: Send + Sync + Clone> Sync for World<T> {}
+unsafe impl<'a, const SLOTS: usize, const HEIGHT: usize> Send for World<'a, SLOTS, HEIGHT> {}
+unsafe impl<'a, const SLOTS: usize, const HEIGHT: usize> Sync for World<'a, SLOTS, HEIGHT> {}
 
-impl<T: Send + Sync + Clone + 'static> World<T> {
+impl<'a, const SLOTS: usize, const HEIGHT: usize> World<'a, SLOTS, HEIGHT> {
     /// Create a new world with the given configuration.
     /// By default, this will include a toggleable CLI for real-time simulation control, a logger for state logging, an asynchronous runtime, and a mailbox for message passing between agents.
     pub fn create(config: Config) -> Self {
-        let (sim_tx, sim_rx) = channel(config.buffer_size);
-        let (pause_tx, pause_rx) = watch::channel(false);
-        let mailbox = Mailbox::new(config.mailbox_size, pause_rx.clone());
+        let pause = if config.live {
+            Some(watch::channel(false))
+        } else {
+            None
+        };
+        let mailbox = if config.mail {
+            Some(Mailbox::new(config.mailbox_size))
+        } else {
+            None
+        };
         World {
             overflow: BTreeSet::new(),
-            clock: Clock::new(256, 1, config.timestep, config.terminal).unwrap(),
+            clock: Clock::<SLOTS, HEIGHT>::new(config.timestep, config.terminal).unwrap(),
             _savedmail: BTreeSet::new(),
             agents: Vec::new(),
             mailbox,
-            runtype: (config.live, config.logs, config.mail, config.asyncronous),
+            runtype: (config.live, config.logs, config.mail),
             state: None,
-            sender: sim_tx,
-            runtime: sim_rx,
-            pause_tx,
-            pause_rx,
+            pause,
             logger: Logger::new(),
         }
     }
     /// Spawn a new agent into the world.
-    pub fn spawn(&mut self, agent: Box<dyn Agent<T>>) -> usize {
+    pub fn spawn(&mut self, agent: Box<dyn Agent>) -> usize {
         self.agents.push(agent);
         self.agents.len() - 1
     }
@@ -118,7 +111,7 @@ impl<T: Send + Sync + Clone + 'static> World<T> {
         });
     }
 
-    fn _log_mail(&mut self, msg: Message<T>) {
+    fn _log_mail(&mut self, msg: Message<'a>) {
         self._savedmail.insert(msg);
     }
 
@@ -129,16 +122,22 @@ impl<T: Send + Sync + Clone + 'static> World<T> {
         }
     }
     /// Pause the real-time simulation.
-    pub fn pause(&self) -> Result<(), SimError> {
-        let pause = self.pause_tx.send(true);
+    pub fn pause(&mut self) -> Result<(), SimError> {
+        if self.pause.is_none() {
+            return Err(SimError::NotRealtime);
+        }
+        let pause = self.pause.as_mut().unwrap().0.send(true);
         if pause.is_err() {
             return Err(SimError::PlaybackFroze);
         }
         Ok(())
     }
     /// Resume the real-time simulation.
-    pub fn resume(&self) -> Result<(), SimError> {
-        let resume = self.pause_tx.send(false);
+    pub fn resume(&mut self) -> Result<(), SimError> {
+        if self.pause.is_none() {
+            return Err(SimError::NotRealtime);
+        }
+        let resume = self.pause.as_mut().unwrap().0.send(false);
         if resume.is_err() {
             return Err(SimError::PlaybackFroze);
         }
@@ -157,7 +156,7 @@ impl<T: Send + Sync + Clone + 'static> World<T> {
         self.clock.time.step
     }
     /// Clone the current state of the simulation.
-    pub fn state(&self) -> Option<State> {
+    pub fn state(&self) -> Option<&'a [u8]> {
         self.state.clone()
     }
 
@@ -198,9 +197,13 @@ impl<T: Send + Sync + Clone + 'static> World<T> {
 
     /// Run the simulation.
     pub async fn run(&mut self) -> Result<(), SimError> {
-        let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::channel(100);
+        let mut g = if self.runtype.0 {
+            Some(tokio::sync::mpsc::channel(100))
+        } else {
+            None
+        };
         if self.runtype.0 {
-            self.spawn_cli(cmd_tx.clone());
+            self.spawn_cli(g.as_mut().unwrap().0.clone());
         }
         loop {
             if self.clock.time.time + self.clock.time.timestep
@@ -209,7 +212,7 @@ impl<T: Send + Sync + Clone + 'static> World<T> {
                 break;
             }
             if self.runtype.0 {
-                while let Ok(cmd) = cmd_rx.try_recv() {
+                while let Ok(cmd) = g.as_mut().unwrap().1.try_recv() {
                     match cmd {
                         ControlCommand::Pause => self.pause()?,
                         ControlCommand::Resume => self.resume()?,
@@ -220,10 +223,10 @@ impl<T: Send + Sync + Clone + 'static> World<T> {
                         }
                     }
                 }
-                if *self.pause_rx.borrow() {
+                if *self.pause.as_mut().unwrap().1.borrow() {
                     tokio::select! {
-                        _ = self.pause_rx.changed() => {},
-                        cmd = cmd_rx.recv() => {
+                        _ = self.pause.as_mut().unwrap().1.changed() => {},
+                        cmd = g.as_mut().unwrap().1.recv() => {
                             if let Some(cmd) = cmd {
                                 match cmd {
                                     ControlCommand::Pause => self.pause()?,
@@ -240,14 +243,9 @@ impl<T: Send + Sync + Clone + 'static> World<T> {
                     continue;
                 }
             }
-            if self.runtype.3 {
-                while let Ok(event) = self.runtime.try_recv() {
-                    self.commit(event);
-                }
-            }
             match self.clock.tick(&mut self.overflow) {
                 Ok(events) => {
-                    // if self.clock.time.step() % 10000 == 0 {
+                    // if self.clock.time.step % 10000 == 0 {
                     //     println!("Processing events {:?}", self.clock.time.time);
                     // }
                     for event in events {
@@ -262,29 +260,32 @@ impl<T: Send + Sync + Clone + 'static> World<T> {
                             break;
                         }
                         if self.runtype.2 {
-                            self.mailbox.collect_messages().await;
+                            self.mailbox.as_mut().unwrap().collect_messages().await;
                         }
                         let agent = &mut self.agents[event.agent];
                         let event = agent
                             .step(&mut self.state, &event.time, &mut self.mailbox)
                             .await;
                         if self.runtype.1 {
-                            let agent_states: BTreeMap<
-                                usize,
-                                Arc<Mutex<Vec<Box<dyn Any + Send + Sync>>>>,
-                            > = self
+                            let agent_states: BTreeMap<usize, Vec<u8>> = self
                                 .agents
                                 .iter()
                                 .enumerate()
                                 .filter_map(|(i, agt)| {
-                                    agt.as_any()
-                                        .downcast_ref::<Box<dyn Loggable<T>>>()
-                                        .map(|loggable| (i, loggable.get_state()))
+                                    if agt.get_state().is_some() {
+                                        Some((i, agt.get_state().unwrap().to_vec()))
+                                    } else {
+                                        None
+                                    }
                                 })
                                 .collect();
                             self.logger.log(
                                 self.now(),
-                                self.state.clone(),
+                                if self.state.is_some() {
+                                    Some(self.state.unwrap().to_vec())
+                                } else {
+                                    None
+                                },
                                 agent_states,
                                 event.clone(),
                             );
@@ -317,7 +318,7 @@ impl<T: Send + Sync + Clone + 'static> World<T> {
                             }
                         }
                         if self.runtype.0 {
-                            while let Ok(cmd) = cmd_rx.try_recv() {
+                            while let Ok(cmd) = g.as_mut().unwrap().1.try_recv() {
                                 match cmd {
                                     ControlCommand::Pause => self.pause()?,
                                     ControlCommand::Resume => self.resume()?,
@@ -332,12 +333,6 @@ impl<T: Send + Sync + Clone + 'static> World<T> {
                     }
                 }
                 Err(SimError::NoEvents) => {
-                    if self.runtype.3 {
-                        if let Some(event) = self.runtime.recv().await {
-                            self.commit(event);
-                            continue;
-                        }
-                    }
                     continue;
                 }
                 Err(_) => {}
