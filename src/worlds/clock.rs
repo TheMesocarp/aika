@@ -16,6 +16,7 @@ pub struct Time {
 /// A hierarchical timing wheel for scheduling events in a simulation.
 pub struct Clock<const SLOTS: usize, const HEIGHT: usize> {
     wheels: [[Vec<Event>; SLOTS]; HEIGHT],
+    current_idxs: [usize; HEIGHT],
     pub time: Time,
 }
 
@@ -25,7 +26,7 @@ impl<const SLOTS: usize, const HEIGHT: usize> Clock<SLOTS, HEIGHT> {
             return Err(SimError::NoClock);
         }
         let wheels = std::array::from_fn(|_| std::array::from_fn(|_| Vec::new()));
-
+        let current = [0 as usize; HEIGHT];
         Ok(Clock {
             wheels,
             time: Time {
@@ -35,6 +36,7 @@ impl<const SLOTS: usize, const HEIGHT: usize> Clock<SLOTS, HEIGHT> {
                 timescale: 1.0,
                 terminal: terminal,
             },
+            current_idxs: current,
         })
     }
 
@@ -51,7 +53,7 @@ impl<const SLOTS: usize, const HEIGHT: usize> Clock<SLOTS, HEIGHT> {
                 if futurestep >= ((SLOTS).pow(1 + HEIGHT as u32) - SLOTS) / (SLOTS - 1) {
                     return Err(event);
                 }
-                let offset = (futurestep - startidx) / SLOTS.pow(k as u32);
+                let offset = (futurestep - startidx) / SLOTS.pow(k as u32) + self.current_idxs[k];
                 self.wheels[k][offset].push(event);
                 return Ok(());
             }
@@ -65,8 +67,8 @@ impl<const SLOTS: usize, const HEIGHT: usize> Clock<SLOTS, HEIGHT> {
         overflow: &mut BTreeSet<Reverse<Event>>,
     ) -> Result<Vec<Event>, SimError> {
         let row: &mut [Vec<Event>] = &mut self.wheels[0];
-        let events = std::mem::replace(&mut row[0], Vec::new());
-        row.rotate_left(1);
+        let events = std::mem::replace(&mut row[self.current_idxs[0]], Vec::new());
+        self.current_idxs[0] = (self.current_idxs[0] + 1) % SLOTS;
         if !events.is_empty() && events[0].time() < self.time.time {
             return Err(SimError::TimeTravel);
         }
@@ -95,8 +97,8 @@ impl<const SLOTS: usize, const HEIGHT: usize> Clock<SLOTS, HEIGHT> {
                     return;
                 }
                 let row = &mut self.wheels[k];
-                let higher_events = std::mem::replace(&mut row[0], Vec::new());
-                row.rotate_left(1);
+                let higher_events = std::mem::replace(&mut row[self.current_idxs[k]], Vec::new());
+                self.current_idxs[k] = (self.current_idxs[k] + 1) % SLOTS;
                 for event in higher_events {
                     self.insert(event).map_err(|event| {
                         overflow.insert(Reverse(event));

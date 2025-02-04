@@ -242,7 +242,7 @@ impl<'a, const SLOTS: usize, const HEIGHT: usize> World<'a, SLOTS, HEIGHT> {
             }
             match self.clock.tick(&mut self.overflow) {
                 Ok(events) => {
-                    // if self.clock.time.step() % 10000 == 0 {
+                    // if self.clock.time.step % 10000 == 0 {
                     //     println!("Processing events {:?}", self.clock.time.time);
                     // }
                     for event in events {
