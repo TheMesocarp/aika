@@ -17,22 +17,22 @@ pub enum ControlCommand {
 }
 
 /// A world that can contain multiple agents and run a simulation.
-pub struct World<'a, const SLOTS: usize, const HEIGHT: usize> {
+pub struct World<const SLOTS: usize, const HEIGHT: usize> {
     overflow: BTreeSet<Reverse<Event>>,
     clock: Clock<SLOTS, HEIGHT>,
-    _savedmail: BTreeSet<Message<'a>>,
+    _savedmail: BTreeSet<Message>,
     pub agents: Vec<Box<dyn Agent>>,
-    mailbox: Option<Mailbox<'a>>,
-    state: Option<&'a [u8]>,
+    mailbox: Option<Mailbox>,
+    state: Option<Vec<u8>>,
     runtype: (bool, bool, bool),
     pub pause: Option<(watch::Sender<bool>, watch::Receiver<bool>)>,
     pub logger: Logger,
 }
 
-unsafe impl<'a, const SLOTS: usize, const HEIGHT: usize> Send for World<'a, SLOTS, HEIGHT> {}
-unsafe impl<'a, const SLOTS: usize, const HEIGHT: usize> Sync for World<'a, SLOTS, HEIGHT> {}
+unsafe impl<const SLOTS: usize, const HEIGHT: usize> Send for World<SLOTS, HEIGHT> {}
+unsafe impl<const SLOTS: usize, const HEIGHT: usize> Sync for World<SLOTS, HEIGHT> {}
 
-impl<'a, const SLOTS: usize, const HEIGHT: usize> World<'a, SLOTS, HEIGHT> {
+impl<const SLOTS: usize, const HEIGHT: usize> World<SLOTS, HEIGHT> {
     /// Create a new world with the given configuration.
     /// By default, this will include a toggleable CLI for real-time simulation control, a logger for state logging, an asynchronous runtime, and a mailbox for message passing between agents.
     pub fn create(config: Config) -> Self {
@@ -111,7 +111,7 @@ impl<'a, const SLOTS: usize, const HEIGHT: usize> World<'a, SLOTS, HEIGHT> {
         });
     }
 
-    fn _log_mail(&mut self, msg: Message<'a>) {
+    fn _log_mail(&mut self, msg: Message) {
         self._savedmail.insert(msg);
     }
 
@@ -156,7 +156,7 @@ impl<'a, const SLOTS: usize, const HEIGHT: usize> World<'a, SLOTS, HEIGHT> {
         self.clock.time.step
     }
     /// Clone the current state of the simulation.
-    pub fn state(&self) -> Option<&'a [u8]> {
+    pub fn state(&self) -> Option<Vec<u8>> {
         self.state.clone()
     }
 
@@ -259,13 +259,8 @@ impl<'a, const SLOTS: usize, const HEIGHT: usize> World<'a, SLOTS, HEIGHT> {
                         if event.time > self.clock.time.terminal.unwrap_or(f64::INFINITY) {
                             break;
                         }
-                        if self.runtype.2 {
-                            self.mailbox.as_mut().unwrap().collect_messages().await;
-                        }
                         let agent = &mut self.agents[event.agent];
-                        let event = agent
-                            .step(&mut self.state, &event.time, &mut self.mailbox)
-                            .await;
+                        let event = agent.step(&mut self.state, &event.time, &mut self.mailbox);
                         if self.runtype.1 {
                             let agent_states: BTreeMap<usize, Vec<u8>> = self
                                 .agents
@@ -281,10 +276,9 @@ impl<'a, const SLOTS: usize, const HEIGHT: usize> World<'a, SLOTS, HEIGHT> {
                                 .collect();
                             self.logger.log(
                                 self.now(),
-                                if self.state.is_some() {
-                                    Some(self.state.unwrap().to_vec())
-                                } else {
-                                    None
+                                match &self.state {
+                                    Some(state) => Some(state.clone()),
+                                    None => None,
                                 },
                                 agent_states,
                                 event.clone(),

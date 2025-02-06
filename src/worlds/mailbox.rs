@@ -1,38 +1,26 @@
 use super::Message;
-use tokio::sync::mpsc::{channel, error, Receiver, Sender};
 
 /// A mailbox for agents to send and receive messages. WIP
-pub struct Mailbox<'a> {
-    tx: Sender<Message<'a>>,
-    rx: Receiver<Message<'a>>,
-    mailbox: Vec<Message<'a>>,
+pub struct Mailbox {
+    messages: Vec<Vec<Message>>,
 }
 
-impl<'a> Mailbox<'a> {
-    pub fn new(buffer_size: usize) -> Self {
-        let (tx, rx) = channel(buffer_size);
+impl Mailbox {
+    pub fn new(agent_count: usize) -> Self {
         Mailbox {
-            tx,
-            rx,
-            mailbox: Vec::new(),
+            messages: Vec::with_capacity(agent_count),
         }
     }
 
-    pub async fn send(&self, msg: Message<'a>) -> Result<(), error::SendError<Message<'a>>> {
-        self.tx.send(msg).await
+    pub fn send(&mut self, msg: Message) {
+        self.messages[msg.to].push(msg);
     }
 
-    pub async fn receive(&mut self) -> Option<Message<'a>> {
-        self.rx.recv().await
+    pub fn receive(&mut self, id: usize) -> Vec<Message> {
+        self.messages[id].drain(..).collect()
     }
 
-    pub fn peek_messages(&self) -> &[Message<'a>] {
-        &self.mailbox
-    }
-
-    pub async fn collect_messages(&mut self) {
-        while let Ok(msg) = self.rx.try_recv() {
-            self.mailbox.push(msg);
-        }
+    pub fn peek_messages(&self, id: usize) -> &[Message] {
+        &self.messages[id]
     }
 }
