@@ -1,13 +1,33 @@
-use aika::{
-    worlds::{Config, World},
-    TestAgent,
-};
+use aika::worlds::{Action, Agent, Config, Event, Mailbox, World};
 use criterion::{criterion_group, criterion_main, Criterion};
 use std::hint::black_box;
 
+struct AdderAgent {
+    id: usize,
+    sum: u64,
+}
+
+impl AdderAgent {
+    pub fn new(id: usize) -> Self {
+        AdderAgent { id, sum: 0 }
+    }
+}
+
+impl Agent for AdderAgent {
+    fn step(&mut self, _: &mut Option<Vec<u8>>, time: &f64, _: &mut Mailbox) -> Event {
+        self.sum += 1;
+
+        Event::new(*time, self.id, Action::Wait)
+    }
+
+    fn get_state(&self) -> Option<&[u8]> {
+        None
+    }
+}
+
 fn run_sim(id: usize, config: Config) {
     let mut world = World::<256, 1>::create(config);
-    let agent = TestAgent::new(id, format!("Test{}", id));
+    let agent = AdderAgent::new(id);
 
     world.spawn(Box::new(agent));
     world.schedule(0.0, id).unwrap();
