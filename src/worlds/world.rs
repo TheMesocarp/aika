@@ -21,7 +21,7 @@ pub struct World<'a, const SLOTS: usize, const HEIGHT: usize> {
     overflow: BTreeSet<Reverse<Event>>,
     clock: Clock<SLOTS, HEIGHT>,
     _savedmail: BTreeSet<Message<'a>>,
-    agents: Vec<Box<dyn Agent>>,
+    pub agents: Vec<Box<dyn Agent>>,
     mailbox: Option<Mailbox<'a>>,
     state: Option<&'a [u8]>,
     runtype: (bool, bool, bool),
