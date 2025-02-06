@@ -25,14 +25,6 @@ impl<const SLOTS: usize, const HEIGHT: usize> Universe<SLOTS, HEIGHT> {
         _logs: bool,
         _mail: bool,
     ) -> Result<Vec<Result<(), SimError>>> {
-        // self.worlds.par_iter_mut()
-        //     .map(|world| tokio::spawn(async move { world.run().await }))
-        //     .map(|res| match res {
-                
-        //     })
-        //     .await;
-
-
         let mut handles = vec![];
         let worlds = std::mem::take(&mut self.worlds);
         for mut world in worlds {
