@@ -22,7 +22,7 @@ pub struct World<'a, const SLOTS: usize, const HEIGHT: usize> {
     clock: Clock<SLOTS, HEIGHT>,
     _savedmail: BTreeSet<Message<'a>>,
     pub agents: Vec<Box<dyn Agent>>,
-    mailbox: Mailbox<'a>,
+    mailbox: Option<Mailbox<'a>>,
     state: Option<&'a [u8]>,
     runtype: (bool, bool, bool),
     pub pause: Option<(watch::Sender<bool>, watch::Receiver<bool>)>,
@@ -41,7 +41,11 @@ impl<'a, const SLOTS: usize, const HEIGHT: usize> World<'a, SLOTS, HEIGHT> {
         } else {
             None
         };
-        let mailbox = Mailbox::new(config.mailbox_size);
+        let mailbox = if config.mail {
+            Some(Mailbox::new(config.mailbox_size))
+        } else {
+            None
+        };
         World {
             overflow: BTreeSet::new(),
             clock: Clock::<SLOTS, HEIGHT>::new(config.timestep, config.terminal).unwrap(),
@@ -193,9 +197,13 @@ impl<'a, const SLOTS: usize, const HEIGHT: usize> World<'a, SLOTS, HEIGHT> {
 
     /// Run the simulation.
     pub async fn run(&mut self) -> Result<(), SimError> {
-        let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::channel(100);
+        let mut g = if self.runtype.0 {
+            Some(tokio::sync::mpsc::channel(100))
+        } else {
+            None
+        };
         if self.runtype.0 {
-            self.spawn_cli(cmd_tx);
+            self.spawn_cli(g.as_mut().unwrap().0.clone());
         }
         loop {
             if self.clock.time.time + self.clock.time.timestep
@@ -204,7 +212,7 @@ impl<'a, const SLOTS: usize, const HEIGHT: usize> World<'a, SLOTS, HEIGHT> {
                 break;
             }
             if self.runtype.0 {
-                while let Ok(cmd) = cmd_rx.try_recv() {
+                while let Ok(cmd) = g.as_mut().unwrap().1.try_recv() {
                     match cmd {
                         ControlCommand::Pause => self.pause()?,
                         ControlCommand::Resume => self.resume()?,
@@ -218,7 +226,7 @@ impl<'a, const SLOTS: usize, const HEIGHT: usize> World<'a, SLOTS, HEIGHT> {
                 if *self.pause.as_mut().unwrap().1.borrow() {
                     tokio::select! {
                         _ = self.pause.as_mut().unwrap().1.changed() => {},
-                        cmd = cmd_rx.recv() => {
+                        cmd = g.as_mut().unwrap().1.recv() => {
                             if let Some(cmd) = cmd {
                                 match cmd {
                                     ControlCommand::Pause => self.pause()?,
@@ -252,7 +260,7 @@ impl<'a, const SLOTS: usize, const HEIGHT: usize> World<'a, SLOTS, HEIGHT> {
                             break;
                         }
                         if self.runtype.2 {
-                            self.mailbox.collect_messages().await;
+                            self.mailbox.as_mut().unwrap().collect_messages().await;
                         }
                         let agent = &mut self.agents[event.agent];
                         let event = agent
@@ -310,7 +318,7 @@ impl<'a, const SLOTS: usize, const HEIGHT: usize> World<'a, SLOTS, HEIGHT> {
                             }
                         }
                         if self.runtype.0 {
-                            while let Ok(cmd) = cmd_rx.try_recv() {
+                            while let Ok(cmd) = g.as_mut().unwrap().1.try_recv() {
                                 match cmd {
                                     ControlCommand::Pause => self.pause()?,
                                     ControlCommand::Resume => self.resume()?,
