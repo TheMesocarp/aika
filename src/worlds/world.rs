@@ -29,10 +29,10 @@ pub struct World<const SLOTS: usize, const HEIGHT: usize> {
     pub logger: Logger,
 }
 
-unsafe impl <const SLOTS: usize, const HEIGHT: usize> Send for World <SLOTS, HEIGHT> {}
-unsafe impl <const SLOTS: usize, const HEIGHT: usize> Sync for World <SLOTS, HEIGHT> {}
+unsafe impl<const SLOTS: usize, const HEIGHT: usize> Send for World<SLOTS, HEIGHT> {}
+unsafe impl<const SLOTS: usize, const HEIGHT: usize> Sync for World<SLOTS, HEIGHT> {}
 
-impl <const SLOTS: usize, const HEIGHT: usize> World<SLOTS, HEIGHT> {
+impl<const SLOTS: usize, const HEIGHT: usize> World<SLOTS, HEIGHT> {
     /// Create a new world with the given configuration.
     /// By default, this will include a toggleable CLI for real-time simulation control, a logger for state logging, an asynchronous runtime, and a mailbox for message passing between agents.
     pub fn create(config: Config) -> Self {
@@ -260,8 +260,7 @@ impl <const SLOTS: usize, const HEIGHT: usize> World<SLOTS, HEIGHT> {
                             break;
                         }
                         let agent = &mut self.agents[event.agent];
-                        let event = agent
-                            .step(&mut self.state, &event.time, &mut self.mailbox);
+                        let event = agent.step(&mut self.state, &event.time, &mut self.mailbox);
                         if self.runtype.1 {
                             let agent_states: BTreeMap<usize, Vec<u8>> = self
                                 .agents

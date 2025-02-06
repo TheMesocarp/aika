@@ -76,12 +76,10 @@ impl Agent for MessengerAgent {
         time: &f64,
         mailbox: &mut Option<Mailbox>,
     ) -> Event {
-        let _messages = mailbox.as_mut()
-            .unwrap()
-            .receive(self.id);
+        let _messages = mailbox.as_mut().unwrap().receive(self.id);
 
         let return_message = Message::new("Hello".into(), *time + 1.0, self.id, 1);
-        
+
         match mailbox {
             Some(mb) => mb.send(return_message),
             None => (),
