@@ -1,6 +1,9 @@
-use aika::{worlds::{Action, Agent, Config, Event}, TestAgent};
-use rand_distr::{Distribution, Normal};
+use aika::{
+    worlds::{Action, Agent, Config, Event},
+    TestAgent,
+};
 use rand::rng;
+use rand_distr::{Distribution, Normal};
 
 pub fn gbm_next_step(current_value: f64, drift: f64, volatility: f64, dt: f64) -> f64 {
     let normal = Normal::new(0.0, 1.0).unwrap();
@@ -25,10 +28,11 @@ impl Agent for MCAgent {
         &mut self,
         state: &mut Option<&[u8]>,
         time: &f64,
-        mailbox: &mut aika::worlds::Mailbox<'a>,
+        mailbox: &mut Option<aika::worlds::Mailbox<'a>>,
     ) -> futures::future::BoxFuture<'a, aika::worlds::Event> {
         let event = Event::new(*time, self.id, Action::Timeout(1.0));
-        self.current_value = gbm_next_step(self.current_value, self.drift, self.volatility, self.dt);
+        self.current_value =
+            gbm_next_step(self.current_value, self.drift, self.volatility, self.dt);
         self.serialized = self.current_value.to_be_bytes();
         Box::pin(async { event })
     }
@@ -39,9 +43,24 @@ impl Agent for MCAgent {
 }
 
 impl MCAgent {
-    pub fn new(id: usize, name: String, drift: f64, volatility: f64, dt: f64, initial_value: f64, ) -> Self {
+    pub fn new(
+        id: usize,
+        name: String,
+        drift: f64,
+        volatility: f64,
+        dt: f64,
+        initial_value: f64,
+    ) -> Self {
         let serialized = initial_value.to_be_bytes();
-        MCAgent { id, name, drift, volatility, dt, current_value: initial_value, serialized }
+        MCAgent {
+            id,
+            name,
+            drift,
+            volatility,
+            dt,
+            current_value: initial_value,
+            serialized,
+        }
     }
 }
 
@@ -62,7 +81,13 @@ async fn main() {
     println!("Benchmark Results:");
     println!("Total time: {:.2?}", elapsed);
     println!("Total events processed: {}", total_steps);
-    println!("Events per second: {:.2}", total_steps as f64 / elapsed.as_secs_f64());
-    println!("Average event processing time: {:.3?} per event", elapsed / total_steps as u32);
+    println!(
+        "Events per second: {:.2}",
+        total_steps as f64 / elapsed.as_secs_f64()
+    );
+    println!(
+        "Average event processing time: {:.3?} per event",
+        elapsed / total_steps as u32
+    );
     println!("logger size: {}", world.logger.get_snapshots().len());
 }
