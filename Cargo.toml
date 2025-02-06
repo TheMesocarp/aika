@@ -3,14 +3,6 @@ name = "aika"
 version = "0.1.0"
 edition = "2021"
 
-[[bin]]
-name = "realtime"
-path = "examples/realtime.rs"
-
-[[bin]]
-name = "montecarlo"
-path = "examples/montecarlo.rs"
-
 [profile.release]
 debug = true
 

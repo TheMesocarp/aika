@@ -1,3 +1,4 @@
+#![allow(dead_code, unused_variables)]
 use aika::{
     worlds::{Action, Agent, Config, Event},
     TestAgent,
