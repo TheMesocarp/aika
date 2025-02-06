@@ -82,8 +82,8 @@ mod tests {
     use super::worlds::*;
     use super::*;
 
-    #[tokio::test(flavor = "current_thread")]
-    async fn test_run() {
+    #[test]
+    fn test_run() {
         let config = Config::new(1.0, Some(2000000.0), 100, 100, false);
         let mut world = World::<256, 1>::create(config);
         let agent_test = TestAgent::new(0, "Test".to_string());
@@ -92,8 +92,8 @@ mod tests {
         assert!(world.run().unwrap() == ());
     }
 
-    #[tokio::test(flavor = "current_thread")]
-    async fn test_baseline_processing_bench() {
+    #[test]
+    fn test_baseline_processing_bench() {
         let duration_secs = 20000000;
         let timestep = 1.0;
         let terminal = Some(duration_secs as f64);
@@ -125,8 +125,8 @@ mod tests {
         );
     }
 
-    #[tokio::test(flavor = "current_thread")]
-    async fn test_periphery() {
+    #[test]
+    fn test_periphery() {
         let config = Config::new(1.0, Some(1000.0), 100, 100, true);
         let mut world = World::<256, 1>::create(config);
         let agent_test = SingleStepAgent::new(0, "Test".to_string());

@@ -31,7 +31,7 @@ unsafe impl<const SLOTS: usize, const HEIGHT: usize> Sync for World<SLOTS, HEIGH
 
 impl<const SLOTS: usize, const HEIGHT: usize> World<SLOTS, HEIGHT> {
     /// Create a new world with the given configuration.
-    /// By default, this will include a toggleable CLI for real-time simulation control, a logger for state logging, an asynchronous runtime, and a mailbox for message passing between agents.
+    /// By default, this will include a logger for state logging and a mailbox for message passing between agents.
     pub fn create(config: Config) -> Self {
         World {
             overflow: BTreeSet::new(),

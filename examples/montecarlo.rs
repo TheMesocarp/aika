@@ -65,8 +65,7 @@ impl MCAgent {
     }
 }
 
-#[tokio::main]
-async fn main() {
+fn main() {
     let ts = 1.0;
     let config = Config::new(ts, Some(19000000.0), 10, 10, true);
     let mut world = aika::worlds::World::<128, 1>::create(config);
