@@ -40,11 +40,7 @@ impl<const SLOTS: usize, const HEIGHT: usize> World<SLOTS, HEIGHT> {
             agents: Vec::new(),
             mailbox: Mailbox::new(config.mailbox_size),
             state: None,
-            logger: if config.logs {
-                Some(Logger::new())
-            } else {
-                None
-            },
+            logger: config.logs.then_some(Logger::new()),
         }
     }
 
