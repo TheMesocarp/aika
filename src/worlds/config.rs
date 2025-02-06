@@ -5,9 +5,7 @@ pub struct Config {
     pub terminal: Option<f64>,
     pub buffer_size: usize,
     pub mailbox_size: usize,
-    pub live: bool,
     pub logs: bool,
-    pub mail: bool,
 }
 
 impl Config {
@@ -16,18 +14,14 @@ impl Config {
         terminal: Option<f64>,
         buffer_size: usize,
         mailbox_size: usize,
-        live: bool,
         logs: bool,
-        mail: bool,
     ) -> Self {
         Config {
             timestep,
             terminal,
             buffer_size,
             mailbox_size,
-            live,
             logs,
-            mail,
         }
     }
 }

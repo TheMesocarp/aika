@@ -3,14 +3,13 @@ use std::time::Instant;
 use aika::worlds::*;
 use aika::TestAgent;
 
-#[tokio::main]
-async fn main() {
+fn main() {
     let duration_secs = 20000000;
     let timestep = 1.0;
     let terminal = Some(duration_secs as f64);
 
     // minimal config world, no logs, no mail, no live for base processing speed benchmark
-    let config = Config::new(timestep, terminal, 10, 10, false, false, false);
+    let config = Config::new(timestep, terminal, 10, 10, false);
     let mut world = World::<128, 1>::create(config);
 
     let agent = TestAgent::new(0, format!("Test{}", 0));
@@ -18,7 +17,7 @@ async fn main() {
     world.schedule(0.0, 0).unwrap();
 
     let start = Instant::now();
-    world.run().await.unwrap();
+    world.run().unwrap();
     let elapsed = start.elapsed();
 
     let total_steps = world.step_counter();
