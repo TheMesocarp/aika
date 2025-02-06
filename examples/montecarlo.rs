@@ -90,5 +90,8 @@ async fn main() {
         "Average event processing time: {:.3?} per event",
         elapsed / total_steps as u32
     );
-    println!("logger size: {}", world.logger.unwrap().get_snapshots().len());
+    println!(
+        "logger size: {}",
+        world.logger.unwrap().get_snapshots().len()
+    );
 }
