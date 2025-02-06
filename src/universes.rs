@@ -5,17 +5,17 @@ use rayon::iter::{IntoParallelRefMutIterator, ParallelIterator};
 use super::worlds::*;
 
 /// A universe is a collection of worlds that can be run in parallel.
-pub struct Universe<'a, const SLOTS: usize, const HEIGHT: usize> {
-    pub worlds: Vec<World<'a, SLOTS, HEIGHT>>,
+pub struct Universe<const SLOTS: usize, const HEIGHT: usize> {
+    pub worlds: Vec<World<SLOTS, HEIGHT>>,
 }
 
-impl<const SLOTS: usize, const HEIGHT: usize> Universe<'static, SLOTS, HEIGHT> {
+impl<const SLOTS: usize, const HEIGHT: usize> Universe<SLOTS, HEIGHT> {
     /// Create a new universe.
     pub fn new() -> Self {
         Universe { worlds: Vec::new() }
     }
     /// Add a world to the universe.
-    pub fn add_world(&mut self, world: World<'static, SLOTS, HEIGHT>) {
+    pub fn add_world(&mut self, world: World<SLOTS, HEIGHT>) {
         self.worlds.push(world);
     }
     /// Run all worlds in the universe in parallel.
@@ -25,6 +25,14 @@ impl<const SLOTS: usize, const HEIGHT: usize> Universe<'static, SLOTS, HEIGHT> {
         _logs: bool,
         _mail: bool,
     ) -> Result<Vec<Result<(), SimError>>> {
+        // self.worlds.par_iter_mut()
+        //     .map(|world| tokio::spawn(async move { world.run().await }))
+        //     .map(|res| match res {
+                
+        //     })
+        //     .await;
+
+
         let mut handles = vec![];
         let worlds = std::mem::take(&mut self.worlds);
         for mut world in worlds {

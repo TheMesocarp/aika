@@ -1,14 +1,13 @@
-use futures::future::BoxFuture;
-
 use super::{Event, Mailbox};
 
 /// An agent that can be run in a simulation.
 pub trait Agent: Send {
-    fn step<'a>(
+    fn step(
         &mut self,
-        state: &mut Option<&[u8]>,
+        state: &mut Option<Vec<u8>>,
         time: &f64,
-        mailbox: &mut Option<Mailbox<'a>>,
-    ) -> BoxFuture<'a, Event>;
+        mailbox: &mut Option<Mailbox>,
+    ) -> Event;
+
     fn get_state(&self) -> Option<&[u8]>;
 }

@@ -26,15 +26,15 @@ struct MCAgent {
 impl Agent for MCAgent {
     fn step<'a>(
         &mut self,
-        state: &mut Option<&[u8]>,
+        state: &mut Option<Vec<u8>>,
         time: &f64,
-        mailbox: &mut Option<aika::worlds::Mailbox<'a>>,
-    ) -> futures::future::BoxFuture<'a, aika::worlds::Event> {
-        let event = Event::new(*time, self.id, Action::Timeout(1.0));
+        mailbox: &mut Option<aika::worlds::Mailbox>,
+    ) -> Event {
         self.current_value =
             gbm_next_step(self.current_value, self.drift, self.volatility, self.dt);
         self.serialized = self.current_value.to_be_bytes();
-        Box::pin(async { event })
+
+        Event::new(*time, self.id, Action::Timeout(1.0))
     }
 
     fn get_state(&self) -> Option<&[u8]> {

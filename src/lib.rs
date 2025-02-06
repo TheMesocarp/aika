@@ -1,4 +1,3 @@
-use futures::future::BoxFuture;
 use worlds::{Action, Agent, Event, Mailbox, Message};
 
 extern crate tokio;
@@ -19,15 +18,15 @@ impl TestAgent {
 }
 
 impl Agent for TestAgent {
-    fn step<'a>(
+    fn step(
         &mut self,
-        _state: &mut Option<&[u8]>,
+        _state: &mut Option<Vec<u8>>,
         time: &f64,
-        _mailbox: &mut Option<Mailbox<'a>>,
-    ) -> BoxFuture<'a, Event> {
-        let event = Event::new(*time, self.id, Action::Timeout(1.0));
-        Box::pin(async { event })
+        _mailbox: &mut Option<Mailbox>,
+    ) -> Event {
+        Event::new(*time, self.id, Action::Timeout(1.0))
     }
+
     fn get_state(&self) -> Option<&[u8]> {
         None
     }
@@ -45,15 +44,15 @@ impl SingleStepAgent {
 }
 
 impl Agent for SingleStepAgent {
-    fn step<'a>(
+    fn step(
         &mut self,
-        _state: &mut Option<&[u8]>,
+        _state: &mut Option<Vec<u8>>,
         time: &f64,
-        _mailbox: &mut Option<Mailbox<'a>>,
-    ) -> BoxFuture<'a, Event> {
-        let event = Event::new(*time, self.id, Action::Wait);
-        Box::pin(async { event })
+        _mailbox: &mut Option<Mailbox>,
+    ) -> Event {
+        Event::new(*time, self.id, Action::Wait)
     }
+
     fn get_state(&self) -> Option<&[u8]> {
         None
     }
@@ -71,24 +70,26 @@ impl MessengerAgent {
 }
 
 impl Agent for MessengerAgent {
-    fn step<'a>(
+    fn step(
         &mut self,
-        _state: &mut Option<&[u8]>,
+        _state: &mut Option<Vec<u8>>,
         time: &f64,
-        mailbox: &mut Option<Mailbox<'a>>,
-    ) -> BoxFuture<'a, Event> {
-        let mb = mailbox.as_mut().unwrap();
-        let _mailtome = mb
-            .peek_messages()
-            .iter()
-            .filter(|m| m.to == self.id)
-            .collect::<Vec<_>>();
+        mailbox: &mut Option<Mailbox>,
+    ) -> Event {
+        let _messages = mailbox.as_mut()
+            .unwrap()
+            .receive(self.id);
 
-        let returnmessage = Message::new("Hello".as_bytes(), time + 1.0, self.id, 1);
-        mb.send(returnmessage);
-        let event = Event::new(*time, self.id, Action::Wait);
-        Box::pin(async { event })
+        let return_message = Message::new("Hello".into(), *time + 1.0, self.id, 1);
+        
+        match mailbox {
+            Some(mb) => mb.send(return_message),
+            None => (),
+        }
+
+        Event::new(*time, self.id, Action::Wait)
     }
+
     fn get_state(&self) -> Option<&[u8]> {
         None
     }
