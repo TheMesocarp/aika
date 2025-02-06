@@ -71,6 +71,7 @@ impl<const SLOTS: usize, const HEIGHT: usize> World<SLOTS, HEIGHT> {
     }
 
     /// Get the current time of the simulation.
+    #[inline(always)]
     pub fn now(&self) -> f64 {
         self.clock.time.time
     }
@@ -143,7 +144,7 @@ impl<const SLOTS: usize, const HEIGHT: usize> World<SLOTS, HEIGHT> {
                             &mut self.mailbox,
                         );
 
-                        self.handle_log(&event);
+                        self.handle_log(event);
 
                         match event.yield_ {
                             Action::Timeout(time) => {
