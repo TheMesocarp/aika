@@ -54,7 +54,7 @@ async fn main() {
     let agent1 = TestAgent::new(1, "Test1".to_string());
     world.spawn(Box::new(agent));
     world.spawn(Box::new(agent1));
-    world.schedule(0.0, 0).unwrap();
+    //world.schedule(0.0, 0).unwrap();
     let start = std::time::Instant::now();
     world.run().await.unwrap();
     let elapsed = start.elapsed();
