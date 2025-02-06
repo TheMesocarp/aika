@@ -178,6 +178,8 @@ impl<const SLOTS: usize, const HEIGHT: usize> World<SLOTS, HEIGHT> {
         Ok(())
     }
 
+    /// Handles logging of events, provided the logger is active.
+    #[inline(always)]
     fn handle_log(&mut self, event: &Event) {
         if let Some(logger) = &mut self.logger {
             let agent_states: BTreeMap<usize, Vec<u8>> = self
