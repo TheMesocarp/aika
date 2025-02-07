@@ -29,7 +29,7 @@ impl Agent for MCAgent {
         &mut self,
         state: &mut Option<Vec<u8>>,
         time: &f64,
-        mailbox: &mut Option<aika::worlds::Mailbox>,
+        mailbox: &mut aika::worlds::Mailbox,
     ) -> Event {
         self.current_value =
             gbm_next_step(self.current_value, self.drift, self.volatility, self.dt);
@@ -65,10 +65,9 @@ impl MCAgent {
     }
 }
 
-#[tokio::main]
-async fn main() {
+fn main() {
     let ts = 1.0;
-    let config = Config::new(ts, Some(19000000.0), 10, 10, false, true, false);
+    let config = Config::new(ts, Some(19000000.0), 10, 10, true);
     let mut world = aika::worlds::World::<128, 1>::create(config);
     let agent = MCAgent::new(0, "Test".to_string(), 0.1, 0.2, ts, 100.0);
     let agent1 = TestAgent::new(1, "Test1".to_string());
@@ -76,7 +75,7 @@ async fn main() {
     world.spawn(Box::new(agent1));
     //world.schedule(0.0, 0).unwrap();
     let start = std::time::Instant::now();
-    world.run().await.unwrap();
+    world.run().unwrap();
     let elapsed = start.elapsed();
     let total_steps = world.step_counter();
     println!("Benchmark Results:");
@@ -90,5 +89,8 @@ async fn main() {
         "Average event processing time: {:.3?} per event",
         elapsed / total_steps as u32
     );
-    println!("logger size: {}", world.logger.get_snapshots().len());
+    println!(
+        "logger size: {}",
+        world.logger.unwrap().get_snapshots().len()
+    );
 }

@@ -18,12 +18,7 @@ impl TestAgent {
 }
 
 impl Agent for TestAgent {
-    fn step(
-        &mut self,
-        _state: &mut Option<Vec<u8>>,
-        time: &f64,
-        _mailbox: &mut Option<Mailbox>,
-    ) -> Event {
+    fn step(&mut self, _state: &mut Option<Vec<u8>>, time: &f64, _mailbox: &mut Mailbox) -> Event {
         Event::new(*time, self.id, Action::Timeout(1.0))
     }
 
@@ -44,12 +39,7 @@ impl SingleStepAgent {
 }
 
 impl Agent for SingleStepAgent {
-    fn step(
-        &mut self,
-        _state: &mut Option<Vec<u8>>,
-        time: &f64,
-        _mailbox: &mut Option<Mailbox>,
-    ) -> Event {
+    fn step(&mut self, _state: &mut Option<Vec<u8>>, time: &f64, _mailbox: &mut Mailbox) -> Event {
         Event::new(*time, self.id, Action::Wait)
     }
 
@@ -70,20 +60,12 @@ impl MessengerAgent {
 }
 
 impl Agent for MessengerAgent {
-    fn step(
-        &mut self,
-        _state: &mut Option<Vec<u8>>,
-        time: &f64,
-        mailbox: &mut Option<Mailbox>,
-    ) -> Event {
-        let _messages = mailbox.as_mut().unwrap().receive(self.id);
+    fn step(&mut self, _state: &mut Option<Vec<u8>>, time: &f64, mailbox: &mut Mailbox) -> Event {
+        let _messages = mailbox.receive(self.id);
 
         let return_message = Message::new("Hello".into(), *time + 1.0, self.id, 1);
 
-        match mailbox {
-            Some(mb) => mb.send(return_message),
-            None => (),
-        }
+        mailbox.send(return_message);
 
         Event::new(*time, self.id, Action::Wait)
     }
@@ -100,24 +82,24 @@ mod tests {
     use super::worlds::*;
     use super::*;
 
-    #[tokio::test(flavor = "current_thread")]
-    async fn test_run() {
-        let config = Config::new(1.0, Some(2000000.0), 100, 100, false, false, false);
+    #[test]
+    fn test_run() {
+        let config = Config::new(1.0, Some(2000000.0), 100, 100, false);
         let mut world = World::<256, 1>::create(config);
         let agent_test = TestAgent::new(0, "Test".to_string());
         world.spawn(Box::new(agent_test));
         world.schedule(0.0, 0).unwrap();
-        assert!(world.run().await.unwrap() == ());
+        assert!(world.run().unwrap() == ());
     }
 
-    #[tokio::test(flavor = "current_thread")]
-    async fn test_baseline_processing_bench() {
+    #[test]
+    fn test_baseline_processing_bench() {
         let duration_secs = 20000000;
         let timestep = 1.0;
         let terminal = Some(duration_secs as f64);
 
         // minimal config world, no logs, no mail, no live for base processing speed benchmark
-        let config = Config::new(timestep, terminal, 10, 10, false, false, false);
+        let config = Config::new(timestep, terminal, 10, 10, false);
         let mut world = World::<128, 1>::create(config);
 
         let agent = TestAgent::new(0, format!("Test{}", 0));
@@ -125,7 +107,7 @@ mod tests {
         world.schedule(0.0, 0).unwrap();
 
         let start = Instant::now();
-        world.run().await.unwrap();
+        world.run().unwrap();
         let elapsed = start.elapsed();
 
         let total_steps = world.step_counter();
@@ -143,9 +125,9 @@ mod tests {
         );
     }
 
-    #[tokio::test(flavor = "current_thread")]
-    async fn test_periphery() {
-        let config = Config::new(1.0, Some(1000.0), 100, 100, false, true, false);
+    #[test]
+    fn test_periphery() {
+        let config = Config::new(1.0, Some(1000.0), 100, 100, true);
         let mut world = World::<256, 1>::create(config);
         let agent_test = SingleStepAgent::new(0, "Test".to_string());
         world.spawn(Box::new(agent_test));
@@ -155,10 +137,12 @@ mod tests {
         assert!(world.now() == 0.0);
         assert!(world.state().is_none());
 
-        world.run().await.unwrap();
+        world.run().unwrap();
 
         assert!(world
             .logger
+            .as_ref()
+            .unwrap()
             .get_snapshots()
             .pop()
             .unwrap()
@@ -167,6 +151,8 @@ mod tests {
         assert!(
             world
                 .logger
+                .as_ref()
+                .unwrap()
                 .get_snapshots()
                 .pop()
                 .unwrap()
@@ -174,7 +160,17 @@ mod tests {
                 .len()
                 == 0
         );
-        assert!(world.logger.get_snapshots().pop().unwrap().timestamp == 1.0);
+        assert!(
+            world
+                .logger
+                .as_ref()
+                .unwrap()
+                .get_snapshots()
+                .pop()
+                .unwrap()
+                .timestamp
+                == 1.0
+        );
 
         assert!(world.now() == 1000.0);
         assert!(world.step_counter() == 1000);
