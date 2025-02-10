@@ -15,7 +15,7 @@ The clock is only rolled when a particular wheel has been emptied, only cascadin
 
 This clock provides synchronicity for agents within a particular `World` struct, meaning that an asynchronous runtime isn't actually necessary, at least for event processing. Currently, this one component is the primary source of the single-threaded performance the simulator is achieving.
 
-Beyond this, the simulator supports a real-time mode, for matching the simulator clock-speed to your system's clock, allowing runtime playback features as commands. There is also a messaging layer using a tokio broadcast channel (for now) to allow agents to communicate between event processing. Lastly at the `World` level, there is a `Logger` that comes with each simulator, that allows the states of agents and the shared simulation state to be logged along with any events and messages ordered by their corresponding timestamp.
+Beyond this, there is also a messaging layer to allow agents to communicate between event processing. Lastly at the `World` level, there is a `Logger` that comes with each simulator, that allows the states of agents and the shared simulation state to be logged along with any events and messages ordered by their corresponding timestamp.
 
 Each of these additional features is toggleable in the `Config`, in order to reduce runtime overhead as much as possible whenever certain features are not needed. They all are preliminary implementations of these features and are likely still due to change significantly, as no serious optimizations have been done to reduce dynamic allocation or copy overheads.
 ## usage
@@ -33,13 +33,13 @@ assert!(world.run().await.unwrap() == ());
 
 ## benchmark
 
-Benchmark tests can be found in the `/benches/` directory, there is currently only one, for event scehduling throughput for a simple monte carlo simulator. 20 million monte carlo events are scheduled and processed during this test with no extraneous agent logic, with results as follows for the two systems tested on:
+Benchmark tests can be found in the `/benches/` directory, there is currently only one, for event scehduling throughput for a simple monte carlo simulator. 30 million monte carlo events are scheduled and processed during this test with no extraneous agent logic, with results as follows for the two systems tested on:
 
 
 | CPU Model | RAM | Low | Average | High | Events/Sec (EPS) |
 |-----------|-----|-----|---------|------|------------|
-| i7-13700F | 32 GB | 1.2724 s | 1.3585 s | 1.4802 s | 14,722,120.0 |
-| Apple M2 | 8 GB  | 1.0859 s | 1.0862 s | 1.0867 s | 18,412,815.3 |
+| i7-13700F | 32 GB | 0.9666 s | 0.9670 s | 0.9674 s | ~31.0e6 |
+| Apple M2 | 8 GB  | 0.8968 s | 0.8974 s | 0.8982 s | ~33.4e6 |
 
 ## contributions
 
