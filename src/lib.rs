@@ -65,7 +65,7 @@ impl Agent for MessengerAgent {
     fn step(&mut self, _state: &mut Option<Vec<u8>>, time: &u64, mailbox: &mut Mailbox) -> Event {
         let _messages = mailbox.receive(self.id);
 
-        let return_message = Message::new("Hello".into(), (*time + 1) as f64, self.id, 1);
+        let return_message = Message::new("Hello".into(), *time, *time + 1, self.id, 1);
 
         mailbox.send(return_message);
 
