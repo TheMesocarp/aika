@@ -18,9 +18,8 @@ use crate::clock::Clock;
 
 /// A world that can contain multiple agents and run a simulation.
 pub struct World<const SLOTS: usize, const HEIGHT: usize> {
-    overflow: BTreeSet<Reverse<Event>>,
-    clock: Clock<Event, SLOTS, HEIGHT>,
-    _savedmail: BTreeSet<Message>,
+    pub overflow: BTreeSet<Reverse<Event>>,
+    pub clock: Clock<Event, SLOTS, HEIGHT>,
     pub agents: Vec<Box<dyn Agent>>,
     mailbox: Mailbox,
     state: Option<Vec<u8>>,
@@ -37,7 +36,6 @@ impl<const SLOTS: usize, const HEIGHT: usize> World<SLOTS, HEIGHT> {
         World {
             overflow: BTreeSet::new(),
             clock: Clock::<Event, SLOTS, HEIGHT>::new(config.timestep, config.terminal).unwrap(),
-            _savedmail: BTreeSet::new(),
             agents: Vec::new(),
             mailbox: Mailbox::new(config.mailbox_size),
             state: None,
@@ -49,10 +47,6 @@ impl<const SLOTS: usize, const HEIGHT: usize> World<SLOTS, HEIGHT> {
     pub fn spawn(&mut self, agent: Box<dyn Agent>) -> usize {
         self.agents.push(agent);
         self.agents.len() - 1
-    }
-
-    fn _log_mail(&mut self, msg: Message) {
-        self._savedmail.insert(msg);
     }
 
     fn commit(&mut self, event: Event) {

@@ -15,8 +15,8 @@ pub struct Time {
 }
 
 pub struct Clock<T: Scheduleable + Ord, const SLOTS: usize, const HEIGHT: usize> {
-    wheels: [[Vec<T>; SLOTS]; HEIGHT],
-    current_idxs: [usize; HEIGHT],
+    pub wheels: [[Vec<T>; SLOTS]; HEIGHT],
+    pub current_idxs: [usize; HEIGHT],
     pub time: Time,
 }
 
@@ -46,11 +46,14 @@ impl<T: Scheduleable + Ord, const SLOTS: usize, const HEIGHT: usize> Clock<T, SL
 
         for k in 0..HEIGHT {
             let startidx = ((SLOTS).pow(1 + k as u32) - SLOTS) / (SLOTS - 1);
+            let endidx = ((SLOTS).pow(2 + k as u32) - SLOTS) / (SLOTS - 1) - 1;
             if deltaidx >= startidx {
                 if deltaidx >= (((SLOTS).pow(1 + HEIGHT as u32) - SLOTS) / (SLOTS - 1)) as usize {
                     return Err(event);
                 }
-                
+                if deltaidx > endidx {
+                    continue;
+                }
                 let offset = (deltaidx - startidx) / (SLOTS.pow(k as u32) + self.current_idxs[k]);
                 self.wheels[k][offset as usize].push(event);
                 return Ok(());

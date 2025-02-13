@@ -95,37 +95,28 @@ mod tests {
     }
 
     #[test]
-    fn test_baseline_processing_bench() {
-        let duration_secs = 2;
+    fn test_clock() {
         let timestep = 1.0;
-        let terminal = Some(duration_secs as f64);
+        let terminal = None;
 
         // minimal config world, no logs, no mail, no live for base processing speed benchmark
         let config = Config::new(timestep, terminal, 10, 10, false);
-        let mut world = World::<128, 1>::create(config);
+        let mut world = World::<128, 4>::create(config);
 
         let agent = TestAgent::new(0, format!("Test{}", 0));
         world.spawn(Box::new(agent));
-        world.schedule(0, 0).unwrap();
+        world.schedule(128, 0).unwrap();
+        world.schedule(256, 0).unwrap();
+        world.schedule(128 * 129, 0).unwrap();
+        world.schedule(128 * 129 * 129, 0).unwrap();
         println!("scheduled");
 
-        let start = Instant::now();
-        world.run().unwrap();
-        let elapsed = start.elapsed();
-
-        let total_steps = world.step_counter();
-
-        println!("Benchmark Results:");
-        println!("Total time: {:.2?}", elapsed);
-        println!("Total events processed: {}", total_steps);
-        println!(
-            "Events per second: {:.2}",
-            total_steps as f64 / elapsed.as_secs_f64()
-        );
-        println!(
-            "Average event processing time: {:.3?} per event",
-            elapsed / total_steps as u32
-        );
+        assert!(world.clock.wheels[1][0].len() == 1);
+        assert!(world.clock.wheels[1][1].len() == 1);
+        assert!(world.clock.wheels[1][2].len() == 0);
+        assert!(world.clock.wheels[2][0].len() == 1);
+        assert!(world.clock.wheels[3][0].len() == 1);
+        assert!(world.clock.wheels[3][1].len() == 0);
     }
 
     #[test]
