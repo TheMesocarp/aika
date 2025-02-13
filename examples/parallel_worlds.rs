@@ -15,7 +15,7 @@ impl AdderAgent {
 }
 
 impl Agent for AdderAgent {
-    fn step(&mut self, _: &mut Option<Vec<u8>>, time: &f64, _: &mut Mailbox) -> Event {
+    fn step(&mut self, _: &mut Option<Vec<u8>>, time: &u64, _: &mut Mailbox) -> Event {
         self.sum += 1;
 
         Event::new(*time, self.id, Action::Wait)
@@ -38,7 +38,7 @@ fn main() {
 
         world.spawn(Box::new(AdderAgent::new(0)));
 
-        world.schedule(0.0, 0).unwrap();
+        world.schedule(0, 0).unwrap();
 
         universe.add_world(world);
     }

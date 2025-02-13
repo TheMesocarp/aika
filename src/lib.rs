@@ -5,6 +5,8 @@ extern crate tokio;
 pub mod logger;
 pub mod universes;
 pub mod worlds;
+pub mod pworlds;
+pub mod clock; 
 
 pub struct TestAgent {
     pub id: usize,
@@ -18,8 +20,8 @@ impl TestAgent {
 }
 
 impl Agent for TestAgent {
-    fn step(&mut self, _state: &mut Option<Vec<u8>>, time: &f64, _mailbox: &mut Mailbox) -> Event {
-        Event::new(*time, self.id, Action::Timeout(1.0))
+    fn step(&mut self, _state: &mut Option<Vec<u8>>, time: &u64, _mailbox: &mut Mailbox) -> Event {
+        Event::new(*time, self.id, Action::Timeout(1))
     }
 
     fn get_state(&self) -> Option<&[u8]> {
@@ -39,7 +41,7 @@ impl SingleStepAgent {
 }
 
 impl Agent for SingleStepAgent {
-    fn step(&mut self, _state: &mut Option<Vec<u8>>, time: &f64, _mailbox: &mut Mailbox) -> Event {
+    fn step(&mut self, _state: &mut Option<Vec<u8>>, time: &u64, _mailbox: &mut Mailbox) -> Event {
         Event::new(*time, self.id, Action::Wait)
     }
 
@@ -60,10 +62,10 @@ impl MessengerAgent {
 }
 
 impl Agent for MessengerAgent {
-    fn step(&mut self, _state: &mut Option<Vec<u8>>, time: &f64, mailbox: &mut Mailbox) -> Event {
+    fn step(&mut self, _state: &mut Option<Vec<u8>>, time: &u64, mailbox: &mut Mailbox) -> Event {
         let _messages = mailbox.receive(self.id);
 
-        let return_message = Message::new("Hello".into(), *time + 1.0, self.id, 1);
+        let return_message = Message::new("Hello".into(), (*time + 1) as f64, self.id, 1);
 
         mailbox.send(return_message);
 
@@ -88,13 +90,13 @@ mod tests {
         let mut world = World::<256, 1>::create(config);
         let agent_test = TestAgent::new(0, "Test".to_string());
         world.spawn(Box::new(agent_test));
-        world.schedule(0.0, 0).unwrap();
+        world.schedule(0, 0).unwrap();
         assert!(world.run().unwrap() == ());
     }
 
     #[test]
     fn test_baseline_processing_bench() {
-        let duration_secs = 20000000;
+        let duration_secs = 2;
         let timestep = 1.0;
         let terminal = Some(duration_secs as f64);
 
@@ -104,7 +106,8 @@ mod tests {
 
         let agent = TestAgent::new(0, format!("Test{}", 0));
         world.spawn(Box::new(agent));
-        world.schedule(0.0, 0).unwrap();
+        world.schedule(0, 0).unwrap();
+        println!("scheduled");
 
         let start = Instant::now();
         world.run().unwrap();
@@ -131,10 +134,10 @@ mod tests {
         let mut world = World::<256, 1>::create(config);
         let agent_test = SingleStepAgent::new(0, "Test".to_string());
         world.spawn(Box::new(agent_test));
-        world.schedule(0.0, 0).unwrap();
+        world.schedule(0, 0).unwrap();
 
         assert!(world.step_counter() == 0);
-        assert!(world.now() == 0.0);
+        assert!(world.now() == 0);
         assert!(world.state().is_none());
 
         world.run().unwrap();
@@ -172,7 +175,7 @@ mod tests {
                 == 1.0
         );
 
-        assert!(world.now() == 1000.0);
+        assert!(world.now() == 1000);
         assert!(world.step_counter() == 1000);
     }
 

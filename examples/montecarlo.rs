@@ -28,14 +28,14 @@ impl Agent for MCAgent {
     fn step<'a>(
         &mut self,
         state: &mut Option<Vec<u8>>,
-        time: &f64,
+        time: &u64,
         mailbox: &mut aika::worlds::Mailbox,
     ) -> Event {
         self.current_value =
             gbm_next_step(self.current_value, self.drift, self.volatility, self.dt);
         self.serialized = self.current_value.to_be_bytes();
 
-        Event::new(*time, self.id, Action::Timeout(1.0))
+        Event::new(*time, self.id, Action::Timeout(1))
     }
 
     fn get_state(&self) -> Option<&[u8]> {

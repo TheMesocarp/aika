@@ -1,8 +1,9 @@
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::{Action, Agent, Clock, Config, Event, Mailbox, Message, SimError};
+use super::{Action, Agent, Config, Event, Mailbox, Message, SimError};
 use crate::logger::Logger;
+use crate::clock::Clock;
 
 /// Control commands for the real-time simulation
 ///
@@ -18,7 +19,7 @@ use crate::logger::Logger;
 /// A world that can contain multiple agents and run a simulation.
 pub struct World<const SLOTS: usize, const HEIGHT: usize> {
     overflow: BTreeSet<Reverse<Event>>,
-    clock: Clock<SLOTS, HEIGHT>,
+    clock: Clock<Event, SLOTS, HEIGHT>,
     _savedmail: BTreeSet<Message>,
     pub agents: Vec<Box<dyn Agent>>,
     mailbox: Mailbox,
@@ -35,7 +36,7 @@ impl<const SLOTS: usize, const HEIGHT: usize> World<SLOTS, HEIGHT> {
     pub fn create(config: Config) -> Self {
         World {
             overflow: BTreeSet::new(),
-            clock: Clock::<SLOTS, HEIGHT>::new(config.timestep, config.terminal).unwrap(),
+            clock: Clock::<Event, SLOTS, HEIGHT>::new(config.timestep, config.terminal).unwrap(),
             _savedmail: BTreeSet::new(),
             agents: Vec::new(),
             mailbox: Mailbox::new(config.mailbox_size),
@@ -68,12 +69,12 @@ impl<const SLOTS: usize, const HEIGHT: usize> World<SLOTS, HEIGHT> {
 
     /// Get the current time of the simulation.
     #[inline(always)]
-    pub fn now(&self) -> f64 {
-        self.clock.time.time
+    pub fn now(&self) -> u64 {
+        self.clock.time.step
     }
 
     /// Get the current step of the simulation.
-    pub fn step_counter(&self) -> usize {
+    pub fn step_counter(&self) -> u64 {
         self.clock.time.step
     }
 
@@ -107,10 +108,10 @@ impl<const SLOTS: usize, const HEIGHT: usize> World<SLOTS, HEIGHT> {
     // }
 
     /// Schedule an event for an agent at a given time.
-    pub fn schedule(&mut self, time: f64, agent: usize) -> Result<(), SimError> {
+    pub fn schedule(&mut self, time: u64, agent: usize) -> Result<(), SimError> {
         if time < self.now() {
             return Err(SimError::TimeTravel);
-        } else if time > self.clock.time.terminal.unwrap_or(f64::INFINITY) {
+        } else if time as f64 * self.clock.time.timestep > self.clock.time.terminal.unwrap_or(f64::INFINITY) {
             return Err(SimError::PastTerminal);
         }
 
@@ -121,7 +122,7 @@ impl<const SLOTS: usize, const HEIGHT: usize> World<SLOTS, HEIGHT> {
     /// Run the simulation.
     pub fn run(&mut self) -> Result<(), SimError> {
         loop {
-            if self.now() + self.clock.time.timestep
+            if (self.now() + 1) as f64 * self.clock.time.timestep
                 > self.clock.time.terminal.unwrap_or(f64::INFINITY)
             {
                 break;
@@ -130,7 +131,7 @@ impl<const SLOTS: usize, const HEIGHT: usize> World<SLOTS, HEIGHT> {
             match self.clock.tick(&mut self.overflow) {
                 Ok(events) => {
                     for event in events {
-                        if event.time > self.clock.time.terminal.unwrap_or(f64::INFINITY) {
+                        if event.time as f64 * self.clock.time.timestep > self.clock.time.terminal.unwrap_or(f64::INFINITY) {
                             break;
                         }
 
@@ -144,7 +145,7 @@ impl<const SLOTS: usize, const HEIGHT: usize> World<SLOTS, HEIGHT> {
 
                         match event.yield_ {
                             Action::Timeout(time) => {
-                                if self.now() + time
+                                if (self.now() + time) as f64 * self.clock.time.timestep
                                     > self.clock.time.terminal.unwrap_or(f64::INFINITY)
                                 {
                                     continue;

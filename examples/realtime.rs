@@ -14,7 +14,7 @@ fn main() {
 
     let agent = TestAgent::new(0, format!("Test{}", 0));
     world.spawn(Box::new(agent));
-    world.schedule(0.0, 0).unwrap();
+    world.schedule(0, 0).unwrap();
 
     let start = Instant::now();
     world.run().unwrap();
