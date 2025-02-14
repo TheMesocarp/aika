@@ -108,8 +108,8 @@ impl<const SLOTS: usize, const HEIGHT: usize> World<SLOTS, HEIGHT> {
         } else if time as f64 * self.clock.time.timestep > self.clock.time.terminal.unwrap_or(f64::INFINITY) {
             return Err(SimError::PastTerminal);
         }
-
-        self.commit(Event::new(time, agent, Action::Wait));
+        let now = self.now();
+        self.commit(Event::new(now, time, agent, Action::Wait));
         Ok(())
     }
 
@@ -145,17 +145,17 @@ impl<const SLOTS: usize, const HEIGHT: usize> World<SLOTS, HEIGHT> {
                                     continue;
                                 }
 
-                                self.commit(Event::new(
+                                self.commit(Event::new(self.now(),
                                     self.now() + time,
                                     event.agent,
                                     Action::Wait,
                                 ));
                             }
                             Action::Schedule(time) => {
-                                self.commit(Event::new(time, event.agent, Action::Wait));
+                                self.commit(Event::new(self.now(), time, event.agent, Action::Wait));
                             }
                             Action::Trigger { time, idx } => {
-                                self.commit(Event::new(time, idx, Action::Wait));
+                                self.commit(Event::new(self.now(), time, idx, Action::Wait));
                             }
                             Action::Wait => {}
                             Action::Break => {

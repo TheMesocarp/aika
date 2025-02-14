@@ -5,7 +5,7 @@ extern crate tokio;
 pub mod logger;
 pub mod universes;
 pub mod worlds;
-pub mod pworlds;
+pub mod timewarp;
 pub mod clock; 
 
 pub struct TestAgent {
@@ -21,7 +21,7 @@ impl TestAgent {
 
 impl Agent for TestAgent {
     fn step(&mut self, _state: &mut Option<Vec<u8>>, time: &u64, _mailbox: &mut Mailbox) -> Event {
-        Event::new(*time, self.id, Action::Timeout(1))
+        Event::new(*time, *time+1, self.id, Action::Timeout(1))
     }
 
     fn get_state(&self) -> Option<&[u8]> {
@@ -42,7 +42,7 @@ impl SingleStepAgent {
 
 impl Agent for SingleStepAgent {
     fn step(&mut self, _state: &mut Option<Vec<u8>>, time: &u64, _mailbox: &mut Mailbox) -> Event {
-        Event::new(*time, self.id, Action::Wait)
+        Event::new(*time, *time, self.id, Action::Wait)
     }
 
     fn get_state(&self) -> Option<&[u8]> {
@@ -69,7 +69,7 @@ impl Agent for MessengerAgent {
 
         mailbox.send(return_message);
 
-        Event::new(*time, self.id, Action::Wait)
+        Event::new(*time, *time, self.id, Action::Wait)
     }
 
     fn get_state(&self) -> Option<&[u8]> {
@@ -120,7 +120,7 @@ mod tests {
     }
 
     #[test]
-    fn test_periphery() {
+    fn test_logger() {
         let config = Config::new(1.0, Some(1000.0), 100, 100, true);
         let mut world = World::<256, 1>::create(config);
         let agent_test = SingleStepAgent::new(0, "Test".to_string());

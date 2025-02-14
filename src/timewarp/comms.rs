@@ -3,11 +3,26 @@ use std::sync::{atomic::{AtomicBool, AtomicUsize, Ordering}, Arc};
 
 use crate::worlds::{Message, SimError};
 
+use super::antimessage::AntiMessage;
+
+pub enum Transferable {
+    Message(Message),
+    AntiMessage(AntiMessage),
+}
+
+impl Transferable {
+    pub fn to(&self) -> usize {
+        match self {
+            Transferable::Message(m) => m.to,
+            Transferable::AntiMessage(am) => am.to,
+        }
+    }
+}
+
 pub struct CircularBuffer<const SIZE: usize> {
-    ptr: *mut [Option<Message>; SIZE],
-    write_idx: Arc<AtomicUsize>,
-    read_idx: Arc<AtomicUsize>,
-    ready: Vec<Arc<AtomicBool>>,
+    pub ptr: *mut [Option<Transferable>; SIZE],
+    pub write_idx: Arc<AtomicUsize>,
+    pub read_idx: Arc<AtomicUsize>,
 }
 
 
@@ -26,8 +41,8 @@ impl<const LPS: usize, const SIZE: usize> Comms<LPS, SIZE> {
         }
     }
 
-    pub fn write(&mut self, msg: Message) -> Result<(), SimError> {
-        let target = msg.to;
+    pub fn write(&mut self, msg: Transferable) -> Result<(), SimError> {
+        let target = msg.to();
         let cbuff = &mut self.wheel[1][target];
         let w = cbuff.write_idx.load(Ordering::Acquire);
         let r = cbuff.read_idx.load(Ordering::Acquire);
@@ -43,7 +58,7 @@ impl<const LPS: usize, const SIZE: usize> Comms<LPS, SIZE> {
         Ok(())
     } 
 
-    pub fn read(&mut self, target: usize) -> Result<Message, SimError> {
+    pub fn read(&mut self, target: usize) -> Result<Transferable, SimError> {
         let cbuff = &mut self.wheel[0][target];
         let w = cbuff.write_idx.load(Ordering::Acquire);
         let r = cbuff.read_idx.load(Ordering::Acquire);

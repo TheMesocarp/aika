@@ -4,6 +4,7 @@ use crate::worlds::SimError;
 
 pub trait Scheduleable {
     fn time(&self) -> u64;
+    fn commit_time(&self) -> u64;
 }
 
 pub struct Time {
@@ -106,5 +107,11 @@ impl<T: Scheduleable + Ord, const SLOTS: usize, const HEIGHT: usize> Clock<T, SL
                 }
             }
         }
+    }
+
+    pub fn rollback(&mut self, time: u64) {
+        let delta = self.time.step - time;
+        let modulo = delta % SLOTS as u64;
+        todo!()
     }
 }

@@ -50,4 +50,7 @@ impl Scheduleable for AntiMessage {
     fn time(&self) -> u64 {
         self.received
     }
+    fn commit_time(&self) -> u64 {
+        self.sent
+    }
 }

@@ -16,13 +16,15 @@ pub enum Action {
 #[derive(Clone, Debug)]
 pub struct Event {
     pub time: u64,
+    pub commit_time: u64,
     pub agent: usize,
     pub yield_: Action,
 }
 
 impl Event {
-    pub fn new(time: u64, agent: usize, yield_: Action) -> Self {
+    pub fn new(commit_time: u64, time: u64, agent: usize, yield_: Action) -> Self {
         Self {
+            commit_time,
             time,
             agent,
             yield_,
@@ -55,5 +57,8 @@ impl Ord for Event {
 impl Scheduleable for Event {
     fn time(&self) -> u64 {
         self.time
+    }
+    fn commit_time(&self) -> u64 {
+        self.commit_time
     }
 }

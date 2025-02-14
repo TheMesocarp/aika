@@ -35,7 +35,7 @@ impl Agent for MCAgent {
             gbm_next_step(self.current_value, self.drift, self.volatility, self.dt);
         self.serialized = self.current_value.to_be_bytes();
 
-        Event::new(*time, self.id, Action::Timeout(1))
+        Event::new(*time, *time, self.id, Action::Timeout(1))
     }
 
     fn get_state(&self) -> Option<&[u8]> {
