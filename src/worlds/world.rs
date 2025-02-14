@@ -126,7 +126,7 @@ impl<const SLOTS: usize, const HEIGHT: usize> World<SLOTS, HEIGHT> {
                 break;
             }
 
-            match self.clock.tick(&mut self.overflow) {
+            match self.clock.tick() {
                 Ok(events) => {
                     for event in events {
                         if event.time as f64 * self.clock.time.timestep > self.clock.time.terminal.unwrap_or(f64::INFINITY) {
@@ -177,6 +177,7 @@ impl<const SLOTS: usize, const HEIGHT: usize> World<SLOTS, HEIGHT> {
                 }
                 Err(_) => {}
             }
+            self.clock.increment(&mut self.overflow);
         }
         Ok(())
     }

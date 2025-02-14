@@ -55,7 +55,7 @@ impl<T: Scheduleable + Ord, const SLOTS: usize, const HEIGHT: usize> Clock<T, SL
                 if deltaidx > endidx {
                     continue;
                 }
-                let offset = (deltaidx - startidx) / (SLOTS.pow(k as u32) + self.current_idxs[k]);
+                let offset = ((deltaidx - startidx) / (SLOTS.pow(k as u32)) + self.current_idxs[k]) % SLOTS;
                 self.wheels[k][offset as usize].push(event);
                 return Ok(());
             }
@@ -63,34 +63,31 @@ impl<T: Scheduleable + Ord, const SLOTS: usize, const HEIGHT: usize> Clock<T, SL
         Err(event)
     }
 
-    pub fn tick(
-        &mut self,
-        overflow: &mut BTreeSet<Reverse<T>>,
-    ) -> Result<Vec<T>, SimError> {
+    pub fn tick(&mut self) -> Result<Vec<T>, SimError> {
         let row: &mut [Vec<T>] = &mut self.wheels[0];
         let events = std::mem::replace(&mut row[self.current_idxs[0]], Vec::new());
-        self.current_idxs[0] = (self.current_idxs[0] + 1) % SLOTS;
         if !events.is_empty() && events[0].time() < self.time.step {
+            println!("Time travel detected");
             return Err(SimError::TimeTravel);
-        }
-        self.time.time += self.time.timestep;
-        self.time.step += 1;
-        if (self.time.time / self.time.timestep) as u64 % SLOTS as u64 == 0 {
-            self.rotate(overflow);
         }
         if events.is_empty() {
             return Err(SimError::NoEvents);
         }
         Ok(events)
     }
-
+    pub fn increment(&mut self, overflow: &mut BTreeSet<Reverse<T>>) {
+        self.current_idxs[0] = (self.current_idxs[0] + 1) % SLOTS;
+        self.time.time += self.time.timestep;
+        self.time.step += 1;
+        if self.time.step % SLOTS as u64 == 0 {
+            self.rotate(overflow);
+        }
+    }
     /// Rotate the timing wheel, moving events from the k-th wheel to fill the (k-1)-th wheel.
     pub fn rotate(&mut self, overflow: &mut BTreeSet<Reverse<T>>) {
-        let current_step = self.time.step as u64 + 1;
-
         for k in 1..HEIGHT {
             let wheel_period = SLOTS.pow(k as u32);
-            if current_step % (wheel_period as u64) == 0 {
+            if self.time.step % (wheel_period as u64) == 0 {
                 if HEIGHT == k {
                     for _ in 0..SLOTS.pow(HEIGHT as u32 - 1) {
                         overflow.pop_first().map(|event| self.insert(event.0));

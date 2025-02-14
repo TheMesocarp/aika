@@ -68,7 +68,7 @@ impl MCAgent {
 
 fn main() {
     let ts = 1.0;
-    let config = Config::new(ts, Some(19000000.0), 10, 10, true);
+    let config = Config::new(ts, Some(2000000.0), 10, 10, true);
     let mut world = aika::worlds::World::<128, 1>::create(config);
     let agent = MCAgent::new(0, "Test".to_string(), 0.1, 0.2, ts, 100.0);
     world.spawn(Box::new(agent));

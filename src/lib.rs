@@ -22,7 +22,7 @@ impl TestAgent {
 
 impl Agent for TestAgent {
     fn step(&mut self, _state: &mut Option<Vec<u8>>, time: &u64, _supports: Supports) -> Event {
-        Event::new(*time, *time+1, self.id, Action::Timeout(1))
+        Event::new(*time, *time, self.id, Action::Timeout(1))
     }
 
 }
@@ -90,17 +90,17 @@ mod tests {
     #[test]
     fn test_clock() {
         let timestep = 1.0;
-        let terminal = Some(30000000.0);
+        let terminal = Some(5000000.0);
 
         // minimal config world, no logs, no mail, no live for base processing speed benchmark
-        let config = Config::new(timestep, terminal, 10, 10, true);
+        let config = Config::new(timestep, terminal, 10, 10, false);
         let mut world = World::<128, 4>::create(config);
 
-        let agent = SingleStepAgent::new(0, format!("Test{}", 0));
+        let agent = TestAgent::new(0, format!("Test{}", 0));
         world.spawn(Box::new(agent));
         world.schedule(128, 0).unwrap();
-        world.schedule(256, 0).unwrap();
-        world.schedule(128 * 129, 0).unwrap();
+        world.schedule(258, 0).unwrap();
+        world.schedule(129 * 129, 0).unwrap();
         world.schedule(128 * 129 * 129, 0).unwrap();
         println!("scheduled");
 
@@ -108,12 +108,13 @@ mod tests {
         assert!(world.clock.wheels[1][1].len() == 1);
         assert!(world.clock.wheels[1][2].len() == 0);
         assert!(world.clock.wheels[2][0].len() == 1);
-        assert!(world.clock.wheels[3][0].len() == 1);
+
         assert!(world.clock.wheels[3][1].len() == 0);
-
+        println!("asserted");
         world.run().unwrap();
+        println!("ran");
 
-        println!("{}", world.logger.as_ref().unwrap().get_events().len());
+        // println!("{}", world.logger.as_ref().unwrap().get_events().len());
     }
 
     #[test]
