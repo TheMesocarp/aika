@@ -1,4 +1,4 @@
-use aika::worlds::{Action, Agent, Config, Event, Mailbox, World};
+use aika::{logger::History, worlds::{Action, Agent, Config, Event, Mailbox, Supports, World}};
 use criterion::{criterion_group, criterion_main, Criterion};
 use std::hint::black_box;
 
@@ -14,14 +14,10 @@ impl AdderAgent {
 }
 
 impl Agent for AdderAgent {
-    fn step(&mut self, _: &mut Option<Vec<u8>>, time: &u64, _: &mut Mailbox) -> Event {
+    fn step(&mut self, _: &mut Option<Vec<u8>>, time: &u64, _: Supports) -> Event {
         self.sum += 1;
 
         Event::new(*time, *time, self.id, Action::Wait)
-    }
-
-    fn get_state(&self) -> Option<&[u8]> {
-        None
     }
 }
 

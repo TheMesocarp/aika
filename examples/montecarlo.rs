@@ -1,7 +1,6 @@
 #![allow(dead_code, unused_variables)]
 use aika::{
-    worlds::{Action, Agent, Config, Event},
-    TestAgent,
+    logger::{self, History}, worlds::{Action, Agent, Config, Event, Supports}, TestAgent
 };
 use rand::rng;
 use rand_distr::{Distribution, Normal};
@@ -28,18 +27,20 @@ impl Agent for MCAgent {
     fn step<'a>(
         &mut self,
         state: &mut Option<Vec<u8>>,
-        time: &u64,
-        mailbox: &mut aika::worlds::Mailbox,
+        step: &u64,
+        supports: Supports<'a>,
     ) -> Event {
-        self.current_value =
+        let history = match supports {
+            Supports::Both(_, logger) => logger,
+            _ => panic!("Expected logger"),
+        };
+        let new =
             gbm_next_step(self.current_value, self.drift, self.volatility, self.dt);
-        self.serialized = self.current_value.to_be_bytes();
-
-        Event::new(*time, *time, self.id, Action::Timeout(1))
-    }
-
-    fn get_state(&self) -> Option<&[u8]> {
-        Some(&self.serialized)
+        let new = new.to_be_bytes().into_iter().collect::<Vec<_>>();
+        let mut g = Some(self.current_value.to_be_bytes().into_iter().collect::<Vec<_>>());
+        history.update(Some(new), &mut g, step);
+        self.current_value = f64::from_be_bytes(g.unwrap().as_slice().try_into().unwrap());
+        Event::new(*step, *step+1, self.id, Action::Timeout(1))
     }
 }
 
@@ -70,10 +71,8 @@ fn main() {
     let config = Config::new(ts, Some(19000000.0), 10, 10, true);
     let mut world = aika::worlds::World::<128, 1>::create(config);
     let agent = MCAgent::new(0, "Test".to_string(), 0.1, 0.2, ts, 100.0);
-    let agent1 = TestAgent::new(1, "Test1".to_string());
     world.spawn(Box::new(agent));
-    world.spawn(Box::new(agent1));
-    //world.schedule(0.0, 0).unwrap();
+    world.schedule(0, 0).unwrap();
     let start = std::time::Instant::now();
     world.run().unwrap();
     let elapsed = start.elapsed();
@@ -91,6 +90,6 @@ fn main() {
     );
     println!(
         "logger size: {}",
-        world.logger.unwrap().get_snapshots().len()
+        world.logger.unwrap().astates[0].0.len()
     );
 }

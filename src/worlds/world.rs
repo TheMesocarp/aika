@@ -1,8 +1,9 @@
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet};
 
+use super::agent::Supports;
 use super::{Action, Agent, Config, Event, Mailbox, Message, SimError};
-use crate::logger::Logger;
+use crate::logger::{History, Logger};
 use crate::clock::Clock;
 
 /// Control commands for the real-time simulation
@@ -46,6 +47,9 @@ impl<const SLOTS: usize, const HEIGHT: usize> World<SLOTS, HEIGHT> {
     /// Spawn a new agent into the world.
     pub fn spawn(&mut self, agent: Box<dyn Agent>) -> usize {
         self.agents.push(agent);
+        if self.logger.is_some() {
+            self.logger.as_mut().unwrap().astates.push(History(Vec::new()));   
+        }
         self.agents.len() - 1
     }
 
@@ -128,14 +132,18 @@ impl<const SLOTS: usize, const HEIGHT: usize> World<SLOTS, HEIGHT> {
                         if event.time as f64 * self.clock.time.timestep > self.clock.time.terminal.unwrap_or(f64::INFINITY) {
                             break;
                         }
-
+                        let supports = if self.logger.is_some() {
+                            Supports::Both(&mut self.mailbox, self.logger.as_mut().unwrap().astates.get_mut(event.agent).unwrap())
+                        } else {
+                            Supports::Mailbox(&mut self.mailbox)
+                        };
                         let event = &mut self.agents[event.agent].step(
                             &mut self.state,
                             &event.time,
-                            &mut self.mailbox,
+                            supports,
                         );
 
-                        self.handle_log(event);
+                        self.handle_log();
 
                         match event.yield_ {
                             Action::Timeout(time) => {
@@ -162,6 +170,9 @@ impl<const SLOTS: usize, const HEIGHT: usize> World<SLOTS, HEIGHT> {
                                 break;
                             }
                         }
+                        if self.logger.is_some() {
+                            self.logger.as_mut().unwrap().log_event(event.clone());
+                        }
                     }
                 }
                 Err(_) => {}
@@ -172,25 +183,14 @@ impl<const SLOTS: usize, const HEIGHT: usize> World<SLOTS, HEIGHT> {
 
     /// Handles logging of events, provided the logger is active.
     #[inline(always)]
-    fn handle_log(&mut self, event: &Event) {
+    fn handle_log(&mut self) {
         if let Some(logger) = &mut self.logger {
-            let agent_states: BTreeMap<usize, Vec<u8>> = self
-                .agents
-                .iter()
-                .filter_map(|agent| agent.get_state())
-                .map(|state| state.to_vec())
-                .enumerate()
-                .collect();
-
-            logger.log(
-                self.clock.time.time,
-                match &self.state {
-                    Some(state) => Some(state.clone()),
-                    None => None,
-                },
-                agent_states,
-                event.clone(),
-            );
+            if self.state.is_some() {
+                logger.log_global(
+                    self.state.clone().unwrap(),
+                    self.clock.time.step,
+                );
+            }
         }
     }
 }

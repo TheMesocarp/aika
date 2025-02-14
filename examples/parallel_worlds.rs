@@ -15,14 +15,10 @@ impl AdderAgent {
 }
 
 impl Agent for AdderAgent {
-    fn step(&mut self, _: &mut Option<Vec<u8>>, time: &u64, _: &mut Mailbox) -> Event {
+    fn step(&mut self, _: &mut Option<Vec<u8>>, time: &u64, _: Supports) -> Event {
         self.sum += 1;
 
         Event::new(*time, *time, self.id, Action::Wait)
-    }
-
-    fn get_state(&self) -> Option<&[u8]> {
-        None
     }
 }
 

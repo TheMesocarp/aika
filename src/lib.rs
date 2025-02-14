@@ -1,4 +1,5 @@
-use worlds::{Action, Agent, Event, Mailbox, Message};
+use logger::History;
+use worlds::{Action, Supports, Agent, Event, Mailbox, Message};
 
 extern crate tokio;
 
@@ -20,13 +21,10 @@ impl TestAgent {
 }
 
 impl Agent for TestAgent {
-    fn step(&mut self, _state: &mut Option<Vec<u8>>, time: &u64, _mailbox: &mut Mailbox) -> Event {
+    fn step(&mut self, _state: &mut Option<Vec<u8>>, time: &u64, _supports: Supports) -> Event {
         Event::new(*time, *time+1, self.id, Action::Timeout(1))
     }
 
-    fn get_state(&self) -> Option<&[u8]> {
-        None
-    }
 }
 
 pub struct SingleStepAgent {
@@ -41,12 +39,8 @@ impl SingleStepAgent {
 }
 
 impl Agent for SingleStepAgent {
-    fn step(&mut self, _state: &mut Option<Vec<u8>>, time: &u64, _mailbox: &mut Mailbox) -> Event {
+    fn step(&mut self, _state: &mut Option<Vec<u8>>, time: &u64, _supports: Supports) -> Event {
         Event::new(*time, *time, self.id, Action::Wait)
-    }
-
-    fn get_state(&self) -> Option<&[u8]> {
-        None
     }
 }
 
@@ -62,7 +56,11 @@ impl MessengerAgent {
 }
 
 impl Agent for MessengerAgent {
-    fn step(&mut self, _state: &mut Option<Vec<u8>>, time: &u64, mailbox: &mut Mailbox) -> Event {
+    fn step(&mut self, _state: &mut Option<Vec<u8>>, time: &u64, supports: Supports) -> Event {
+        let mailbox = match supports {
+            Supports::Mailbox(mailbox) => mailbox,
+            _ => panic!("Mailbox not found"),
+        };
         let _messages = mailbox.receive(self.id);
 
         let return_message = Message::new("Hello".into(), *time, *time + 1, self.id, 1);
@@ -71,15 +69,10 @@ impl Agent for MessengerAgent {
 
         Event::new(*time, *time, self.id, Action::Wait)
     }
-
-    fn get_state(&self) -> Option<&[u8]> {
-        None
-    }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::time::Instant;
 
     use super::worlds::*;
     use super::*;
@@ -97,13 +90,13 @@ mod tests {
     #[test]
     fn test_clock() {
         let timestep = 1.0;
-        let terminal = None;
+        let terminal = Some(30000000.0);
 
         // minimal config world, no logs, no mail, no live for base processing speed benchmark
-        let config = Config::new(timestep, terminal, 10, 10, false);
+        let config = Config::new(timestep, terminal, 10, 10, true);
         let mut world = World::<128, 4>::create(config);
 
-        let agent = TestAgent::new(0, format!("Test{}", 0));
+        let agent = SingleStepAgent::new(0, format!("Test{}", 0));
         world.spawn(Box::new(agent));
         world.schedule(128, 0).unwrap();
         world.schedule(256, 0).unwrap();
@@ -117,6 +110,10 @@ mod tests {
         assert!(world.clock.wheels[2][0].len() == 1);
         assert!(world.clock.wheels[3][0].len() == 1);
         assert!(world.clock.wheels[3][1].len() == 0);
+
+        world.run().unwrap();
+
+        println!("{}", world.logger.as_ref().unwrap().get_events().len());
     }
 
     #[test]
@@ -137,33 +134,24 @@ mod tests {
             .logger
             .as_ref()
             .unwrap()
-            .get_snapshots()
-            .pop()
-            .unwrap()
-            .shared_state
-            .is_none());
+            .gstates
+            .0.len() == 0);
         assert!(
             world
                 .logger
                 .as_ref()
                 .unwrap()
-                .get_snapshots()
-                .pop()
-                .unwrap()
-                .agent_states
+                .astates
                 .len()
-                == 0
+                == 1
         );
         assert!(
             world
                 .logger
                 .as_ref()
                 .unwrap()
-                .get_snapshots()
-                .pop()
-                .unwrap()
-                .timestamp
-                == 1.0
+                .latest()
+                == 0
         );
 
         assert!(world.now() == 1000);
