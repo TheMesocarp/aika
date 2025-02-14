@@ -5,6 +5,8 @@ pub enum SimError {
     PastTerminal,
     ScheduleFailed,
     PlaybackFroze,
+    CircularBufferFull,
+    CircularBufferEmpty,
     NoState,
     NoEvents,
     NoClock,

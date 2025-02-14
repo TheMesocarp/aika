@@ -1,8 +1,10 @@
 use std::cmp::Ordering;
 
+use serde::{Deserialize, Serialize};
+
 use crate::clock::Scheduleable;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 /// A message that can be sent between agents.
 pub struct Message {
     pub data: Vec<u8>,

@@ -1,4 +1,6 @@
 use core::time;
+use std::sync::atomic::AtomicUsize;
+use std::sync::Arc;
 
 use crate::clock::Scheduleable;
 use crate::worlds::Agent;
@@ -50,12 +52,13 @@ pub struct LP<const SLOTS: usize, const HEIGHT: usize> {
     pub history: Option<Vec<Vec<u8>>>,
     pub antimessages: Vec<AntiMessage>,
     pub agent: Box<dyn Agent>,
+    pub step: Arc<AtomicUsize>,
     pub rollbacks: usize,
     pub id: usize,
 }
 
 impl<const SLOTS: usize, const HEIGHT: usize> LP<SLOTS, HEIGHT> {
-    pub fn new(id: usize, agent: Box<dyn Agent>, timestep: f64, init_state: Option<Vec<u8>>) -> Self {
+    pub fn new(id: usize, agent: Box<dyn Agent>, timestep: f64, init_state: Option<Vec<u8>>, step: Arc<AtomicUsize>) -> Self {
         let history = if init_state.is_some() { Some(Vec::<Vec<u8>>::new()) } else { None };
         LP {
             scheduler: Clock::<Object, SLOTS, HEIGHT>::new(timestep, None).unwrap(),
@@ -63,6 +66,7 @@ impl<const SLOTS: usize, const HEIGHT: usize> LP<SLOTS, HEIGHT> {
             history,
             antimessages: Vec::new(),
             agent,
+            step,
             rollbacks: 0,
             id,
         }
