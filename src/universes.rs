@@ -1,5 +1,4 @@
 use crate::worlds::SimError;
-use anyhow::Result;
 use rayon::iter::{IntoParallelRefMutIterator, ParallelIterator};
 
 use super::worlds::*;

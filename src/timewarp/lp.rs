@@ -1,12 +1,14 @@
 use core::time;
+use std::ffi::c_void;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
+use crate::clock::Clock;
 use crate::clock::Scheduleable;
+use crate::logger::History;
 use crate::worlds::Agent;
 use crate::worlds::Event;
-use crate::clock::Clock;
 use crate::worlds::Message;
 use crate::worlds::SimError;
 
@@ -56,8 +58,8 @@ impl Ord for Object {
 
 pub struct LP<const SLOTS: usize, const HEIGHT: usize, const SIZE: usize> {
     pub scheduler: Clock<Object, SLOTS, HEIGHT>,
-    pub state: Option<Vec<u8>>,
-    pub history: Option<Vec<Vec<u8>>>,
+    pub state: Option<*mut c_void>,
+    pub history: Option<History>,
     pub antimessages: Vec<AntiMessage>,
     pub buffers: [CircularBuffer<SIZE>; 2],
     pub agent: Box<dyn Agent>,
@@ -67,8 +69,19 @@ pub struct LP<const SLOTS: usize, const HEIGHT: usize, const SIZE: usize> {
 }
 
 impl<const SLOTS: usize, const HEIGHT: usize, const SIZE: usize> LP<SLOTS, HEIGHT, SIZE> {
-    pub fn new(id: usize, agent: Box<dyn Agent>, timestep: f64, init_state: Option<Vec<u8>>, step: Arc<AtomicUsize>, buffers: [CircularBuffer<SIZE>; 2]) -> Self {
-        let history = if init_state.is_some() { Some(Vec::<Vec<u8>>::new()) } else { None };
+    pub fn new(
+        id: usize,
+        agent: Box<dyn Agent>,
+        timestep: f64,
+        init_state: Option<*mut c_void>,
+        step: Arc<AtomicUsize>,
+        buffers: [CircularBuffer<SIZE>; 2],
+    ) -> Self {
+        let history = if init_state.is_some() {
+            Some(History(Vec::new()))
+        } else {
+            None
+        };
         LP {
             scheduler: Clock::<Object, SLOTS, HEIGHT>::new(timestep, None).unwrap(),
             state: init_state,
@@ -91,9 +104,7 @@ impl<const SLOTS: usize, const HEIGHT: usize, const SIZE: usize> LP<SLOTS, HEIGH
             if r == w {
                 return all_msgs;
             }
-            let msg = unsafe {
-                (*circular.ptr)[r].take().unwrap()
-            };
+            let msg = unsafe { (*circular.ptr)[r].take().unwrap() };
             all_msgs.push(msg);
             r = (r + 1) % SIZE;
         }

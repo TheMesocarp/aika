@@ -1,4 +1,7 @@
-use aika::{logger::History, worlds::{Action, Agent, Config, Event, Mailbox, Supports, World}};
+use aika::{
+    logger::History,
+    worlds::{Action, Agent, Config, Event, Mailbox, Supports, World},
+};
 use criterion::{criterion_group, criterion_main, Criterion};
 use std::{ffi::c_void, hint::black_box};
 

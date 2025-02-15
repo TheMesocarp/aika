@@ -1,6 +1,8 @@
 #![allow(dead_code, unused_variables)]
 use aika::{
-    logger::{self, update, History, ThisSucks}, worlds::{Action, Agent, Config, Event, Supports}, TestAgent
+    logger::{self, update, History, ThisSucks},
+    worlds::{Action, Agent, Config, Event, Supports},
+    TestAgent,
 };
 use rand::rng;
 use rand_distr::{Distribution, Normal};
@@ -13,8 +15,6 @@ pub fn gbm_next_step(current_value: f64, drift: f64, volatility: f64, dt: f64) -
     let exponent = (drift - 0.5 * volatility.powi(2)) * dt + volatility * dt.sqrt() * z;
     current_value * exponent.exp()
 }
-
-
 
 struct MCAgent {
     id: usize,
@@ -38,11 +38,10 @@ impl Agent for MCAgent {
             Supports::Both(_, logger) => logger,
             _ => panic!("Expected logger"),
         };
-        let new =
-            gbm_next_step(self.current_value, self.drift, self.volatility, self.dt);
+        let new = gbm_next_step(self.current_value, self.drift, self.volatility, self.dt);
         let old_ptr = &mut self.current_value as *mut f64 as *mut c_void;
-        update(history,     &mut self.real_logs, old_ptr, new, step);
-        Event::new(*step, *step+1, self.id, Action::Timeout(1))
+        //update(history,     &mut self.real_logs, old_ptr, new, step);
+        Event::new(*step, *step + 1, self.id, Action::Timeout(1))
     }
 }
 
@@ -91,8 +90,5 @@ fn main() {
         "Average event processing time: {:.3?} per event",
         elapsed / total_steps as u32
     );
-    println!(
-        "logger size: {}",
-        world.logger.unwrap().astates[0].0.len()
-    );
+    println!("logger size: {}", world.logger.unwrap().astates[0].0.len());
 }

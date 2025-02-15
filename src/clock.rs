@@ -55,7 +55,8 @@ impl<T: Scheduleable + Ord, const SLOTS: usize, const HEIGHT: usize> Clock<T, SL
                 if deltaidx > endidx {
                     continue;
                 }
-                let offset = ((deltaidx - startidx) / (SLOTS.pow(k as u32)) + self.current_idxs[k]) % SLOTS;
+                let offset =
+                    ((deltaidx - startidx) / (SLOTS.pow(k as u32)) + self.current_idxs[k]) % SLOTS;
                 self.wheels[k][offset as usize].push(event);
                 return Ok(());
             }

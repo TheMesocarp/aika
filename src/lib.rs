@@ -1,15 +1,13 @@
 use std::ffi::c_void;
 
 use logger::History;
-use worlds::{Action, Supports, Agent, Event, Mailbox, Message};
+use worlds::{Action, Agent, Event, Mailbox, Message, Supports};
 
-extern crate tokio;
-
+pub mod clock;
 pub mod logger;
+pub mod timewarp;
 pub mod universes;
 pub mod worlds;
-pub mod timewarp;
-pub mod clock; 
 
 pub struct TestAgent {
     pub id: usize,
@@ -26,7 +24,6 @@ impl Agent for TestAgent {
     fn step(&mut self, _state: &mut Option<*mut c_void>, time: &u64, _supports: Supports) -> Event {
         Event::new(*time, *time, self.id, Action::Timeout(1))
     }
-
 }
 
 pub struct SingleStepAgent {
@@ -133,29 +130,9 @@ mod tests {
 
         world.run().unwrap();
 
-        assert!(world
-            .logger
-            .as_ref()
-            .unwrap()
-            .gstates
-            .0.len() == 0);
-        assert!(
-            world
-                .logger
-                .as_ref()
-                .unwrap()
-                .astates
-                .len()
-                == 1
-        );
-        assert!(
-            world
-                .logger
-                .as_ref()
-                .unwrap()
-                .latest()
-                == 0
-        );
+        assert!(world.logger.as_ref().unwrap().gstates.0.len() == 0);
+        assert!(world.logger.as_ref().unwrap().astates.len() == 1);
+        assert!(world.logger.as_ref().unwrap().latest() == 0);
 
         assert!(world.now() == 1000);
         assert!(world.step_counter() == 1000);

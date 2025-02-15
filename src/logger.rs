@@ -1,4 +1,7 @@
-use std::{ffi::c_void, ptr::{null, null_mut}};
+use std::{
+    ffi::c_void,
+    ptr::{null, null_mut},
+};
 
 use crate::worlds::Event;
 
@@ -13,8 +16,14 @@ pub struct History(pub Vec<(*mut c_void, u64)>);
 
 pub struct ThisSucks<T>(pub Vec<T>);
 
-pub fn update<T>(history: &mut History, statelogs: &mut ThisSucks<T>, old: *mut c_void, new: T, step: &u64) {
-    let mut old = unsafe {std::mem::replace(&mut *(old as *mut T), new)};
+pub fn update<T>(
+    history: &mut History,
+    statelogs: &mut ThisSucks<T>,
+    old: *mut c_void,
+    new: T,
+    step: &u64,
+) {
+    let mut old = unsafe { std::mem::replace(&mut *(old as *mut T), new) };
     let ptr = &mut old as *mut T as *mut _ as *mut c_void;
     history.0.push((ptr, *step));
     statelogs.0.push(old);

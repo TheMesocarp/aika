@@ -4,8 +4,8 @@ use std::ffi::c_void;
 
 use super::agent::Supports;
 use super::{Action, Agent, Config, Event, Mailbox, Message, SimError};
-use crate::logger::{History, Logger};
 use crate::clock::Clock;
+use crate::logger::{History, Logger};
 
 /// Control commands for the real-time simulation
 ///
@@ -49,7 +49,11 @@ impl<const SLOTS: usize, const HEIGHT: usize> World<SLOTS, HEIGHT> {
     pub fn spawn(&mut self, agent: Box<dyn Agent>) -> usize {
         self.agents.push(agent);
         if self.logger.is_some() {
-            self.logger.as_mut().unwrap().astates.push(History(Vec::new()));   
+            self.logger
+                .as_mut()
+                .unwrap()
+                .astates
+                .push(History(Vec::new()));
         }
         self.agents.len() - 1
     }
@@ -110,7 +114,9 @@ impl<const SLOTS: usize, const HEIGHT: usize> World<SLOTS, HEIGHT> {
     pub fn schedule(&mut self, time: u64, agent: usize) -> Result<(), SimError> {
         if time < self.now() {
             return Err(SimError::TimeTravel);
-        } else if time as f64 * self.clock.time.timestep > self.clock.time.terminal.unwrap_or(f64::INFINITY) {
+        } else if time as f64 * self.clock.time.timestep
+            > self.clock.time.terminal.unwrap_or(f64::INFINITY)
+        {
             return Err(SimError::PastTerminal);
         }
         let now = self.now();
@@ -130,22 +136,29 @@ impl<const SLOTS: usize, const HEIGHT: usize> World<SLOTS, HEIGHT> {
             match self.clock.tick() {
                 Ok(events) => {
                     for event in events {
-                        if event.time as f64 * self.clock.time.timestep > self.clock.time.terminal.unwrap_or(f64::INFINITY) {
+                        if event.time as f64 * self.clock.time.timestep
+                            > self.clock.time.terminal.unwrap_or(f64::INFINITY)
+                        {
                             break;
                         }
                         let supports = if self.logger.is_some() {
-                            Supports::Both(&mut self.mailbox, self.logger.as_mut().unwrap().astates.get_mut(event.agent).unwrap())
+                            Supports::Both(
+                                &mut self.mailbox,
+                                self.logger
+                                    .as_mut()
+                                    .unwrap()
+                                    .astates
+                                    .get_mut(event.agent)
+                                    .unwrap(),
+                            )
                         } else {
                             Supports::Mailbox(&mut self.mailbox)
                         };
-                        let event = self.agents[event.agent].step(
-                            &mut self.state,
-                            &event.time,
-                            supports,
-                        );
+                        let event =
+                            self.agents[event.agent].step(&mut self.state, &event.time, supports);
 
                         self.handle_log();
-                        
+
                         match event.yield_ {
                             Action::Timeout(time) => {
                                 if (self.now() + time) as f64 * self.clock.time.timestep
@@ -154,14 +167,20 @@ impl<const SLOTS: usize, const HEIGHT: usize> World<SLOTS, HEIGHT> {
                                     continue;
                                 }
 
-                                self.commit(Event::new(self.now(),
+                                self.commit(Event::new(
+                                    self.now(),
                                     self.now() + time,
                                     event.agent,
                                     Action::Wait,
                                 ));
                             }
                             Action::Schedule(time) => {
-                                self.commit(Event::new(self.now(), time, event.agent, Action::Wait));
+                                self.commit(Event::new(
+                                    self.now(),
+                                    time,
+                                    event.agent,
+                                    Action::Wait,
+                                ));
                             }
                             Action::Trigger { time, idx } => {
                                 self.commit(Event::new(self.now(), time, idx, Action::Wait));
@@ -188,10 +207,7 @@ impl<const SLOTS: usize, const HEIGHT: usize> World<SLOTS, HEIGHT> {
     fn handle_log(&mut self) {
         if let Some(logger) = &mut self.logger {
             if self.state.is_some() {
-                logger.log_global(
-                    self.state.clone().unwrap(),
-                    self.clock.time.step,
-                );
+                logger.log_global(self.state.clone().unwrap(), self.clock.time.step);
             }
         }
     }

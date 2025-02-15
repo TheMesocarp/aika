@@ -1,5 +1,8 @@
 // todo! spsc circular buffer with atomics for notifying thread2thread communications
-use std::sync::{atomic::{AtomicBool, AtomicUsize, Ordering}, Arc};
+use std::sync::{
+    atomic::{AtomicBool, AtomicUsize, Ordering},
+    Arc,
+};
 
 use crate::worlds::{Message, SimError};
 
@@ -25,7 +28,6 @@ pub struct CircularBuffer<const SIZE: usize> {
     pub read_idx: Arc<AtomicUsize>,
 }
 
-
 unsafe impl<const SIZE: usize> Send for CircularBuffer<SIZE> {}
 unsafe impl<const SIZE: usize> Sync for CircularBuffer<SIZE> {}
 
@@ -36,9 +38,7 @@ pub struct Comms<const LPS: usize, const SIZE: usize> {
 
 impl<const LPS: usize, const SIZE: usize> Comms<LPS, SIZE> {
     pub fn new(wheel: [[CircularBuffer<SIZE>; LPS]; 2]) -> Self {
-        Comms {
-            wheel,
-        }
+        Comms { wheel }
     }
 
     pub fn write(&mut self, msg: Transferable) -> Result<(), SimError> {
@@ -56,7 +56,7 @@ impl<const LPS: usize, const SIZE: usize> Comms<LPS, SIZE> {
         // publish by storing next
         cbuff.write_idx.store(next, Ordering::Release);
         Ok(())
-    } 
+    }
 
     pub fn read(&mut self, target: usize) -> Result<Transferable, SimError> {
         let cbuff = &mut self.wheel[0][target];
@@ -65,9 +65,7 @@ impl<const LPS: usize, const SIZE: usize> Comms<LPS, SIZE> {
         if w == r {
             return Err(SimError::CircularBufferEmpty);
         }
-        let msg = unsafe {
-            (*cbuff.ptr)[r].take().unwrap()
-        };
+        let msg = unsafe { (*cbuff.ptr)[r].take().unwrap() };
         cbuff.read_idx.store((r + 1) % SIZE, Ordering::Release);
         Ok(msg)
     }
@@ -86,7 +84,10 @@ impl<const LPS: usize, const SIZE: usize> Comms<LPS, SIZE> {
 
     pub fn flush(&mut self) {
         for i in 0..LPS {
-            self.wheel[0][i].read_idx.store(self.wheel[0][i].write_idx.load(Ordering::Acquire), Ordering::Release);
+            self.wheel[0][i].read_idx.store(
+                self.wheel[0][i].write_idx.load(Ordering::Acquire),
+                Ordering::Release,
+            );
         }
     }
 }
