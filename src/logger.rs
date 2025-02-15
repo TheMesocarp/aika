@@ -1,3 +1,5 @@
+use std::{ffi::c_void, ptr::{null, null_mut}};
+
 use crate::worlds::Event;
 
 /// A logger for recording snapshots of the world.
@@ -7,16 +9,15 @@ pub struct Logger {
     events: Vec<Event>,
 }
 
-pub struct History(pub Vec<(Vec<u8>, u64)>);
+pub struct History(pub Vec<(*mut c_void, u64)>);
 
-impl History {
-    pub fn update(&mut self, new: Option<Vec<u8>>, state: &mut Option<Vec<u8>>, step: &u64) {
-        if new.is_none() {
-            return;
-        }
-        let result = std::mem::replace(state, new);
-        self.0.push((result.unwrap(), *step));
-    }
+pub struct ThisSucks<T>(pub Vec<T>);
+
+pub fn update<T>(history: &mut History, statelogs: &mut ThisSucks<T>, old: *mut c_void, new: T, step: &u64) {
+    let mut old = unsafe {std::mem::replace(&mut *(old as *mut T), new)};
+    let ptr = &mut old as *mut T as *mut _ as *mut c_void;
+    history.0.push((ptr, *step));
+    statelogs.0.push(old);
 }
 
 impl Logger {
@@ -28,7 +29,7 @@ impl Logger {
         }
     }
 
-    pub fn log_global(&mut self, state: Vec<u8>, step: u64) {
+    pub fn log_global(&mut self, state: *mut c_void, step: u64) {
         self.gstates.0.push((state, step));
     }
     pub fn log_event(&mut self, event: Event) {
@@ -41,7 +42,7 @@ impl Logger {
 
     pub fn latest(&self) -> u64 {
         let mut last = if self.gstates.0.last().is_none() {
-            &(Vec::new(), 0)
+            &(null_mut(), 0)
         } else {
             self.gstates.0.last().unwrap()
         };

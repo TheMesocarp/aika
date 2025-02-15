@@ -1,3 +1,5 @@
+use std::ffi::c_void;
+
 use crate::logger::History;
 
 use super::{Event, Mailbox};
@@ -11,5 +13,5 @@ pub enum Supports<'a> {
 
 /// An agent that can be run in a simulation.
 pub trait Agent: Send {
-    fn step(&mut self, state: &mut Option<Vec<u8>>, time: &u64, supports: Supports) -> Event;
+    fn step(&mut self, state: &mut Option<*mut c_void>, time: &u64, supports: Supports) -> Event;
 }

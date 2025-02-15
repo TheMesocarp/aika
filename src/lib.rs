@@ -1,3 +1,5 @@
+use std::ffi::c_void;
+
 use logger::History;
 use worlds::{Action, Supports, Agent, Event, Mailbox, Message};
 
@@ -21,7 +23,7 @@ impl TestAgent {
 }
 
 impl Agent for TestAgent {
-    fn step(&mut self, _state: &mut Option<Vec<u8>>, time: &u64, _supports: Supports) -> Event {
+    fn step(&mut self, _state: &mut Option<*mut c_void>, time: &u64, _supports: Supports) -> Event {
         Event::new(*time, *time, self.id, Action::Timeout(1))
     }
 
@@ -39,7 +41,7 @@ impl SingleStepAgent {
 }
 
 impl Agent for SingleStepAgent {
-    fn step(&mut self, _state: &mut Option<Vec<u8>>, time: &u64, _supports: Supports) -> Event {
+    fn step(&mut self, _state: &mut Option<*mut c_void>, time: &u64, _supports: Supports) -> Event {
         Event::new(*time, *time, self.id, Action::Wait)
     }
 }
@@ -56,7 +58,7 @@ impl MessengerAgent {
 }
 
 impl Agent for MessengerAgent {
-    fn step(&mut self, _state: &mut Option<Vec<u8>>, time: &u64, supports: Supports) -> Event {
+    fn step(&mut self, _state: &mut Option<*mut c_void>, time: &u64, supports: Supports) -> Event {
         let mailbox = match supports {
             Supports::Mailbox(mailbox) => mailbox,
             _ => panic!("Mailbox not found"),
@@ -80,7 +82,7 @@ mod tests {
     #[test]
     fn test_run() {
         let config = Config::new(1.0, Some(2000000.0), 100, 100, false);
-        let mut world = World::<256, 1>::create(config);
+        let mut world = World::<256, 1>::create(config, None);
         let agent_test = TestAgent::new(0, "Test".to_string());
         world.spawn(Box::new(agent_test));
         world.schedule(0, 0).unwrap();
@@ -94,7 +96,7 @@ mod tests {
 
         // minimal config world, no logs, no mail, no live for base processing speed benchmark
         let config = Config::new(timestep, terminal, 10, 10, false);
-        let mut world = World::<128, 4>::create(config);
+        let mut world = World::<128, 4>::create(config, None);
 
         let agent = TestAgent::new(0, format!("Test{}", 0));
         world.spawn(Box::new(agent));
@@ -120,7 +122,7 @@ mod tests {
     #[test]
     fn test_logger() {
         let config = Config::new(1.0, Some(1000.0), 100, 100, true);
-        let mut world = World::<256, 1>::create(config);
+        let mut world = World::<256, 1>::create(config, None);
         let agent_test = SingleStepAgent::new(0, "Test".to_string());
         world.spawn(Box::new(agent_test));
         world.schedule(0, 0).unwrap();

@@ -1,9 +1,10 @@
 #![allow(dead_code, unused_variables)]
 use aika::{
-    logger::{self, History}, worlds::{Action, Agent, Config, Event, Supports}, TestAgent
+    logger::{self, update, History, ThisSucks}, worlds::{Action, Agent, Config, Event, Supports}, TestAgent
 };
 use rand::rng;
 use rand_distr::{Distribution, Normal};
+use std::ffi::c_void;
 
 pub fn gbm_next_step(current_value: f64, drift: f64, volatility: f64, dt: f64) -> f64 {
     let normal = Normal::new(0.0, 1.0).unwrap();
@@ -13,6 +14,8 @@ pub fn gbm_next_step(current_value: f64, drift: f64, volatility: f64, dt: f64) -
     current_value * exponent.exp()
 }
 
+
+
 struct MCAgent {
     id: usize,
     name: String,
@@ -21,12 +24,13 @@ struct MCAgent {
     dt: f64,
     current_value: f64,
     serialized: [u8; 8],
+    real_logs: ThisSucks<f64>,
 }
 
 impl Agent for MCAgent {
     fn step<'a>(
         &mut self,
-        state: &mut Option<Vec<u8>>,
+        state: &mut Option<*mut c_void>,
         step: &u64,
         supports: Supports<'a>,
     ) -> Event {
@@ -36,10 +40,8 @@ impl Agent for MCAgent {
         };
         let new =
             gbm_next_step(self.current_value, self.drift, self.volatility, self.dt);
-        let new = new.to_be_bytes().into_iter().collect::<Vec<_>>();
-        let mut g = Some(self.current_value.to_be_bytes().into_iter().collect::<Vec<_>>());
-        history.update(Some(new), &mut g, step);
-        self.current_value = f64::from_be_bytes(g.unwrap().as_slice().try_into().unwrap());
+        let old_ptr = &mut self.current_value as *mut f64 as *mut c_void;
+        update(history,     &mut self.real_logs, old_ptr, new, step);
         Event::new(*step, *step+1, self.id, Action::Timeout(1))
     }
 }
@@ -60,6 +62,7 @@ impl MCAgent {
             drift,
             volatility,
             dt,
+            real_logs: ThisSucks(Vec::new()),
             current_value: initial_value,
             serialized,
         }
@@ -68,8 +71,8 @@ impl MCAgent {
 
 fn main() {
     let ts = 1.0;
-    let config = Config::new(ts, Some(2000000.0), 10, 10, true);
-    let mut world = aika::worlds::World::<128, 1>::create(config);
+    let config = Config::new(ts, Some(20000000.0), 10, 10, true);
+    let mut world = aika::worlds::World::<128, 1>::create(config, None);
     let agent = MCAgent::new(0, "Test".to_string(), 0.1, 0.2, ts, 100.0);
     world.spawn(Box::new(agent));
     world.schedule(0, 0).unwrap();

@@ -1,5 +1,6 @@
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet};
+use std::ffi::c_void;
 
 use super::agent::Supports;
 use super::{Action, Agent, Config, Event, Mailbox, Message, SimError};
@@ -23,7 +24,7 @@ pub struct World<const SLOTS: usize, const HEIGHT: usize> {
     pub clock: Clock<Event, SLOTS, HEIGHT>,
     pub agents: Vec<Box<dyn Agent>>,
     mailbox: Mailbox,
-    state: Option<Vec<u8>>,
+    state: Option<*mut c_void>,
     pub logger: Option<Logger>,
 }
 
@@ -33,13 +34,13 @@ unsafe impl<const SLOTS: usize, const HEIGHT: usize> Sync for World<SLOTS, HEIGH
 impl<const SLOTS: usize, const HEIGHT: usize> World<SLOTS, HEIGHT> {
     /// Create a new world with the given configuration.
     /// By default, this will include a logger for state logging and a mailbox for message passing between agents.
-    pub fn create(config: Config) -> Self {
+    pub fn create(config: Config, init_state: Option<*mut c_void>) -> Self {
         World {
             overflow: BTreeSet::new(),
             clock: Clock::<Event, SLOTS, HEIGHT>::new(config.timestep, config.terminal).unwrap(),
             agents: Vec::new(),
             mailbox: Mailbox::new(config.mailbox_size),
-            state: None,
+            state: init_state,
             logger: config.logs.then_some(Logger::new()),
         }
     }
@@ -76,8 +77,8 @@ impl<const SLOTS: usize, const HEIGHT: usize> World<SLOTS, HEIGHT> {
         self.clock.time.step
     }
 
-    /// Clone the current state of the simulation.
-    pub fn state(&self) -> Option<Vec<u8>> {
+    /// Clone the current state pointer of the simulation.
+    pub fn state(&self) -> Option<*mut c_void> {
         self.state.clone()
     }
 
@@ -137,14 +138,14 @@ impl<const SLOTS: usize, const HEIGHT: usize> World<SLOTS, HEIGHT> {
                         } else {
                             Supports::Mailbox(&mut self.mailbox)
                         };
-                        let event = &mut self.agents[event.agent].step(
+                        let event = self.agents[event.agent].step(
                             &mut self.state,
                             &event.time,
                             supports,
                         );
 
                         self.handle_log();
-
+                        
                         match event.yield_ {
                             Action::Timeout(time) => {
                                 if (self.now() + time) as f64 * self.clock.time.timestep
@@ -171,7 +172,7 @@ impl<const SLOTS: usize, const HEIGHT: usize> World<SLOTS, HEIGHT> {
                             }
                         }
                         if self.logger.is_some() {
-                            self.logger.as_mut().unwrap().log_event(event.clone());
+                            self.logger.as_mut().unwrap().log_event(event);
                         }
                     }
                 }

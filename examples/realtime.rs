@@ -10,7 +10,7 @@ fn main() {
 
     // minimal config world, no logs, no mail, no live for base processing speed benchmark
     let config = Config::new(timestep, terminal, 10, 10, false);
-    let mut world = World::<128, 1>::create(config);
+    let mut world = World::<128, 1>::create(config, None);
 
     let agent = TestAgent::new(0, format!("Test{}", 0));
     world.spawn(Box::new(agent));
