@@ -1,6 +1,6 @@
 use std::{
     ffi::c_void,
-    ptr::{null, null_mut},
+    ptr::null_mut,
 };
 
 use crate::worlds::Event;
@@ -14,11 +14,11 @@ pub struct Logger {
 
 pub struct History(pub Vec<(*mut c_void, u64)>);
 
-pub struct ThisSucks<T>(pub Vec<T>);
+pub struct States<T>(pub Vec<T>);
 
 pub fn update<T>(
     history: &mut History,
-    statelogs: &mut ThisSucks<T>,
+    statelogs: &mut States<T>,
     old: *mut c_void,
     new: T,
     step: &u64,

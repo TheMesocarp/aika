@@ -1,14 +1,21 @@
 use std::ffi::c_void;
-
-use logger::History;
-use worlds::{Action, Agent, Event, Mailbox, Message, Supports};
+use worlds::{Action, Agent, Event, Message, Supports};
 
 pub mod clock;
 pub mod logger;
+#[cfg(feature = "timewarp")]
 pub mod timewarp;
+#[cfg(feature = "universes")]
 pub mod universes;
 pub mod worlds;
 
+pub mod prelude {
+    pub use crate::clock::Clock;
+    pub use crate::logger::{Logger, States};
+    pub use crate::worlds::{Agent, Action, Config, Event, Mailbox, Message, Supports, World};
+}
+
+// Markovian Agent
 pub struct TestAgent {
     pub id: usize,
     pub name: String,
@@ -26,6 +33,7 @@ impl Agent for TestAgent {
     }
 }
 
+// Single Step Agent
 pub struct SingleStepAgent {
     pub id: usize,
     pub name: String,
@@ -43,6 +51,7 @@ impl Agent for SingleStepAgent {
     }
 }
 
+// Messenger Agent
 pub struct MessengerAgent {
     pub id: usize,
     pub name: String,

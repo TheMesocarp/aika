@@ -1,9 +1,5 @@
 #![allow(dead_code, unused_variables)]
-use aika::{
-    logger::{self, update, History, ThisSucks},
-    worlds::{Action, Agent, Config, Event, Supports},
-    TestAgent,
-};
+use aika::prelude::*;
 use rand::rng;
 use rand_distr::{Distribution, Normal};
 use std::ffi::c_void;
@@ -24,7 +20,7 @@ struct MCAgent {
     dt: f64,
     current_value: f64,
     serialized: [u8; 8],
-    real_logs: ThisSucks<f64>,
+    real_logs: States<f64>,
 }
 
 impl Agent for MCAgent {
@@ -61,7 +57,7 @@ impl MCAgent {
             drift,
             volatility,
             dt,
-            real_logs: ThisSucks(Vec::new()),
+            real_logs: States(Vec::new()),
             current_value: initial_value,
             serialized,
         }

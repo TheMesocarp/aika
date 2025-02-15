@@ -1,3 +1,3 @@
-// GVT/Coordinator Thread, todo!
+// GVT/Coordinator Thread,
 
 pub struct GVT {}

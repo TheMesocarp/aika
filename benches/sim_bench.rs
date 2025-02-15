@@ -1,7 +1,4 @@
-use aika::{
-    logger::History,
-    worlds::{Action, Agent, Config, Event, Mailbox, Supports, World},
-};
+use aika::prelude::*;
 use criterion::{criterion_group, criterion_main, Criterion};
 use std::{ffi::c_void, hint::black_box};
 
@@ -25,7 +22,7 @@ impl Agent for AdderAgent {
 }
 
 fn run_sim(id: usize, config: Config) {
-    let mut agent = AdderAgent::new(id);
+    let agent = AdderAgent::new(id);
     let mut world = World::<256, 1>::create(config, None);
 
     world.spawn(Box::new(agent));

@@ -1,9 +1,9 @@
 use std::cmp::Reverse;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::ffi::c_void;
 
 use super::agent::Supports;
-use super::{Action, Agent, Config, Event, Mailbox, Message, SimError};
+use super::{Action, Agent, Config, Event, Mailbox, SimError};
 use crate::clock::Clock;
 use crate::logger::{History, Logger};
 

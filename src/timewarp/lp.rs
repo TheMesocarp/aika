@@ -1,4 +1,3 @@
-use core::time;
 use std::ffi::c_void;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
@@ -7,6 +6,7 @@ use std::sync::Arc;
 use crate::clock::Clock;
 use crate::clock::Scheduleable;
 use crate::logger::History;
+use crate::logger::States;
 use crate::worlds::Agent;
 use crate::worlds::Event;
 use crate::worlds::Message;
@@ -124,10 +124,10 @@ impl<const SLOTS: usize, const HEIGHT: usize, const SIZE: usize> LP<SLOTS, HEIGH
         circular.write_idx.store(next, Ordering::Release);
         Ok(())
     }
+}
 
-    fn rollback(&mut self, time: u64) {
-        let delta = self.scheduler.time.step - time;
-        let modulo = delta % SLOTS as u64;
-        todo!()
-    }
+pub fn rollback<T, const SLOTS: usize, const HEIGHT: usize, const SIZE: usize>(lp: &mut LP<SLOTS, HEIGHT, SIZE>, time: u64, state_logs: &mut States<T>) {
+    let delta = lp.scheduler.time.step - time;
+    let modulo = delta % SLOTS as u64;
+    todo!()
 }

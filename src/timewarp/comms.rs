@@ -1,6 +1,6 @@
-// todo! spsc circular buffer with atomics for notifying thread2thread communications
+// spsc circular buffer with atomics for notifying thread2thread communications
 use std::sync::{
-    atomic::{AtomicBool, AtomicUsize, Ordering},
+    atomic::{AtomicUsize, Ordering},
     Arc,
 };
 
