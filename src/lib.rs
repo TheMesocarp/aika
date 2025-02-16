@@ -11,19 +11,18 @@ pub mod worlds;
 
 pub mod prelude {
     pub use crate::clock::Clock;
-    pub use crate::logger::{Logger, States};
-    pub use crate::worlds::{Agent, Action, Config, Event, Mailbox, Message, Supports, World};
+    pub use crate::logger::{update, Logger, States};
+    pub use crate::worlds::{Action, Agent, Config, Event, Mailbox, Message, Supports, World};
 }
 
 // Markovian Agent
 pub struct TestAgent {
     pub id: usize,
-    pub name: String,
 }
 
 impl TestAgent {
-    pub fn new(id: usize, name: String) -> Self {
-        TestAgent { id, name }
+    pub fn new(id: usize) -> Self {
+        TestAgent { id }
     }
 }
 
@@ -89,7 +88,7 @@ mod tests {
     fn test_run() {
         let config = Config::new(1.0, Some(2000000.0), 100, 100, false);
         let mut world = World::<256, 1>::create(config, None);
-        let agent_test = TestAgent::new(0, "Test".to_string());
+        let agent_test = TestAgent::new(0);
         world.spawn(Box::new(agent_test));
         world.schedule(0, 0).unwrap();
         assert!(world.run().unwrap() == ());
@@ -104,7 +103,7 @@ mod tests {
         let config = Config::new(timestep, terminal, 10, 10, false);
         let mut world = World::<128, 4>::create(config, None);
 
-        let agent = TestAgent::new(0, format!("Test{}", 0));
+        let agent = TestAgent::new(0);
         world.spawn(Box::new(agent));
         world.schedule(128, 0).unwrap();
         world.schedule(258, 0).unwrap();

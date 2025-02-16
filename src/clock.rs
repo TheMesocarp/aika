@@ -107,10 +107,10 @@ impl<T: Scheduleable + Ord, const SLOTS: usize, const HEIGHT: usize> Clock<T, SL
         }
     }
 
-    #[cfg(feature = "timewarp")]
-    pub fn rollback(&mut self, time: u64) {
-        let delta = self.time.step - time;
-        let modulo = delta % SLOTS as u64;
-        todo!()
-    }
+    // #[cfg(feature = "timewarp")]
+    // pub fn rollback(&mut self, time: u64) {
+    //     let delta = self.time.step - time;
+    //     let modulo = delta % SLOTS as u64;
+    //     todo!()
+    // }
 }

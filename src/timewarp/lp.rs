@@ -126,8 +126,8 @@ impl<const SLOTS: usize, const HEIGHT: usize, const SIZE: usize> LP<SLOTS, HEIGH
     }
 }
 
-pub fn rollback<T, const SLOTS: usize, const HEIGHT: usize, const SIZE: usize>(lp: &mut LP<SLOTS, HEIGHT, SIZE>, time: u64, state_logs: &mut States<T>) {
-    let delta = lp.scheduler.time.step - time;
-    let modulo = delta % SLOTS as u64;
-    todo!()
-}
+// pub fn rollback<T, const SLOTS: usize, const HEIGHT: usize, const SIZE: usize>(lp: &mut LP<SLOTS, HEIGHT, SIZE>, time: u64, state_logs: &mut States<T>) {
+//     let delta = lp.scheduler.time.step - time;
+//     let modulo = delta % SLOTS as u64;
+//     todo!()
+// }

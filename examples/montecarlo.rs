@@ -36,7 +36,7 @@ impl Agent for MCAgent {
         };
         let new = gbm_next_step(self.current_value, self.drift, self.volatility, self.dt);
         let old_ptr = &mut self.current_value as *mut f64 as *mut c_void;
-        //update(history,     &mut self.real_logs, old_ptr, new, step);
+        update(history, &mut self.real_logs, old_ptr, new, step);
         Event::new(*step, *step + 1, self.id, Action::Timeout(1))
     }
 }
