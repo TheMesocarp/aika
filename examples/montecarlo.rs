@@ -2,7 +2,6 @@
 use aika::prelude::*;
 use rand::rng;
 use rand_distr::{Distribution, Normal};
-use std::ffi::c_void;
 
 pub fn gbm_next_step(current_value: f64, drift: f64, volatility: f64, dt: f64) -> f64 {
     let normal = Normal::new(0.0, 1.0).unwrap();
@@ -18,25 +17,18 @@ struct MCAgent {
     drift: f64,
     volatility: f64,
     dt: f64,
-    current_value: f64,
     serialized: [u8; 8],
-    real_logs: States<f64>,
 }
 
 impl Agent for MCAgent {
-    fn step<'a>(
-        &mut self,
-        state: &mut Option<*mut c_void>,
-        step: &u64,
-        supports: Supports<'a>,
-    ) -> Event {
-        let history = match supports {
+    fn step<'a>(&mut self, step: &u64, supports: Supports<'a>) -> Event {
+        let lumi = match supports {
             Supports::Both(_, logger) => logger,
             _ => panic!("Expected logger"),
         };
-        let new = gbm_next_step(self.current_value, self.drift, self.volatility, self.dt);
-        let old_ptr = &mut self.current_value as *mut f64 as *mut c_void;
-        update(history, &mut self.real_logs, old_ptr, new, step);
+        let current = lumi.fetch_state::<f64>();
+        let new = gbm_next_step(current, self.drift, self.volatility, self.dt);
+        lumi.update(new, *step as usize);
         Event::new(*step, *step + 1, self.id, Action::Timeout(1))
     }
 }
@@ -57,8 +49,6 @@ impl MCAgent {
             drift,
             volatility,
             dt,
-            real_logs: States(Vec::new()),
-            current_value: initial_value,
             serialized,
         }
     }
@@ -66,10 +56,10 @@ impl MCAgent {
 
 fn main() {
     let ts = 1.0;
-    let config = Config::new(ts, Some(20000000.0), 10, 10, true);
-    let mut world = aika::worlds::World::<128, 1>::create(config, None);
+    let config = Config::new(ts, Some(20000000.0), 10, 10, true, false);
+    let mut world = aika::worlds::World::<256, 128, 1>::create::<()>(config, None);
     let agent = MCAgent::new(0, "Test".to_string(), 0.1, 0.2, ts, 100.0);
-    world.spawn(Box::new(agent));
+    world.spawn::<f64>(Box::new(agent));
     world.schedule(0, 0).unwrap();
     let start = std::time::Instant::now();
     world.run().unwrap();
@@ -86,5 +76,8 @@ fn main() {
         "Average event processing time: {:.3?} per event",
         elapsed / total_steps as u32
     );
-    println!("logger size: {}", world.logger.unwrap().astates[0].0.len());
+    println!(
+        "logger size: {}",
+        world.logger.unwrap().agents[0].history.len()
+    );
 }

@@ -1,175 +1,173 @@
 use std::{
-    alloc::{alloc, dealloc, Layout},
-    any::{Any, TypeId},
-    ffi::c_void,
+    alloc::{alloc, Layout},
+    any::TypeId,
+    collections::BTreeSet,
     mem,
-    ptr::{null_mut, NonNull},
+    ptr::{self, drop_in_place},
 };
-
-use smallvec::{Array, SmallVec};
 
 use crate::worlds::Event;
 
-/// A logger for recording snapshots of the world.
-pub struct Logger {
-    pub astates: Vec<History>,
-    pub gstates: History,
-    events: Vec<Event>,
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+struct Log<T: 'static>(T, usize);
+
+#[derive(Copy, Clone)]
+struct MetaData {
+    pub type_id: TypeId,
+    size: usize,
+    align: usize,
+    dropfn: unsafe fn(*mut u8),
 }
-
-pub struct History(pub Vec<(*mut c_void, u64)>);
-
-pub struct States<T>(pub Vec<T>);
-
-pub fn update<T>(
-    history: &mut History,
-    statelogs: &mut States<T>,
-    old: *mut c_void,
-    new: T,
-    step: &u64,
-) {
-    let mut old = unsafe { std::mem::replace(&mut *(old as *mut T), new) };
-    let ptr = &mut old as *mut T as *mut _ as *mut c_void;
-    history.0.push((ptr, *step));
-    statelogs.0.push(old);
-}
-
-impl Logger {
-    pub fn new() -> Self {
-        Logger {
-            astates: Vec::new(),
-            gstates: History(Vec::new()),
-            events: Vec::new(),
-        }
-    }
-
-    pub fn log_global(&mut self, state: *mut c_void, step: u64) {
-        self.gstates.0.push((state, step));
-    }
-    pub fn log_event(&mut self, event: Event) {
-        self.events.push(event);
-    }
-
-    pub fn get_events(&self) -> Vec<Event> {
-        self.events.clone()
-    }
-
-    pub fn latest(&self) -> u64 {
-        let mut last = if self.gstates.0.last().is_none() {
-            &(null_mut(), 0)
-        } else {
-            self.gstates.0.last().unwrap()
-        };
-        for i in 0..self.astates.len() {
-            let astates = &self.astates[i].0;
-
-            let last_astate = astates.last();
-            if last_astate.is_none() {
-                continue;
-            }
-            if last_astate.unwrap().1 > last.1 {
-                last = last_astate.unwrap();
-            }
-        }
-        last.1
-    }
-}
-
-// New attempt: As little runtime allocations as possible.
-use std::cell::UnsafeCell;
-use std::mem::MaybeUninit;
-use std::ptr::drop_in_place;
-
-#[repr(align(16))]
-pub struct AlignedBuffer<const N: usize>(pub [u8; N]);
-
-enum Storage<const N: usize> {
-    Stack(AlignedBuffer<N>),
-    Heap {
-        ptr: NonNull<u8>,
-        layout: Layout,
-        used: usize,
-    },
-}
-
-pub struct Snowflake<const N: usize> {
-    type_id: TypeId,
-    storage: UnsafeCell<Storage<N>>,
-}
-
-impl<const N: usize> Snowflake<N> {
-    pub fn new() -> Self {
-        Self {
+impl MetaData {
+    fn default() -> Self {
+        MetaData {
             type_id: TypeId::of::<()>(),
-            storage: UnsafeCell::new(Storage::Stack(AlignedBuffer([0; N]))),
+            size: 0,
+            align: 1,
+            dropfn: drop_noop,
+        }
+    }
+}
+unsafe fn drop_noop(_ptr: *mut u8) {}
+
+unsafe fn drop_value<T>(_ptr: *mut u8) {
+    drop_in_place(_ptr as *mut T)
+}
+
+pub struct Lumi {
+    arena: Vec<(*mut u8, usize)>,
+    pub state: *mut u8,
+    slots: usize,
+    current: usize,
+    pub metadata: MetaData,
+    pub history: Vec<(*mut u8, usize)>,
+}
+
+impl Lumi {
+    pub fn initialize<T: 'static>(slots: usize) -> Self {
+        let current = 0;
+        let size = size_of::<T>();
+        let align = align_of::<T>();
+        let type_id = TypeId::of::<T>();
+        let arena = vec![
+            (
+                unsafe { alloc(Layout::from_size_align(size, align).unwrap()) },
+                0
+            );
+            slots
+        ];
+
+        let metadata = MetaData {
+            type_id,
+            size,
+            align,
+            dropfn: drop_value::<T>,
+        };
+
+        let state = unsafe { alloc(Layout::from_size_align(size, align).unwrap()) };
+        let history = Vec::new();
+        Lumi {
+            arena,
+            state,
+            slots,
+            current,
+            metadata,
+            history,
         }
     }
 
-    pub fn store<T: 'static>(&mut self, value: T) {
-        let size = mem::size_of::<T>();
-        let align = mem::align_of::<T>();
+    pub fn write<T: 'static>(&mut self, state: T, time: usize) {
+        let size = size_of_val(&state);
+        let align = align_of_val(&state);
+        let slot = self.current;
+        let aligned = (self.arena[slot].0 as usize + align - 1) & !(align - 1);
+        let is = aligned.checked_add(size).map_or(false, |end| {
+            end <= (self.arena[slot].0 as usize + self.metadata.size)
+        });
+
+        if is == false {
+            unsafe {
+                let ptr_heap = alloc(Layout::from_size_align(size, align).unwrap()) as *mut T;
+                ptr_heap.write(state);
+                self.history.push((ptr_heap as *mut u8, time));
+            }
+            return;
+        }
         unsafe {
-            let storage = &mut *self.storage.get();
-            let can_reuse = match storage {
-                Storage::Stack(buf) => size <= N && align <= mem::align_of_val(buf),
-                Storage::Heap { layout, used, .. } => {
-                    size <= layout.size() && align <= layout.align() && size <= *used
-                }
-            };
-            if !can_reuse {
-                self.clear();
-                if size <= N && align <= mem::align_of::<AlignedBuffer<N>>() {
-                    *storage = Storage::Stack(AlignedBuffer([0; N]));
-                } else {
-                    let layout = Layout::from_size_align(size, align).expect("Invalid layout");
-                    let ptr = NonNull::new(alloc(layout)).expect("Allocation failed");
-                    *storage = Storage::Heap {
-                        ptr,
-                        layout,
-                        used: size,
-                    };
-                }
+            let dest = aligned as *mut T;
+            dest.write(state);
+            self.arena[slot].0 = dest as *mut u8;
+            self.arena[slot].1 = time;
+        }
+        if self.current == self.slots - 1 {
+            self.flush()
+        };
+        self.current = (self.current + 1) % self.metadata.size;
+    }
+
+    fn flush(&mut self) {
+        for i in &mut self.arena {
+            let layout = Layout::from_size_align(self.metadata.size, self.metadata.align);
+            let newalloc = unsafe { alloc(layout.unwrap()) };
+            unsafe {
+                ptr::swap(newalloc, i.0);
             }
-            let dest_ptr = match storage {
-                Storage::Stack(buf) => buf.0.as_mut_ptr() as *mut T,
-                Storage::Heap { ptr, .. } => ptr.as_ptr() as *mut T,
-            };
-            dest_ptr.write(value);
-            self.type_id = TypeId::of::<T>();
+            self.history.push((newalloc, i.1));
+            i.1 = 0;
         }
     }
 
-    pub unsafe fn clear(&mut self) {
-        let storage = &mut *self.storage.get();
-        match storage {
-            Storage::Stack(_) => {} // No cleanup needed for stack
-            Storage::Heap { ptr, layout, .. } => {
-                drop_in_place(ptr.as_ptr() as *mut MaybeUninit<u8>);
-                dealloc(ptr.as_ptr(), *layout);
+    pub fn reconstruct<T: 'static>(&mut self) -> BTreeSet<Log<T>> {
+        todo!()
+    }
+
+    pub fn fetch_state<T: 'static>(&self) -> T {
+        unsafe { (self.state as *mut T).read() }
+    }
+
+    pub fn update<T: 'static>(&mut self, new: T, time: usize) {
+        unsafe {
+            let current = ptr::replace(self.state as *mut T, new);
+            if mem::size_of_val::<T>(&current) == 0 {
+                return;
             }
+            self.write::<T>(current, time);
         }
     }
 }
 
-pub struct Snowball<const N: usize, const M: usize> {
-    buffers: [UnsafeCell<Snowflake<N>>; M],
-    index: usize,
+pub struct Katko {
+    pub agents: Vec<Lumi>,
+    pub global: Option<Lumi>,
+    pub events: Lumi,
 }
 
-impl<const N: usize, const M: usize> Snowball<N, M> {
-    pub fn new() -> Self {
-        Self {
-            buffers: std::array::from_fn(|_| UnsafeCell::new(Snowflake::new())),
-            index: 0,
+impl Katko {
+    pub fn init<T: 'static>(global: bool, slots: usize) -> Self {
+        let global = if global == true {
+            Some(Lumi::initialize::<T>(slots))
+        } else {
+            None
+        };
+        Katko {
+            agents: Vec::new(),
+            global,
+            events: Lumi::initialize::<Event>(slots),
         }
     }
 
-    pub fn log<T: 'static>(&mut self, value: T) {
-        let idx = self.index;
-        self.index = (idx + 1) % M;
-        unsafe {
-            let flake = &mut *self.buffers[idx].get();
-            flake.store(value);
+    pub fn add_agent<T: 'static>(&mut self, slots: usize) {
+        self.agents.push(Lumi::initialize::<T>(slots));
+    }
+
+    pub fn write_event(&mut self, event: Event) {
+        let time = event.time as usize;
+        self.events.write(event, time);
+    }
+
+    pub fn write_global<T: 'static>(&mut self, state: T, time: usize) {
+        if self.global.is_some() {
+            self.global.as_mut().unwrap().update(state, time);
         }
     }
 }

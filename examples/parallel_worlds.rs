@@ -1,4 +1,3 @@
-use std::ffi::c_void;
 use std::time::Instant;
 
 use aika::universes::Universe;
@@ -16,7 +15,7 @@ impl AdderAgent {
 }
 
 impl Agent for AdderAgent {
-    fn step(&mut self, _: &mut Option<*mut c_void>, time: &u64, _: Supports) -> Event {
+    fn step(&mut self, time: &u64, _: Supports) -> Event {
         self.sum += 1;
 
         Event::new(*time, *time, self.id, Action::Wait)
@@ -26,14 +25,14 @@ impl Agent for AdderAgent {
 fn main() {
     let duration = 20_000_000f64;
     let timestep = 1.0;
-    let config = Config::new(timestep, Some(duration), 10, 10, false);
+    let config = Config::new(timestep, Some(duration), 10, 10, false, false);
 
-    let mut universe = Universe::<8, 1>::new();
+    let mut universe = Universe::<256, 8, 1>::new();
 
     for _ in 0..10 {
-        let mut world = World::create(config.clone(), None);
+        let mut world = World::create::<()>(config.clone(), None);
 
-        world.spawn(Box::new(AdderAgent::new(0)));
+        world.spawn::<()>(Box::new(AdderAgent::new(0)));
 
         world.schedule(0, 0).unwrap();
 

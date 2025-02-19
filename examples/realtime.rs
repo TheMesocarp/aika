@@ -9,11 +9,11 @@ fn main() {
     let terminal = Some(duration_secs as f64);
 
     // minimal config world, no logs, no mail, no live for base processing speed benchmark
-    let config = Config::new(timestep, terminal, 10, 10, true);
-    let mut world = World::<128, 1>::create(config, None);
+    let config = Config::new(timestep, terminal, 10, 10, false, false);
+    let mut world = World::<2048, 128, 1>::create::<()>(config, None);
 
     let agent = TestAgent::new(0);
-    world.spawn(Box::new(agent));
+    world.spawn::<()>(Box::new(agent));
     world.schedule(0, 0).unwrap();
 
     let start = Instant::now();

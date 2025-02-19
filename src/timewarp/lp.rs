@@ -5,8 +5,6 @@ use std::sync::Arc;
 
 use crate::clock::Clock;
 use crate::clock::Scheduleable;
-use crate::logger::History;
-use crate::logger::States;
 use crate::worlds::Agent;
 use crate::worlds::Event;
 use crate::worlds::Message;
@@ -59,7 +57,6 @@ impl Ord for Object {
 pub struct LP<const SLOTS: usize, const HEIGHT: usize, const SIZE: usize> {
     pub scheduler: Clock<Object, SLOTS, HEIGHT>,
     pub state: Option<*mut c_void>,
-    pub history: Option<History>,
     pub antimessages: Vec<AntiMessage>,
     pub buffers: [CircularBuffer<SIZE>; 2],
     pub agent: Box<dyn Agent>,
@@ -77,15 +74,9 @@ impl<const SLOTS: usize, const HEIGHT: usize, const SIZE: usize> LP<SLOTS, HEIGH
         step: Arc<AtomicUsize>,
         buffers: [CircularBuffer<SIZE>; 2],
     ) -> Self {
-        let history = if init_state.is_some() {
-            Some(History(Vec::new()))
-        } else {
-            None
-        };
         LP {
             scheduler: Clock::<Object, SLOTS, HEIGHT>::new(timestep, None).unwrap(),
             state: init_state,
-            history,
             antimessages: Vec::new(),
             buffers,
             agent,
