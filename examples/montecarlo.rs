@@ -1,8 +1,5 @@
 #![allow(dead_code, unused_variables)]
-use aika::{
-    worlds::{Action, Agent, Config, Event},
-    TestAgent,
-};
+use aika::prelude::*;
 use rand::rng;
 use rand_distr::{Distribution, Normal};
 
@@ -20,26 +17,19 @@ struct MCAgent {
     drift: f64,
     volatility: f64,
     dt: f64,
-    current_value: f64,
     serialized: [u8; 8],
 }
 
 impl Agent for MCAgent {
-    fn step<'a>(
-        &mut self,
-        state: &mut Option<Vec<u8>>,
-        time: &f64,
-        mailbox: &mut aika::worlds::Mailbox,
-    ) -> Event {
-        self.current_value =
-            gbm_next_step(self.current_value, self.drift, self.volatility, self.dt);
-        self.serialized = self.current_value.to_be_bytes();
-
-        Event::new(*time, self.id, Action::Timeout(1.0))
-    }
-
-    fn get_state(&self) -> Option<&[u8]> {
-        Some(&self.serialized)
+    fn step<'a>(&mut self, step: &u64, supports: Supports<'a>) -> Event {
+        let lumi = match supports {
+            Supports::Both(_, logger) => logger,
+            _ => panic!("Expected logger"),
+        };
+        let current = lumi.fetch_state::<f64>();
+        let new = gbm_next_step(current, self.drift, self.volatility, self.dt);
+        lumi.update(new, *step as usize);
+        Event::new(*step, *step + 1, self.id, Action::Timeout(1))
     }
 }
 
@@ -59,7 +49,6 @@ impl MCAgent {
             drift,
             volatility,
             dt,
-            current_value: initial_value,
             serialized,
         }
     }
@@ -67,13 +56,11 @@ impl MCAgent {
 
 fn main() {
     let ts = 1.0;
-    let config = Config::new(ts, Some(19000000.0), 10, 10, true);
-    let mut world = aika::worlds::World::<128, 1>::create(config);
+    let config = Config::new(ts, Some(20000000.0), 10, 10, true, false);
+    let mut world = aika::worlds::World::<256, 128, 1>::create::<()>(config, None);
     let agent = MCAgent::new(0, "Test".to_string(), 0.1, 0.2, ts, 100.0);
-    let agent1 = TestAgent::new(1, "Test1".to_string());
-    world.spawn(Box::new(agent));
-    world.spawn(Box::new(agent1));
-    //world.schedule(0.0, 0).unwrap();
+    world.spawn::<f64>(Box::new(agent));
+    world.schedule(0, 0).unwrap();
     let start = std::time::Instant::now();
     world.run().unwrap();
     let elapsed = start.elapsed();
@@ -91,6 +78,6 @@ fn main() {
     );
     println!(
         "logger size: {}",
-        world.logger.unwrap().get_snapshots().len()
+        world.logger.unwrap().agents[0].history.len()
     );
 }

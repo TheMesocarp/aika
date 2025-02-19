@@ -6,19 +6,21 @@ edition = "2021"
 [profile.release]
 debug = true
 
+[features]
+
+timewarp = []
+universes = ["dep:rayon"]
+
 [dependencies]
-tokio = {version = "1.43.0", features = ["full", "time", "sync", "rt", "rt-multi-thread"]}
-tokio-macros = "2.5.0"
-futures = "0.3.31"
-anyhow = "1.0.95"
-rayon = "1.10.0"
-serde = "1.0.217"
-serde_json = "1.0.138"
+rayon = {version="1.10.0", optional = true}
+serde = {version="1.0.217"}
 rand = "0.9.0"
 rand_distr = "0.5.0"
+smallvec = "1.14.0"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
+aika = { path = ".", features = ["timewarp", "universes"] }
 
 [[bench]]
 name = "sim_bench"

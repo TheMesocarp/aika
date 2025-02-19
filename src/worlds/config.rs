@@ -6,6 +6,7 @@ pub struct Config {
     pub buffer_size: usize,
     pub mailbox_size: usize,
     pub logs: bool,
+    pub shared_state: bool,
 }
 
 impl Config {
@@ -15,6 +16,7 @@ impl Config {
         buffer_size: usize,
         mailbox_size: usize,
         logs: bool,
+        shared_state: bool,
     ) -> Self {
         Config {
             timestep,
@@ -22,6 +24,7 @@ impl Config {
             buffer_size,
             mailbox_size,
             logs,
+            shared_state,
         }
     }
 }

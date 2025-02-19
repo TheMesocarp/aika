@@ -1,8 +1,11 @@
 use std::cmp::Reverse;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
+use std::ffi::c_void;
 
-use super::{Action, Agent, Clock, Config, Event, Mailbox, Message, SimError};
-use crate::logger::Logger;
+use super::agent::Supports;
+use super::{Action, Agent, Config, Event, Mailbox, SimError};
+use crate::clock::Clock;
+use crate::logger::Katko;
 
 /// Control commands for the real-time simulation
 ///
@@ -16,42 +19,47 @@ use crate::logger::Logger;
 // }
 
 /// A world that can contain multiple agents and run a simulation.
-pub struct World<const SLOTS: usize, const HEIGHT: usize> {
-    overflow: BTreeSet<Reverse<Event>>,
-    clock: Clock<SLOTS, HEIGHT>,
-    _savedmail: BTreeSet<Message>,
+pub struct World<const LOGS: usize, const SLOTS: usize, const HEIGHT: usize> {
+    pub overflow: BTreeSet<Reverse<Event>>,
+    pub clock: Clock<Event, SLOTS, HEIGHT>,
     pub agents: Vec<Box<dyn Agent>>,
     mailbox: Mailbox,
-    state: Option<Vec<u8>>,
-    pub logger: Option<Logger>,
+    state: Option<*mut c_void>,
+    pub logger: Option<Katko>,
 }
 
-unsafe impl<const SLOTS: usize, const HEIGHT: usize> Send for World<SLOTS, HEIGHT> {}
-unsafe impl<const SLOTS: usize, const HEIGHT: usize> Sync for World<SLOTS, HEIGHT> {}
+unsafe impl<const LOGS: usize, const SLOTS: usize, const HEIGHT: usize> Send
+    for World<LOGS, SLOTS, HEIGHT>
+{
+}
+unsafe impl<const LOGS: usize, const SLOTS: usize, const HEIGHT: usize> Sync
+    for World<LOGS, SLOTS, HEIGHT>
+{
+}
 
-impl<const SLOTS: usize, const HEIGHT: usize> World<SLOTS, HEIGHT> {
+impl<const LOGS: usize, const SLOTS: usize, const HEIGHT: usize> World<LOGS, SLOTS, HEIGHT> {
     /// Create a new world with the given configuration.
     /// By default, this will include a logger for state logging and a mailbox for message passing between agents.
-    pub fn create(config: Config) -> Self {
+    pub fn create<T: 'static>(config: Config, init_state: Option<*mut c_void>) -> Self {
         World {
             overflow: BTreeSet::new(),
-            clock: Clock::<SLOTS, HEIGHT>::new(config.timestep, config.terminal).unwrap(),
-            _savedmail: BTreeSet::new(),
+            clock: Clock::<Event, SLOTS, HEIGHT>::new(config.timestep, config.terminal).unwrap(),
             agents: Vec::new(),
             mailbox: Mailbox::new(config.mailbox_size),
-            state: None,
-            logger: config.logs.then_some(Logger::new()),
+            state: init_state,
+            logger: config
+                .logs
+                .then_some(Katko::init::<T>(config.shared_state, LOGS)),
         }
     }
 
     /// Spawn a new agent into the world.
-    pub fn spawn(&mut self, agent: Box<dyn Agent>) -> usize {
+    pub fn spawn<T: 'static>(&mut self, agent: Box<dyn Agent>) -> usize {
         self.agents.push(agent);
+        if self.logger.is_some() {
+            self.logger.as_mut().unwrap().add_agent::<T>(LOGS);
+        }
         self.agents.len() - 1
-    }
-
-    fn _log_mail(&mut self, msg: Message) {
-        self._savedmail.insert(msg);
     }
 
     fn commit(&mut self, event: Event) {
@@ -68,17 +76,17 @@ impl<const SLOTS: usize, const HEIGHT: usize> World<SLOTS, HEIGHT> {
 
     /// Get the current time of the simulation.
     #[inline(always)]
-    pub fn now(&self) -> f64 {
-        self.clock.time.time
-    }
-
-    /// Get the current step of the simulation.
-    pub fn step_counter(&self) -> usize {
+    pub fn now(&self) -> u64 {
         self.clock.time.step
     }
 
-    /// Clone the current state of the simulation.
-    pub fn state(&self) -> Option<Vec<u8>> {
+    /// Get the current step of the simulation.
+    pub fn step_counter(&self) -> u64 {
+        self.clock.time.step
+    }
+
+    /// Clone the current state pointer of the simulation.
+    pub fn state(&self) -> Option<*mut c_void> {
         self.state.clone()
     }
 
@@ -107,95 +115,86 @@ impl<const SLOTS: usize, const HEIGHT: usize> World<SLOTS, HEIGHT> {
     // }
 
     /// Schedule an event for an agent at a given time.
-    pub fn schedule(&mut self, time: f64, agent: usize) -> Result<(), SimError> {
+    pub fn schedule(&mut self, time: u64, agent: usize) -> Result<(), SimError> {
         if time < self.now() {
             return Err(SimError::TimeTravel);
-        } else if time > self.clock.time.terminal.unwrap_or(f64::INFINITY) {
+        } else if time as f64 * self.clock.time.timestep
+            > self.clock.time.terminal.unwrap_or(f64::INFINITY)
+        {
             return Err(SimError::PastTerminal);
         }
-
-        self.commit(Event::new(time, agent, Action::Wait));
+        let now = self.now();
+        self.commit(Event::new(now, time, agent, Action::Wait));
         Ok(())
     }
 
     /// Run the simulation.
     pub fn run(&mut self) -> Result<(), SimError> {
         loop {
-            if self.now() + self.clock.time.timestep
+            if (self.now() + 1) as f64 * self.clock.time.timestep
                 > self.clock.time.terminal.unwrap_or(f64::INFINITY)
             {
                 break;
             }
 
-            match self.clock.tick(&mut self.overflow) {
+            match self.clock.tick() {
                 Ok(events) => {
                     for event in events {
-                        if event.time > self.clock.time.terminal.unwrap_or(f64::INFINITY) {
+                        if event.time as f64 * self.clock.time.timestep
+                            > self.clock.time.terminal.unwrap_or(f64::INFINITY)
+                        {
                             break;
                         }
-
-                        let event = &mut self.agents[event.agent].step(
-                            &mut self.state,
-                            &event.time,
-                            &mut self.mailbox,
-                        );
-
-                        self.handle_log(event);
+                        let supports = if self.logger.is_none() {
+                            Supports::Mailbox(&mut self.mailbox)
+                        } else {
+                            Supports::Both(
+                                &mut self.mailbox,
+                                &mut self.logger.as_mut().unwrap().agents[event.agent],
+                            )
+                        };
+                        let event = self.agents[event.agent].step(&event.time, supports);
 
                         match event.yield_ {
                             Action::Timeout(time) => {
-                                if self.now() + time
+                                if (self.now() + time) as f64 * self.clock.time.timestep
                                     > self.clock.time.terminal.unwrap_or(f64::INFINITY)
                                 {
                                     continue;
                                 }
 
                                 self.commit(Event::new(
+                                    self.now(),
                                     self.now() + time,
                                     event.agent,
                                     Action::Wait,
                                 ));
                             }
                             Action::Schedule(time) => {
-                                self.commit(Event::new(time, event.agent, Action::Wait));
+                                self.commit(Event::new(
+                                    self.now(),
+                                    time,
+                                    event.agent,
+                                    Action::Wait,
+                                ));
                             }
                             Action::Trigger { time, idx } => {
-                                self.commit(Event::new(time, idx, Action::Wait));
+                                self.commit(Event::new(self.now(), time, idx, Action::Wait));
                             }
                             Action::Wait => {}
                             Action::Break => {
                                 break;
                             }
                         }
+                        if self.logger.is_some() {
+                            self.logger.as_mut().unwrap().write_event(event);
+                        }
                     }
                 }
                 Err(_) => {}
             }
+            self.clock.increment(&mut self.overflow);
         }
         Ok(())
-    }
-
-    /// Handles logging of events, provided the logger is active.
-    #[inline(always)]
-    fn handle_log(&mut self, event: &Event) {
-        if let Some(logger) = &mut self.logger {
-            let agent_states: BTreeMap<usize, Vec<u8>> = self
-                .agents
-                .iter()
-                .filter_map(|agent| agent.get_state())
-                .map(|state| state.to_vec())
-                .enumerate()
-                .collect();
-
-            logger.log(
-                self.clock.time.time,
-                match &self.state {
-                    Some(state) => Some(state.clone()),
-                    None => None,
-                },
-                agent_states,
-                event.clone(),
-            );
-        }
     }
 }
