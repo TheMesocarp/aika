@@ -33,13 +33,13 @@ assert!(world.run().await.unwrap() == ());
 
 ## benchmark
 
-Benchmark tests can be found in the `/benches/` directory, there is currently only one, for event scehduling throughput for a simple monte carlo simulator. 30 million monte carlo events are scheduled and processed during this test with no extraneous agent logic, with results as follows for the two systems tested on:
+Benchmark tests can be found in the `/benches/` directory, there is currently only one, for event scehduling throughput for a simple monte carlo simulator. 40 million monte carlo events are scheduled and processed during this test with no extraneous agent logic, with results as follows for the two systems tested on:
 
 
 | CPU Model | RAM | Low | Average | High | Events/Sec (EPS) |
 |-----------|-----|-----|---------|------|------------|
-| i7-13700F | 32 GB | 0.9666 s | 0.9670 s | 0.9674 s | ~31.0e6 |
-| Apple M2 | 8 GB  | 0.8968 s | 0.8974 s | 0.8982 s | ~33.4e6 |
+| i7-13700F | 32 GB | 1.0052 s | 1.0068 s | 1.0087 s | ~39.8e6 |
+| Apple M2 | 8 GB  | 0.9455 s | 0.9474 s | 0.9498 s | ~42.2e6 |
 
 ## contributions
 
