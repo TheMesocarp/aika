@@ -1,34 +1,40 @@
 use std::{
-    alloc::{alloc, Layout},
-    any::TypeId,
-    collections::BTreeSet,
-    mem,
-    ptr::{self, drop_in_place},
+    alloc::{alloc, dealloc, Layout}, any::TypeId, cmp::Ordering, collections::BTreeSet, mem, ptr::{self, drop_in_place}
 };
 
 use crate::worlds::Event;
 
-#[derive(PartialEq, Eq, PartialOrd, Ord)]
-struct Log<T: 'static>(T, usize);
+pub struct Log<T: 'static>(T, usize);
+
+impl<T: 'static> PartialEq for Log<T>{
+    fn eq(&self, other: &Self) -> bool {
+        self.1 == other.1
+    }
+}
+
+impl<T: 'static> Eq for Log<T>{}
+
+impl<T: 'static> PartialOrd for Log<T> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<T: 'static> Ord for Log<T> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.1.partial_cmp(&other.1).unwrap()
+    }
+}
+
 
 #[derive(Copy, Clone)]
-struct MetaData {
+pub struct MetaData {
     pub type_id: TypeId,
     size: usize,
     align: usize,
+    layout: Layout,
     dropfn: unsafe fn(*mut u8),
 }
-impl MetaData {
-    fn default() -> Self {
-        MetaData {
-            type_id: TypeId::of::<()>(),
-            size: 0,
-            align: 1,
-            dropfn: drop_noop,
-        }
-    }
-}
-unsafe fn drop_noop(_ptr: *mut u8) {}
 
 unsafe fn drop_value<T>(_ptr: *mut u8) {
     drop_in_place(_ptr as *mut T)
@@ -36,9 +42,9 @@ unsafe fn drop_value<T>(_ptr: *mut u8) {
 
 pub struct Lumi {
     arena: Vec<(*mut u8, usize)>,
-    pub state: *mut u8,
     slots: usize,
     current: usize,
+    pub state: *mut u8,
     pub metadata: MetaData,
     pub history: Vec<(*mut u8, usize)>,
 }
@@ -48,10 +54,11 @@ impl Lumi {
         let current = 0;
         let size = size_of::<T>();
         let align = align_of::<T>();
+        let layout = Layout::from_size_align(size, align).unwrap();
         let type_id = TypeId::of::<T>();
         let arena = vec![
             (
-                unsafe { alloc(Layout::from_size_align(size, align).unwrap()) },
+                unsafe { alloc(layout) },
                 0
             );
             slots
@@ -61,10 +68,11 @@ impl Lumi {
             type_id,
             size,
             align,
+            layout,
             dropfn: drop_value::<T>,
         };
 
-        let state = unsafe { alloc(Layout::from_size_align(size, align).unwrap()) };
+        let state = unsafe { alloc(layout) };
         let history = Vec::new();
         Lumi {
             arena,
@@ -87,7 +95,7 @@ impl Lumi {
 
         if is == false {
             unsafe {
-                let ptr_heap = alloc(Layout::from_size_align(size, align).unwrap()) as *mut T;
+                let ptr_heap = alloc(self.metadata.layout) as *mut T;
                 ptr_heap.write(state);
                 self.history.push((ptr_heap as *mut u8, time));
             }
@@ -107,8 +115,7 @@ impl Lumi {
 
     fn flush(&mut self) {
         for i in &mut self.arena {
-            let layout = Layout::from_size_align(self.metadata.size, self.metadata.align);
-            let newalloc = unsafe { alloc(layout.unwrap()) };
+            let newalloc = unsafe { alloc(self.metadata.layout) };
             unsafe {
                 ptr::swap(newalloc, i.0);
             }
@@ -118,20 +125,45 @@ impl Lumi {
     }
 
     pub fn reconstruct<T: 'static>(&mut self) -> BTreeSet<Log<T>> {
-        todo!()
+        self.history.iter().map(|(x, y)| {
+            assert_eq!(self.metadata.type_id, TypeId::of::<T>());
+            let read = unsafe { ptr::read(*x as *mut T) };
+            Log(read, *y)
+        }).collect::<BTreeSet<Log<T>>>()
     }
 
     pub fn fetch_state<T: 'static>(&self) -> T {
+        assert_eq!(self.metadata.type_id, TypeId::of::<T>());
         unsafe { (self.state as *mut T).read() }
     }
 
     pub fn update<T: 'static>(&mut self, new: T, time: usize) {
+        assert_eq!(self.metadata.type_id, TypeId::of::<T>());
         unsafe {
             let current = ptr::replace(self.state as *mut T, new);
             if mem::size_of_val::<T>(&current) == 0 {
                 return;
             }
             self.write::<T>(current, time);
+        }
+    }
+
+    pub fn wrap_up<T: 'static>(&mut self) {
+        if self.current != 0 {
+            for i in 0..self.current {
+                let newalloc = unsafe { alloc(self.metadata.layout) };
+                unsafe {
+                    ptr::swap(newalloc, self.arena[i].0);
+                }
+                self.history.push((newalloc, self.arena[i].1));
+                self.arena[i].1 = 0;
+            }
+        }
+
+        unsafe {
+            for i in &mut self.arena {
+                dealloc(i.0, Layout::from_size_align(self.metadata.size, self.metadata.align).unwrap());
+            }
         }
     }
 }
@@ -167,6 +199,7 @@ impl Katko {
 
     pub fn write_global<T: 'static>(&mut self, state: T, time: usize) {
         if self.global.is_some() {
+            assert_eq!(self.global.as_ref().unwrap().metadata.type_id, TypeId::of::<T>());
             self.global.as_mut().unwrap().update(state, time);
         }
     }
