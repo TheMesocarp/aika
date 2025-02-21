@@ -10,12 +10,12 @@ rand_distr = "0.5.1"
 
 [[bin]]
 name = "basic"
-path = "basic.rs"
+path = "src/basic.rs"
 
 [[bin]]
 name = "mc"
-path = "montecarlo.rs"
+path = "src/montecarlo.rs"
 
 [[bin]]
 name = "universe"
-path = "parallel_worlds.rs"
+path = "src/parallel_worlds.rs"
