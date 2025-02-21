@@ -54,3 +54,20 @@ impl Scheduleable for AntiMessage {
         self.sent
     }
 }
+
+pub struct Annihilator(pub Message, pub AntiMessage);
+
+impl Annihilator {
+    pub fn conjure<T: 'static>(
+        creation_time: u64,
+        from_id: usize,
+        to_id: usize,
+        process_time: u64,
+        data: &T,
+    ) -> Self {
+        let ptr = data as *const T as *const u8;
+        let msg = Message::new(ptr, creation_time, process_time, from_id, to_id);
+        let anti = AntiMessage::new(creation_time, process_time, from_id, to_id);
+        Self(msg, anti)
+    }
+}

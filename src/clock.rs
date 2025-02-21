@@ -1,5 +1,5 @@
-use std::{any::TypeId, cmp::Reverse, collections::BTreeSet};
 use crate::{timewarp::lp::Object, worlds::SimError};
+use std::{any::TypeId, cmp::Reverse, collections::BTreeSet};
 
 pub trait Scheduleable {
     fn time(&self) -> u64;
@@ -108,21 +108,27 @@ impl<T: Scheduleable + Ord, const SLOTS: usize, const HEIGHT: usize> Clock<T, SL
 
     #[cfg(feature = "timewarp")]
     /// Rollback the wheel
-    pub fn rollback(&mut self, time: u64, overflow: &mut BTreeSet<Reverse<T>>) -> Result<(), SimError>{
+    pub fn rollback(
+        &mut self,
+        time: u64,
+        overflow: &mut BTreeSet<Reverse<T>>,
+    ) -> Result<(), SimError> {
         self.current_idxs.iter_mut().for_each(|x| *x = 0);
         self.time.step = time;
         self.time.time = time as f64 * self.time.timestep;
-        
+
         let mut resubmit = Vec::new();
-        self.wheels.iter_mut().for_each(|x| x.iter_mut().for_each(|x| {
-            if x.len() > 0 {
-                check_process_object_list(time, x);
-                for i in 0..x.len() {
-                    let g = x.remove(i);
-                    resubmit.push(g);
-                };
-            }
-        }));
+        self.wheels.iter_mut().for_each(|x| {
+            x.iter_mut().for_each(|x| {
+                if x.len() > 0 {
+                    check_process_object_list(time, x);
+                    for i in 0..x.len() {
+                        let g = x.remove(i);
+                        resubmit.push(g);
+                    }
+                }
+            })
+        });
         for i in 0..resubmit.len() {
             let result = self.insert(resubmit.remove(i));
             if result.is_err() {

@@ -1,18 +1,22 @@
 use std::{
-    alloc::{alloc, dealloc, Layout}, any::TypeId, cmp::Ordering, collections::BTreeSet, mem, ptr::{self, drop_in_place}
+    alloc::{alloc, dealloc, Layout},
+    any::TypeId,
+    cmp::Ordering,
+    mem,
+    ptr::{self, drop_in_place},
 };
 
 use crate::worlds::{Event, SimError};
 
 pub struct Log<T: 'static>(T, u64);
 
-impl<T: 'static> PartialEq for Log<T>{
+impl<T: 'static> PartialEq for Log<T> {
     fn eq(&self, other: &Self) -> bool {
         self.1 == other.1
     }
 }
 
-impl<T: 'static> Eq for Log<T>{}
+impl<T: 'static> Eq for Log<T> {}
 
 impl<T: 'static> PartialOrd for Log<T> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
@@ -25,7 +29,6 @@ impl<T: 'static> Ord for Log<T> {
         self.1.partial_cmp(&other.1).unwrap()
     }
 }
-
 
 #[derive(Copy, Clone)]
 pub struct MetaData {
@@ -57,14 +60,8 @@ impl Lumi {
         let align = align_of::<T>();
         let layout = Layout::from_size_align(size, align).unwrap();
         let type_id = TypeId::of::<T>();
-        let arena = vec![
-            (
-                unsafe { alloc(layout) },
-                0
-            );
-            slots
-        ];
-    
+        let arena = vec![(unsafe { alloc(layout) }, 0); slots];
+
         let metadata = MetaData {
             type_id,
             size,
@@ -95,7 +92,11 @@ impl Lumi {
             end <= (self.arena[slot].0 as usize + self.metadata.size)
         });
         unsafe {
-            let ptr = if is == false { alloc(self.metadata.layout) as *mut T } else { aligned as *mut T};
+            let ptr = if is == false {
+                alloc(self.metadata.layout) as *mut T
+            } else {
+                aligned as *mut T
+            };
             ptr.write(state);
             self.arena[slot].0 = ptr as *mut u8;
         }
@@ -125,7 +126,7 @@ impl Lumi {
         let arena_maybe = self.arena.iter().rposition(|&(_, x)| x == time);
         if arena_maybe.is_some() {
             let idx = arena_maybe.unwrap();
-            unsafe {ptr::swap(self.state, self.arena[idx].0)};
+            unsafe { ptr::swap(self.state, self.arena[idx].0) };
             for i in idx..self.current {
                 let ptr = self.arena[i].0;
                 unsafe {
@@ -133,12 +134,11 @@ impl Lumi {
                 }
             }
             return Ok(());
-
         }
         let last_idx = self.history.iter().rposition(|&(_, t)| t == time).unwrap();
-        for i in (last_idx+1)..self.history.len() {
+        for i in (last_idx + 1)..self.history.len() {
             let (ptr, _) = self.history[i];
-            unsafe { 
+            unsafe {
                 (self.metadata.dropfn)(ptr);
                 dealloc(ptr, self.metadata.layout);
             };
@@ -180,7 +180,10 @@ impl Lumi {
             ptr::swap(newalloc, self.state);
             dealloc(self.state, self.metadata.layout);
             for i in &mut self.arena {
-                dealloc(i.0, Layout::from_size_align(self.metadata.size, self.metadata.align).unwrap());
+                dealloc(
+                    i.0,
+                    Layout::from_size_align(self.metadata.size, self.metadata.align).unwrap(),
+                );
             }
         }
         self.history.push((newalloc, self.time));
@@ -218,7 +221,10 @@ impl Katko {
 
     pub fn write_global<T: 'static>(&mut self, state: T, time: u64) {
         if self.global.is_some() {
-            assert_eq!(self.global.as_ref().unwrap().metadata.type_id, TypeId::of::<T>());
+            assert_eq!(
+                self.global.as_ref().unwrap().metadata.type_id,
+                TypeId::of::<T>()
+            );
             self.global.as_mut().unwrap().update(state, time);
         }
     }

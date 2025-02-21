@@ -11,7 +11,7 @@ use super::antimessage::AntiMessage;
 pub enum Transferable {
     Message(Message),
     AntiMessage(AntiMessage),
-    Nan
+    Nan,
 }
 
 impl Transferable {
@@ -19,7 +19,14 @@ impl Transferable {
         match self {
             Transferable::Message(m) => m.to,
             Transferable::AntiMessage(am) => am.to,
-            Transferable::Nan => 0
+            Transferable::Nan => 0,
+        }
+    }
+    pub fn received(&self) -> u64 {
+        match self {
+            Transferable::Message(m) => m.received,
+            Transferable::AntiMessage(am) => am.received,
+            Transferable::Nan => u64::MAX,
         }
     }
 }
@@ -27,11 +34,37 @@ impl Transferable {
 impl PartialEq for Transferable {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (Transferable::Message(_), Transferable::Message(_)) => true,
-            (Transferable::AntiMessage(_), Transferable::AntiMessage(_)) => true,
+            (Transferable::Message(m1), Transferable::Message(m2)) => {
+                if m1.received == m2.received {
+                    true
+                } else {
+                    false
+                }
+            }
+            (Transferable::AntiMessage(m1), Transferable::AntiMessage(m2)) => {
+                if m1.received == m2.received {
+                    true
+                } else {
+                    false
+                }
+            }
             (Transferable::Nan, Transferable::Nan) => true,
             _ => false,
         }
+    }
+}
+
+impl Eq for Transferable {}
+
+impl PartialOrd for Transferable {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Transferable {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.received().partial_cmp(&other.received()).unwrap()
     }
 }
 

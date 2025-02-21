@@ -51,12 +51,12 @@ impl Agent for SingleStepAgent {
 // Messenger Agent
 pub struct MessengerAgent {
     pub id: usize,
-    pub name: String,
+    pub message: String,
 }
 
 impl MessengerAgent {
     pub fn new(id: usize, name: String) -> Self {
-        MessengerAgent { id, name }
+        MessengerAgent { id, message: name }
     }
 }
 
@@ -67,8 +67,8 @@ impl Agent for MessengerAgent {
             _ => panic!("Mailbox not found"),
         };
         let _messages = mailbox.receive(self.id);
-
-        let return_message = Message::new("Hello".into(), *time, *time + 1, self.id, 1);
+        let ptr = &self.message as *const String as *const u8;
+        let return_message = Message::new(ptr, *time, *time + 1, self.id, 1);
 
         mailbox.send(return_message);
 
