@@ -117,7 +117,7 @@ impl Lumi {
             i.1 = 0;
         }
     }
-
+  
     #[cfg(feature = "timewarp")]
     pub fn rollback(&mut self, time: u64) -> Result<(), SimError> {
         if time >= self.time {
