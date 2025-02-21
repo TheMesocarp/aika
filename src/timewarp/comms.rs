@@ -24,6 +24,17 @@ impl Transferable {
     }
 }
 
+impl PartialEq for Transferable {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Transferable::Message(_), Transferable::Message(_)) => true,
+            (Transferable::AntiMessage(_), Transferable::AntiMessage(_)) => true,
+            (Transferable::Nan, Transferable::Nan) => true,
+            _ => false,
+        }
+    }
+}
+
 pub struct CircularBuffer<const SIZE: usize> {
     pub ptr: *mut [Option<Transferable>; SIZE],
     pub write_idx: Arc<AtomicUsize>,
