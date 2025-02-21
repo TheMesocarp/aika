@@ -11,6 +11,7 @@ use super::antimessage::AntiMessage;
 pub enum Transferable {
     Message(Message),
     AntiMessage(AntiMessage),
+    Nan
 }
 
 impl Transferable {
@@ -18,6 +19,7 @@ impl Transferable {
         match self {
             Transferable::Message(m) => m.to,
             Transferable::AntiMessage(am) => am.to,
+            Transferable::Nan => 0
         }
     }
 }

@@ -8,6 +8,7 @@ pub enum SimError {
     MailboxFull,
     MailboxEmpty,
     RollbackTimeMismatch,
+    ClockSubmissionFailed,
     NoState,
     NoEvents,
     NoClock,

@@ -1,3 +1,5 @@
+use std::cmp::Reverse;
+use std::collections::BTreeSet;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -56,8 +58,10 @@ impl Ord for Object {
 
 pub struct LP<const SLOTS: usize, const HEIGHT: usize, const SIZE: usize> {
     pub scheduler: Clock<Object, SLOTS, HEIGHT>,
+    pub overflow: BTreeSet<Reverse<Object>>,
     pub state: Lumi,
     pub antimessages: Vec<AntiMessage>,
+    pub queue: [Transferable; SIZE],
     pub buffers: [CircularBuffer<SIZE>; 2],
     pub agent: Box<dyn Agent>,
     pub step: Arc<AtomicUsize>,
@@ -76,8 +80,10 @@ impl<const SLOTS: usize, const HEIGHT: usize, const SIZE: usize> LP<SLOTS, HEIGH
     ) -> Self {
         LP {
             scheduler: Clock::<Object, SLOTS, HEIGHT>::new(timestep, None).unwrap(),
+            overflow: BTreeSet::new(),
             state: Lumi::initialize::<T>(log_slots),
             antimessages: Vec::new(),
+            queue: [const { Transferable::Nan }; SIZE],
             buffers,
             agent,
             step,
@@ -86,22 +92,21 @@ impl<const SLOTS: usize, const HEIGHT: usize, const SIZE: usize> LP<SLOTS, HEIGH
         }
     }
 
-    pub fn read_incoming(&mut self) -> Vec<Transferable> {
-        let mut all_msgs = Vec::<Transferable>::new();
+    fn read_incoming(&mut self) {
         let circular = &self.buffers[0];
         let mut r = circular.read_idx.load(Ordering::Acquire);
         let w = circular.write_idx.load(Ordering::Acquire);
         loop {
             if r == w {
-                return all_msgs;
+                return;
             }
             let msg = unsafe { (*circular.ptr)[r].take().unwrap() };
-            all_msgs.push(msg);
+            self.queue[r] = msg;
             r = (r + 1) % SIZE;
         }
     }
 
-    pub fn write_outgoing(&mut self, msg: Transferable) -> Result<(), SimError> {
+    fn write_outgoing(&mut self, msg: Transferable) -> Result<(), SimError> {
         let circular = &self.buffers[1];
         let w = circular.write_idx.load(Ordering::Acquire);
         let r = circular.read_idx.load(Ordering::Acquire);
@@ -116,5 +121,15 @@ impl<const SLOTS: usize, const HEIGHT: usize, const SIZE: usize> LP<SLOTS, HEIGH
         Ok(())
     }
 
-
+    pub fn rollback(&mut self, time: u64) -> Result<(), SimError> {
+        self.scheduler.rollback(time, &mut self.overflow)?;
+        self.state.rollback(time)?;
+        for i in 0..self.antimessages.len() {
+            if self.antimessages[i].sent > time {
+                let anti = self.antimessages.remove(i);
+                self.write_outgoing(Transferable::AntiMessage(anti))?;
+            }
+        }
+        Ok(())
+    }
 }

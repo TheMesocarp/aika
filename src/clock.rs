@@ -1,5 +1,5 @@
-use std::{cmp::Reverse, collections::BTreeSet};
-use crate::worlds::SimError;
+use std::{any::TypeId, cmp::Reverse, collections::BTreeSet};
+use crate::{timewarp::lp::Object, worlds::SimError};
 
 pub trait Scheduleable {
     fn time(&self) -> u64;
@@ -79,7 +79,7 @@ impl<T: Scheduleable + Ord, const SLOTS: usize, const HEIGHT: usize> Clock<T, SL
         self.current_idxs[0] = (self.current_idxs[0] + 1) % SLOTS;
         self.time.time += self.time.timestep;
         self.time.step += 1;
-        if self.time.step % SLOTS as u64 == 0 {
+        if self.current_idxs[0] as u64 == 0 {
             self.rotate(overflow);
         }
     }
@@ -107,19 +107,45 @@ impl<T: Scheduleable + Ord, const SLOTS: usize, const HEIGHT: usize> Clock<T, SL
     }
 
     #[cfg(feature = "timewarp")]
-    pub fn rollback(&mut self, time: u64) {
-        use std::any::TypeId;
-
-        use crate::{timewarp::lp::Object, worlds::Event};
-
+    /// Rollback the wheel
+    pub fn rollback(&mut self, time: u64, overflow: &mut BTreeSet<Reverse<T>>) -> Result<(), SimError>{
+        self.current_idxs.iter_mut().for_each(|x| *x = 0);
+        self.time.step = time;
+        self.time.time = time as f64 * self.time.timestep;
+        
+        let mut resubmit = Vec::new();
         self.wheels.iter_mut().for_each(|x| x.iter_mut().for_each(|x| {
-            if x.is_empty() {} else {
+            if x.len() > 0 {
+                check_process_object_list(time, x);
                 for i in 0..x.len() {
-                    if x[i].commit_time() >= time && TypeId::of::<T>() == TypeId::of::<Object>() {
-                        x.remove(i);
-                    }
-                }
+                    let g = x.remove(i);
+                    resubmit.push(g);
+                };
             }
         }));
+        for i in 0..resubmit.len() {
+            let result = self.insert(resubmit.remove(i));
+            if result.is_err() {
+                if overflow.insert(Reverse(result.err().unwrap())) == false {
+                    return Err(SimError::ClockSubmissionFailed);
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(feature = "timewarp")]
+fn check_process_object_list<T: Scheduleable + 'static>(time: u64, object_list: &mut Vec<T>) {
+    for i in 0..object_list.len() {
+        if object_list[i].commit_time() >= time && TypeId::of::<T>() == TypeId::of::<Object>() {
+            let obj: &Object = unsafe { &*(&object_list[i] as *const T as *const Object) };
+            match obj {
+                Object::Event(_) => {
+                    object_list.remove(i);
+                }
+                Object::Message(_) => {}
+            }
+        }
     }
 }
