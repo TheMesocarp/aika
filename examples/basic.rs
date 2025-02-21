@@ -9,7 +9,7 @@ fn main() {
     let terminal = Some(duration_secs as f64);
 
     // minimal config world, no logs, no mail, no live for base processing speed benchmark
-    let config = Config::new(timestep, terminal, 10, 10, false, false);
+    let config = Config::new(timestep, terminal, 10, 10, true, false);
     let mut world = World::<2048, 128, 1>::create::<()>(config, None);
 
     let agent = TestAgent::new(0);
@@ -33,7 +33,4 @@ fn main() {
         "Average event processing time: {:.3?} per event",
         elapsed / total_steps as u32
     );
-    // for testing real-time run command line features like pause, resume, and speed up and slow down
-    // just type in the terminal: cargo run --example realtime
-    // and then type the commands: pause, resume, speed 2.0, speed 0.5 or whatever floating point speed you want (there are limits to how accurately the simulator can run in real-time depending on the hardware)
 }

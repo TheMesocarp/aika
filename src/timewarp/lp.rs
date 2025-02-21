@@ -1,10 +1,10 @@
-use std::ffi::c_void;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use crate::clock::Clock;
 use crate::clock::Scheduleable;
+use crate::logger::Lumi;
 use crate::worlds::Agent;
 use crate::worlds::Event;
 use crate::worlds::Message;
@@ -56,7 +56,7 @@ impl Ord for Object {
 
 pub struct LP<const SLOTS: usize, const HEIGHT: usize, const SIZE: usize> {
     pub scheduler: Clock<Object, SLOTS, HEIGHT>,
-    pub state: Option<*mut c_void>,
+    pub state: Lumi,
     pub antimessages: Vec<AntiMessage>,
     pub buffers: [CircularBuffer<SIZE>; 2],
     pub agent: Box<dyn Agent>,
@@ -66,17 +66,17 @@ pub struct LP<const SLOTS: usize, const HEIGHT: usize, const SIZE: usize> {
 }
 
 impl<const SLOTS: usize, const HEIGHT: usize, const SIZE: usize> LP<SLOTS, HEIGHT, SIZE> {
-    pub fn new(
+    pub fn new<T: 'static>(
         id: usize,
         agent: Box<dyn Agent>,
         timestep: f64,
-        init_state: Option<*mut c_void>,
         step: Arc<AtomicUsize>,
         buffers: [CircularBuffer<SIZE>; 2],
+        log_slots: usize
     ) -> Self {
         LP {
             scheduler: Clock::<Object, SLOTS, HEIGHT>::new(timestep, None).unwrap(),
-            state: init_state,
+            state: Lumi::initialize::<T>(log_slots),
             antimessages: Vec::new(),
             buffers,
             agent,
@@ -107,7 +107,7 @@ impl<const SLOTS: usize, const HEIGHT: usize, const SIZE: usize> LP<SLOTS, HEIGH
         let r = circular.read_idx.load(Ordering::Acquire);
         let next = (w + 1) % SIZE;
         if next == r {
-            return Err(SimError::CircularBufferFull);
+            return Err(SimError::MailboxFull);
         }
         unsafe {
             (*circular.ptr)[w] = Some(msg);
@@ -115,10 +115,6 @@ impl<const SLOTS: usize, const HEIGHT: usize, const SIZE: usize> LP<SLOTS, HEIGH
         circular.write_idx.store(next, Ordering::Release);
         Ok(())
     }
-}
 
-// pub fn rollback<T, const SLOTS: usize, const HEIGHT: usize, const SIZE: usize>(lp: &mut LP<SLOTS, HEIGHT, SIZE>, time: u64, state_logs: &mut States<T>) {
-//     let delta = lp.scheduler.time.step - time;
-//     let modulo = delta % SLOTS as u64;
-//     todo!()
-// }
+
+}

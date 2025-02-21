@@ -48,7 +48,7 @@ impl<const LPS: usize, const SIZE: usize> Comms<LPS, SIZE> {
         let r = cbuff.read_idx.load(Ordering::Acquire);
         let next = (w + 1) % SIZE;
         if next == r {
-            return Err(SimError::CircularBufferFull);
+            return Err(SimError::MailboxFull);
         }
         unsafe {
             (*cbuff.ptr)[w] = Some(msg);
@@ -63,7 +63,7 @@ impl<const LPS: usize, const SIZE: usize> Comms<LPS, SIZE> {
         let w = cbuff.write_idx.load(Ordering::Acquire);
         let r = cbuff.read_idx.load(Ordering::Acquire);
         if w == r {
-            return Err(SimError::CircularBufferEmpty);
+            return Err(SimError::MailboxEmpty);
         }
         let msg = unsafe { (*cbuff.ptr)[r].take().unwrap() };
         cbuff.read_idx.store((r + 1) % SIZE, Ordering::Release);

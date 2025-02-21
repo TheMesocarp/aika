@@ -2,9 +2,9 @@ use std::{
     alloc::{alloc, dealloc, Layout}, any::TypeId, cmp::Ordering, collections::BTreeSet, mem, ptr::{self, drop_in_place}
 };
 
-use crate::worlds::Event;
+use crate::worlds::{Event, SimError};
 
-pub struct Log<T: 'static>(T, usize);
+pub struct Log<T: 'static>(T, u64);
 
 impl<T: 'static> PartialEq for Log<T>{
     fn eq(&self, other: &Self) -> bool {
@@ -36,17 +36,18 @@ pub struct MetaData {
     dropfn: unsafe fn(*mut u8),
 }
 
-unsafe fn drop_value<T>(_ptr: *mut u8) {
-    drop_in_place(_ptr as *mut T)
+unsafe fn drop_value<T>(ptr: *mut u8) {
+    drop_in_place(ptr as *mut T)
 }
 
 pub struct Lumi {
-    arena: Vec<(*mut u8, usize)>,
+    arena: Vec<(*mut u8, u64)>,
     slots: usize,
     current: usize,
+    time: u64,
     pub state: *mut u8,
     pub metadata: MetaData,
-    pub history: Vec<(*mut u8, usize)>,
+    pub history: Vec<(*mut u8, u64)>,
 }
 
 impl Lumi {
@@ -63,7 +64,7 @@ impl Lumi {
             );
             slots
         ];
-
+    
         let metadata = MetaData {
             type_id,
             size,
@@ -78,13 +79,14 @@ impl Lumi {
             arena,
             state,
             slots,
+            time: 0,
             current,
             metadata,
             history,
         }
     }
 
-    pub fn write<T: 'static>(&mut self, state: T, time: usize) {
+    pub fn write<T: 'static>(&mut self, state: T, time: u64) {
         let size = size_of_val(&state);
         let align = align_of_val(&state);
         let slot = self.current;
@@ -92,21 +94,12 @@ impl Lumi {
         let is = aligned.checked_add(size).map_or(false, |end| {
             end <= (self.arena[slot].0 as usize + self.metadata.size)
         });
-
-        if is == false {
-            unsafe {
-                let ptr_heap = alloc(self.metadata.layout) as *mut T;
-                ptr_heap.write(state);
-                self.history.push((ptr_heap as *mut u8, time));
-            }
-            return;
-        }
         unsafe {
-            let dest = aligned as *mut T;
-            dest.write(state);
-            self.arena[slot].0 = dest as *mut u8;
-            self.arena[slot].1 = time;
+            let ptr = if is == false { alloc(self.metadata.layout) as *mut T } else { aligned as *mut T};
+            ptr.write(state);
+            self.arena[slot].0 = ptr as *mut u8;
         }
+        self.arena[slot].1 = time;
         if self.current == self.slots - 1 {
             self.flush()
         };
@@ -124,12 +117,33 @@ impl Lumi {
         }
     }
 
-    pub fn reconstruct<T: 'static>(&mut self) -> BTreeSet<Log<T>> {
-        self.history.iter().map(|(x, y)| {
-            assert_eq!(self.metadata.type_id, TypeId::of::<T>());
-            let read = unsafe { ptr::read(*x as *mut T) };
-            Log(read, *y)
-        }).collect::<BTreeSet<Log<T>>>()
+    #[cfg(feature = "timewarp")]
+    pub fn rollback(&mut self, time: u64) -> Result<(), SimError> {
+        if time >= self.time {
+            return Err(SimError::RollbackTimeMismatch);
+        }
+        let arena_maybe = self.arena.iter().rposition(|&(_, x)| x == time);
+        if arena_maybe.is_some() {
+            let idx = arena_maybe.unwrap();
+            unsafe {ptr::swap(self.state, self.arena[idx].0)};
+            for i in idx..self.current {
+                let ptr = self.arena[i].0;
+                unsafe {
+                    ((self.metadata.dropfn)(ptr));
+                }
+            }
+            return Ok(());
+
+        }
+        let last_idx = self.history.iter().rposition(|&(_, t)| t == time).unwrap();
+        for i in (last_idx+1)..self.history.len() {
+            let (ptr, _) = self.history[i];
+            unsafe { 
+                (self.metadata.dropfn)(ptr);
+                dealloc(ptr, self.metadata.layout);
+            };
+        }
+        Ok(())
     }
 
     pub fn fetch_state<T: 'static>(&self) -> T {
@@ -137,14 +151,16 @@ impl Lumi {
         unsafe { (self.state as *mut T).read() }
     }
 
-    pub fn update<T: 'static>(&mut self, new: T, time: usize) {
+    pub fn update<T: 'static>(&mut self, new: T, time: u64) {
         assert_eq!(self.metadata.type_id, TypeId::of::<T>());
         unsafe {
             let current = ptr::replace(self.state as *mut T, new);
             if mem::size_of_val::<T>(&current) == 0 {
                 return;
             }
-            self.write::<T>(current, time);
+
+            self.write::<T>(current, self.time);
+            self.time = time
         }
     }
 
@@ -159,12 +175,15 @@ impl Lumi {
                 self.arena[i].1 = 0;
             }
         }
-
+        let newalloc = unsafe { alloc(self.metadata.layout) };
         unsafe {
+            ptr::swap(newalloc, self.state);
+            dealloc(self.state, self.metadata.layout);
             for i in &mut self.arena {
                 dealloc(i.0, Layout::from_size_align(self.metadata.size, self.metadata.align).unwrap());
             }
         }
+        self.history.push((newalloc, self.time));
     }
 }
 
@@ -193,11 +212,11 @@ impl Katko {
     }
 
     pub fn write_event(&mut self, event: Event) {
-        let time = event.time as usize;
+        let time = event.time;
         self.events.write(event, time);
     }
 
-    pub fn write_global<T: 'static>(&mut self, state: T, time: usize) {
+    pub fn write_global<T: 'static>(&mut self, state: T, time: u64) {
         if self.global.is_some() {
             assert_eq!(self.global.as_ref().unwrap().metadata.type_id, TypeId::of::<T>());
             self.global.as_mut().unwrap().update(state, time);

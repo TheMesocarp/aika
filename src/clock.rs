@@ -1,5 +1,4 @@
 use std::{cmp::Reverse, collections::BTreeSet};
-
 use crate::worlds::SimError;
 
 pub trait Scheduleable {
@@ -15,7 +14,7 @@ pub struct Time {
     pub terminal: Option<f64>,
 }
 
-pub struct Clock<T: Scheduleable + Ord, const SLOTS: usize, const HEIGHT: usize> {
+pub struct Clock<T: Scheduleable + Ord + 'static, const SLOTS: usize, const HEIGHT: usize> {
     pub wheels: [[Vec<T>; SLOTS]; HEIGHT],
     pub current_idxs: [usize; HEIGHT],
     pub time: Time,
@@ -107,10 +106,20 @@ impl<T: Scheduleable + Ord, const SLOTS: usize, const HEIGHT: usize> Clock<T, SL
         }
     }
 
-    // #[cfg(feature = "timewarp")]
-    // pub fn rollback(&mut self, time: u64) {
-    //     let delta = self.time.step - time;
-    //     let modulo = delta % SLOTS as u64;
-    //     todo!()
-    // }
+    #[cfg(feature = "timewarp")]
+    pub fn rollback(&mut self, time: u64) {
+        use std::any::TypeId;
+
+        use crate::{timewarp::lp::Object, worlds::Event};
+
+        self.wheels.iter_mut().for_each(|x| x.iter_mut().for_each(|x| {
+            if x.is_empty() {} else {
+                for i in 0..x.len() {
+                    if x[i].commit_time() >= time && TypeId::of::<T>() == TypeId::of::<Object>() {
+                        x.remove(i);
+                    }
+                }
+            }
+        }));
+    }
 }
