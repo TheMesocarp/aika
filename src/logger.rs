@@ -1,18 +1,23 @@
 use std::{
-    alloc::{alloc, dealloc, Layout}, any::TypeId, cmp::Ordering, collections::BTreeSet, mem, ptr::{self, drop_in_place}
+    alloc::{alloc, dealloc, Layout},
+    any::TypeId,
+    cmp::Ordering,
+    collections::BTreeSet,
+    mem,
+    ptr::{self, drop_in_place},
 };
 
 use crate::worlds::Event;
 
 pub struct Log<T: 'static>(T, usize);
 
-impl<T: 'static> PartialEq for Log<T>{
+impl<T: 'static> PartialEq for Log<T> {
     fn eq(&self, other: &Self) -> bool {
         self.1 == other.1
     }
 }
 
-impl<T: 'static> Eq for Log<T>{}
+impl<T: 'static> Eq for Log<T> {}
 
 impl<T: 'static> PartialOrd for Log<T> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
@@ -25,7 +30,6 @@ impl<T: 'static> Ord for Log<T> {
         self.1.partial_cmp(&other.1).unwrap()
     }
 }
-
 
 #[derive(Copy, Clone)]
 pub struct MetaData {
@@ -56,13 +60,7 @@ impl Lumi {
         let align = align_of::<T>();
         let layout = Layout::from_size_align(size, align).unwrap();
         let type_id = TypeId::of::<T>();
-        let arena = vec![
-            (
-                unsafe { alloc(layout) },
-                0
-            );
-            slots
-        ];
+        let arena = vec![(unsafe { alloc(layout) }, 0); slots];
 
         let metadata = MetaData {
             type_id,
@@ -125,11 +123,14 @@ impl Lumi {
     }
 
     pub fn reconstruct<T: 'static>(&mut self) -> BTreeSet<Log<T>> {
-        self.history.iter().map(|(x, y)| {
-            assert_eq!(self.metadata.type_id, TypeId::of::<T>());
-            let read = unsafe { ptr::read(*x as *mut T) };
-            Log(read, *y)
-        }).collect::<BTreeSet<Log<T>>>()
+        self.history
+            .iter()
+            .map(|(x, y)| {
+                assert_eq!(self.metadata.type_id, TypeId::of::<T>());
+                let read = unsafe { ptr::read(*x as *mut T) };
+                Log(read, *y)
+            })
+            .collect::<BTreeSet<Log<T>>>()
     }
 
     pub fn fetch_state<T: 'static>(&self) -> T {
@@ -162,7 +163,10 @@ impl Lumi {
 
         unsafe {
             for i in &mut self.arena {
-                dealloc(i.0, Layout::from_size_align(self.metadata.size, self.metadata.align).unwrap());
+                dealloc(
+                    i.0,
+                    Layout::from_size_align(self.metadata.size, self.metadata.align).unwrap(),
+                );
             }
         }
     }
@@ -199,7 +203,10 @@ impl Katko {
 
     pub fn write_global<T: 'static>(&mut self, state: T, time: usize) {
         if self.global.is_some() {
-            assert_eq!(self.global.as_ref().unwrap().metadata.type_id, TypeId::of::<T>());
+            assert_eq!(
+                self.global.as_ref().unwrap().metadata.type_id,
+                TypeId::of::<T>()
+            );
             self.global.as_mut().unwrap().update(state, time);
         }
     }
