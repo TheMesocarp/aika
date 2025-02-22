@@ -190,6 +190,9 @@ impl Lumi {
     }
 }
 
+unsafe impl Send for Lumi {}
+unsafe impl Sync for Lumi {}
+
 pub struct Katko {
     pub agents: Vec<Lumi>,
     pub global: Option<Lumi>,

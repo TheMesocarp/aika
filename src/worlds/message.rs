@@ -2,7 +2,7 @@ use std::cmp::Ordering;
 
 use crate::clock::Scheduleable;
 
-/// A message that can be sent between agents.
+/// A message that can be sent between agents
 pub struct Message {
     pub data: *const u8,
     pub sent: u64,
@@ -10,6 +10,9 @@ pub struct Message {
     pub from: usize,
     pub to: usize,
 }
+
+unsafe impl Send for Message {}
+unsafe impl Sync for Message {}
 
 impl Message {
     pub fn new(data: *const u8, sent: u64, received: u64, from: usize, to: usize) -> Self {

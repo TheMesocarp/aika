@@ -100,6 +100,10 @@ impl<const SLOTS: usize, const HEIGHT: usize, const SIZE: usize> LP<SLOTS, HEIGH
         }
     }
 
+    pub fn set_terminal(&mut self, terminal: f64) {
+        self.scheduler.time.terminal = Some(terminal);
+    }
+
     fn read_incoming(&mut self) {
         let circular = &self.buffers[0];
         let mut r = circular.read_idx.load(Ordering::Acquire);
@@ -334,6 +338,7 @@ impl<const SLOTS: usize, const HEIGHT: usize, const SIZE: usize> LP<SLOTS, HEIGH
                 break;
             }
             self.step()?;
+            self.step.store(self.scheduler.time.step as usize, Ordering::Release);
         }
         Ok(())
     }

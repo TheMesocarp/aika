@@ -14,6 +14,9 @@ pub enum Transferable {
     Nan,
 }
 
+unsafe impl Send for Transferable {}
+unsafe impl Sync for Transferable {}
+
 impl Transferable {
     pub fn to(&self) -> usize {
         match self {
@@ -26,6 +29,13 @@ impl Transferable {
         match self {
             Transferable::Message(m) => m.received,
             Transferable::AntiMessage(am) => am.received,
+            Transferable::Nan => u64::MAX,
+        }
+    }
+    pub fn commit_time(&self) -> u64 {
+        match self {
+            Transferable::Message(m) => m.sent,
+            Transferable::AntiMessage(am) => am.sent,
             Transferable::Nan => u64::MAX,
         }
     }
@@ -68,6 +78,7 @@ impl Ord for Transferable {
     }
 }
 
+#[derive(Debug)]
 pub struct CircularBuffer<const SIZE: usize> {
     pub ptr: *mut [Option<Transferable>; SIZE],
     pub write_idx: Arc<AtomicUsize>,
@@ -87,14 +98,14 @@ impl<const LPS: usize, const SIZE: usize> Comms<LPS, SIZE> {
         Comms { wheel }
     }
 
-    pub fn write(&mut self, msg: Transferable) -> Result<(), SimError> {
+    pub fn write(&mut self, msg: Transferable) -> Result<(), Transferable> {
         let target = msg.to();
         let cbuff = &mut self.wheel[1][target];
         let w = cbuff.write_idx.load(Ordering::Acquire);
         let r = cbuff.read_idx.load(Ordering::Acquire);
         let next = (w + 1) % SIZE;
         if next == r {
-            return Err(SimError::MailboxFull);
+            return Err(msg);
         }
         unsafe {
             (*cbuff.ptr)[w] = Some(msg);

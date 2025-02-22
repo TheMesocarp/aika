@@ -11,7 +11,7 @@ pub enum HandlerOutput {
     Nan,
 }
 
-pub trait LogicalProcess {
+pub trait LogicalProcess: Send {
     fn step(&mut self, time: &u64, state: &mut Lumi) -> Event;
     fn process_message(&self, msg: Message, time: u64, state: &mut Lumi) -> HandlerOutput;
 }
