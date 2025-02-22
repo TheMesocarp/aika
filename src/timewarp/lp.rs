@@ -338,7 +338,8 @@ impl<const SLOTS: usize, const HEIGHT: usize, const SIZE: usize> LP<SLOTS, HEIGH
                 break;
             }
             self.step()?;
-            self.step.store(self.scheduler.time.step as usize, Ordering::Release);
+            self.step
+                .store(self.scheduler.time.step as usize, Ordering::Release);
         }
         Ok(())
     }

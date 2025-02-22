@@ -1,31 +1,41 @@
 // GVT/Coordinator Thread,
-use std::{sync::{
-    atomic::{AtomicUsize, Ordering},
-    Arc,
-}, thread};
+use std::{
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+    thread,
+};
 
 use crate::worlds::SimError;
 
-use super::{comms::{CircularBuffer, Comms, Transferable}, lp::LP, paragent::LogicalProcess};
+use super::{
+    comms::{CircularBuffer, Comms, Transferable},
+    lp::LP,
+    paragent::LogicalProcess,
+};
 
 pub struct GVT<const LPS: usize, const SIZE: usize, const SLOTS: usize, const HEIGHT: usize> {
     global_time: usize,
     terminal: usize,
-    local_times: [Option<Arc<AtomicUsize>>; LPS], 
-    comms: Option<Comms<LPS, SIZE>>,
+    local_times: [Option<Arc<AtomicUsize>>; LPS],
+    pub comms: Option<Comms<LPS, SIZE>>,
     host: [[[Option<Transferable>; SIZE]; LPS]; 2],
     temp_load: Vec<(CircularBuffer<SIZE>, CircularBuffer<SIZE>)>,
     lps: [Option<LP<SLOTS, HEIGHT, SIZE>>; LPS],
     message_overflow: [Vec<Transferable>; LPS],
 }
 
-impl<const LPS: usize, const SIZE: usize, const SLOTS: usize, const HEIGHT: usize> GVT<LPS, SIZE, SLOTS, HEIGHT>{
+impl<const LPS: usize, const SIZE: usize, const SLOTS: usize, const HEIGHT: usize>
+    GVT<LPS, SIZE, SLOTS, HEIGHT>
+{
     pub fn start_engine(terminal: usize) -> Self {
         let lps = [const { None }; LPS];
         let message_overflow: [Vec<Transferable>; LPS] = std::array::from_fn(|_| Vec::new());
         let local_times = [const { None }; LPS];
         let comms = None;
-        let host: [[[Option<Transferable>; SIZE]; LPS]; 2] = std::array::from_fn(|_| std::array::from_fn(|_| std::array::from_fn(|_| None)));
+        let host: [[[Option<Transferable>; SIZE]; LPS]; 2] =
+            std::array::from_fn(|_| std::array::from_fn(|_| std::array::from_fn(|_| None)));
         GVT {
             global_time: 0,
             local_times,
@@ -34,11 +44,16 @@ impl<const LPS: usize, const SIZE: usize, const SLOTS: usize, const HEIGHT: usiz
             host,
             temp_load: Vec::new(),
             lps,
-            message_overflow
+            message_overflow,
         }
     }
 
-    pub fn spawn_process<T: 'static>(&mut self, process: Box<dyn LogicalProcess>, timestep: f64, log_slots: usize) -> Result<(), SimError> {
+    pub fn spawn_process<T: 'static>(
+        &mut self,
+        process: Box<dyn LogicalProcess>,
+        timestep: f64,
+        log_slots: usize,
+    ) -> Result<(), SimError> {
         let ptr_idx = self.lps.iter().rposition(|x| x.is_none());
         if ptr_idx.is_none() {
             return Err(SimError::LPsFull);
@@ -63,8 +78,26 @@ impl<const LPS: usize, const SIZE: usize, const SLOTS: usize, const HEIGHT: usiz
         };
         let step = Arc::new(AtomicUsize::from(0));
         self.local_times[ptr_idx.unwrap()] = Some(Arc::clone(&step));
-        let lp_comms = [CircularBuffer {ptr: ptr1, write_idx: w1, read_idx: r1 }, CircularBuffer {ptr: ptr2, write_idx: w2, read_idx: r2 }];
-        let lp = LP::<SLOTS, HEIGHT, SIZE>::new::<T>(ptr_idx.unwrap(), process, timestep, step, lp_comms, log_slots);
+        let lp_comms = [
+            CircularBuffer {
+                ptr: ptr1,
+                write_idx: w1,
+                read_idx: r1,
+            },
+            CircularBuffer {
+                ptr: ptr2,
+                write_idx: w2,
+                read_idx: r2,
+            },
+        ];
+        let lp = LP::<SLOTS, HEIGHT, SIZE>::new::<T>(
+            ptr_idx.unwrap(),
+            process,
+            timestep,
+            step,
+            lp_comms,
+            log_slots,
+        );
         self.lps[ptr_idx.unwrap()] = Some(lp);
         self.temp_load.push((circ1, circ2));
         Ok(())
@@ -87,14 +120,20 @@ impl<const LPS: usize, const SIZE: usize, const SLOTS: usize, const HEIGHT: usiz
         let comms_wheel = [slc1.unwrap(), slc2.unwrap()];
         self.comms = Some(Comms::new(comms_wheel));
         for i in 0..LPS {
-            self.lps[i].as_mut().unwrap().set_terminal(self.terminal as f64);
+            self.lps[i]
+                .as_mut()
+                .unwrap()
+                .set_terminal(self.terminal as f64);
         }
         Ok(())
     }
 
-    fn poll_times(&mut self) { 
+    fn poll_times(&mut self) {
         for i in 0..LPS {
-            let ltime = self.local_times[i].as_ref().unwrap().load(Ordering::Relaxed);
+            let ltime = self.local_times[i]
+                .as_ref()
+                .unwrap()
+                .load(Ordering::Relaxed);
             if ltime < self.global_time {
                 self.global_time = ltime;
             }
@@ -114,13 +153,13 @@ impl<const LPS: usize, const SIZE: usize, const SLOTS: usize, const HEIGHT: usiz
     }
 }
 
-pub fn run<const LPS: usize, const SIZE: usize, const SLOTS: usize, const HEIGHT: usize>(gvt: &'static mut GVT<LPS, SIZE, SLOTS, HEIGHT>) -> Result<(), SimError> {
+pub fn run<const LPS: usize, const SIZE: usize, const SLOTS: usize, const HEIGHT: usize>(
+    gvt: &'static mut GVT<LPS, SIZE, SLOTS, HEIGHT>,
+) -> Result<(), SimError> {
     let mut handles = Vec::new();
     for i in 0..LPS {
         if let Some(mut lp) = gvt.lps[i].take() {
-            let handle = thread::spawn(move || {
-                lp.run()
-            });
+            let handle = thread::spawn(move || lp.run());
             handles.push(handle);
         }
     }
@@ -155,7 +194,7 @@ pub fn run<const LPS: usize, const SIZE: usize, const SLOTS: usize, const HEIGHT
                             }
                         }
                     }
-                };
+                }
                 let results = comms.poll();
                 if results.is_err() {
                     return Err(SimError::PollError);
@@ -182,7 +221,8 @@ pub fn run<const LPS: usize, const SIZE: usize, const SLOTS: usize, const HEIGHT
                 }
             }
             Ok(())
-    })};
+        })
+    };
     main.join().map_err(|_| SimError::ThreadJoinError)??;
     Ok(())
 }

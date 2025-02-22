@@ -8,6 +8,7 @@ use crate::worlds::{Message, SimError};
 
 use super::antimessage::AntiMessage;
 
+#[derive(Debug)]
 pub enum Transferable {
     Message(Message),
     AntiMessage(AntiMessage),

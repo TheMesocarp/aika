@@ -3,6 +3,7 @@ use std::cmp::Ordering;
 use crate::clock::Scheduleable;
 
 /// A message that can be sent between agents
+#[derive(Debug)]
 pub struct Message {
     pub data: *const u8,
     pub sent: u64,
