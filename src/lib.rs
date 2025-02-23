@@ -1,3 +1,8 @@
+use logger::Lumi;
+use timewarp::{
+    antimessage::AntiMessage,
+    paragent::{HandlerOutput, LogicalProcess},
+};
 use worlds::{Action, Agent, Event, Message, Supports};
 
 pub mod clock;
@@ -10,6 +15,12 @@ pub mod worlds;
 
 pub mod prelude {
     pub use crate::clock::Clock;
+    #[cfg(feature = "timewarp")]
+    pub use crate::timewarp::{
+        gvt::{run, GVT},
+        lp::Object,
+        paragent::{HandlerOutput, LogicalProcess},
+    };
     pub use crate::worlds::{Action, Agent, Config, Event, Mailbox, Message, Supports, World};
 }
 
@@ -27,6 +38,34 @@ impl TestAgent {
 impl Agent for TestAgent {
     fn step(&mut self, time: &u64, _supports: Supports) -> Event {
         Event::new(*time, *time, self.id, Action::Timeout(1))
+    }
+}
+
+impl LogicalProcess for TestAgent {
+    fn step(&mut self, time: &u64, state: &mut Lumi) -> Event {
+        Event::new(*time, *time, self.id, Action::Timeout(1))
+    }
+    fn process_message(
+        &mut self,
+        msg: Message,
+        time: u64,
+        state: &mut Lumi,
+    ) -> timewarp::paragent::HandlerOutput {
+        HandlerOutput::Messages(timewarp::antimessage::Annihilator(
+            Message {
+                data: msg.data,
+                sent: time,
+                received: time + 10,
+                from: msg.to,
+                to: msg.from,
+            },
+            AntiMessage {
+                sent: time,
+                received: time + 10,
+                from: msg.to,
+                to: msg.from,
+            },
+        ))
     }
 }
 
@@ -51,12 +90,12 @@ impl Agent for SingleStepAgent {
 // Messenger Agent
 pub struct MessengerAgent {
     pub id: usize,
-    pub name: String,
+    pub message: String,
 }
 
 impl MessengerAgent {
     pub fn new(id: usize, name: String) -> Self {
-        MessengerAgent { id, name }
+        MessengerAgent { id, message: name }
     }
 }
 
@@ -67,8 +106,8 @@ impl Agent for MessengerAgent {
             _ => panic!("Mailbox not found"),
         };
         let _messages = mailbox.receive(self.id);
-
-        let return_message = Message::new("Hello".into(), *time, *time + 1, self.id, 1);
+        let ptr = &self.message as *const String as *const u8;
+        let return_message = Message::new(ptr, *time, *time + 1, self.id, 1);
 
         mailbox.send(return_message);
 
@@ -78,6 +117,8 @@ impl Agent for MessengerAgent {
 
 #[cfg(test)]
 mod tests {
+
+    use crate::timewarp::gvt::{run, GVT};
 
     use super::worlds::*;
     use super::*;
@@ -143,5 +184,40 @@ mod tests {
         assert!(world.step_counter() == 1000);
     }
 
-    // need to fix and test the mailbox, and write some universe tests
+    #[test]
+    fn test_time_warp() {
+        let terminal = 20000000;
+        let mut gvt = GVT::<10, 8, 128, 1>::start_engine(terminal);
+        for i in 0..10 {
+            let lp = Box::new(TestAgent::new(i));
+            let idx = gvt.spawn_process::<u8>(lp, 1.0, 4096).unwrap();
+            gvt.commit(
+                idx,
+                timewarp::lp::Object::Message(Message::new(
+                    0 as *const u8,
+                    0,
+                    2,
+                    idx,
+                    (idx + 1) % 10,
+                )),
+            )
+            .unwrap();
+        }
+        gvt.init_comms().unwrap();
+        let staticdown: &'static mut GVT<10, 8, 128, 1> = Box::leak(gvt);
+        let start = std::time::Instant::now();
+        run(staticdown).unwrap();
+        let elapsed = start.elapsed();
+        println!("Benchmark Results:");
+        println!("Total time: {:.2?}", elapsed);
+        println!("Total events processed: {}", terminal);
+        println!(
+            "Events per second: {:.2}",
+            terminal as f64 / elapsed.as_secs_f64()
+        );
+        println!(
+            "Average event processing time: {:.3?} per event",
+            elapsed / terminal as u32
+        );
+    }
 }

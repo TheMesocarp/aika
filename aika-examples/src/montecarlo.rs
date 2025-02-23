@@ -28,7 +28,7 @@ impl Agent for MCAgent {
         };
         let current = lumi.fetch_state::<f64>();
         let new = gbm_next_step(current, self.drift, self.volatility, self.dt);
-        lumi.update(new, *step as usize);
+        lumi.update(new, *step);
         Event::new(*step, *step + 1, self.id, Action::Timeout(1))
     }
 }

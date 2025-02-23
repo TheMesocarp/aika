@@ -1,21 +1,22 @@
 use std::cmp::Ordering;
 
-use serde::{Deserialize, Serialize};
-
 use crate::clock::Scheduleable;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-/// A message that can be sent between agents.
+/// A message that can be sent between agents
+#[derive(Debug, Clone)]
 pub struct Message {
-    pub data: Vec<u8>,
+    pub data: *const u8,
     pub sent: u64,
     pub received: u64,
     pub from: usize,
     pub to: usize,
 }
 
+unsafe impl Send for Message {}
+unsafe impl Sync for Message {}
+
 impl Message {
-    pub fn new(data: Vec<u8>, sent: u64, received: u64, from: usize, to: usize) -> Self {
+    pub fn new(data: *const u8, sent: u64, received: u64, from: usize, to: usize) -> Self {
         Message {
             data,
             sent,

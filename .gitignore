@@ -1,2 +1,5 @@
 /target/
 /Cargo.lock
+
+/aika-examples/target/
+/aika-examples/Cargo.lock
