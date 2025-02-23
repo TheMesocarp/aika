@@ -19,3 +19,7 @@ path = "src/montecarlo.rs"
 [[bin]]
 name = "universe"
 path = "src/parallel_worlds.rs"
+
+[[bin]]
+name = "timewarp"
+path = "src/basic_timewarp.rs"

@@ -11,7 +11,7 @@ use crate::worlds::SimError;
 
 use super::{
     comms::{CircularBuffer, Comms, Transferable},
-    lp::LP,
+    lp::{Object, LP},
     paragent::LogicalProcess,
 };
 
@@ -20,7 +20,7 @@ pub struct GVT<const LPS: usize, const SIZE: usize, const SLOTS: usize, const HE
     terminal: usize,
     local_times: [Option<Arc<AtomicUsize>>; LPS],
     pub comms: Option<Comms<LPS, SIZE>>,
-    host: [[[Option<Transferable>; SIZE]; LPS]; 2],
+    host: Vec<Vec<[Option<Transferable>; SIZE]>>,
     temp_load: Vec<(CircularBuffer<SIZE>, CircularBuffer<SIZE>)>,
     lps: [Option<LP<SLOTS, HEIGHT, SIZE>>; LPS],
     message_overflow: [Vec<Transferable>; LPS],
@@ -29,14 +29,15 @@ pub struct GVT<const LPS: usize, const SIZE: usize, const SLOTS: usize, const HE
 impl<const LPS: usize, const SIZE: usize, const SLOTS: usize, const HEIGHT: usize>
     GVT<LPS, SIZE, SLOTS, HEIGHT>
 {
-    pub fn start_engine(terminal: usize) -> Self {
+    pub fn start_engine(terminal: usize) -> Box<Self> {
         let lps = [const { None }; LPS];
         let message_overflow: [Vec<Transferable>; LPS] = std::array::from_fn(|_| Vec::new());
         let local_times = [const { None }; LPS];
         let comms = None;
-        let host: [[[Option<Transferable>; SIZE]; LPS]; 2] =
-            std::array::from_fn(|_| std::array::from_fn(|_| std::array::from_fn(|_| None)));
-        GVT {
+        let host: Vec<Vec<[Option<Transferable>; SIZE]>> = (0..2)
+            .map(|_| (0..LPS).map(|_| [const { None }; SIZE]).collect())
+            .collect();
+        Box::new(GVT {
             global_time: 0,
             local_times,
             terminal,
@@ -45,7 +46,7 @@ impl<const LPS: usize, const SIZE: usize, const SLOTS: usize, const HEIGHT: usiz
             temp_load: Vec::new(),
             lps,
             message_overflow,
-        }
+        })
     }
 
     pub fn spawn_process<T: 'static>(
@@ -53,7 +54,7 @@ impl<const LPS: usize, const SIZE: usize, const SLOTS: usize, const HEIGHT: usiz
         process: Box<dyn LogicalProcess>,
         timestep: f64,
         log_slots: usize,
-    ) -> Result<(), SimError> {
+    ) -> Result<usize, SimError> {
         let ptr_idx = self.lps.iter().rposition(|x| x.is_none());
         if ptr_idx.is_none() {
             return Err(SimError::LPsFull);
@@ -100,7 +101,7 @@ impl<const LPS: usize, const SIZE: usize, const SLOTS: usize, const HEIGHT: usiz
         );
         self.lps[ptr_idx.unwrap()] = Some(lp);
         self.temp_load.push((circ1, circ2));
-        Ok(())
+        Ok(ptr_idx.unwrap())
     }
 
     pub fn init_comms(&mut self) -> Result<(), SimError> {
@@ -108,7 +109,7 @@ impl<const LPS: usize, const SIZE: usize, const SLOTS: usize, const HEIGHT: usiz
         let mut comms_buffers1 = Vec::new();
         let mut comms_buffers2 = Vec::new();
         for i in 0..len {
-            let pair = self.temp_load.remove(i);
+            let pair = self.temp_load.remove(0);
             comms_buffers1.push(pair.0);
             comms_buffers2.push(pair.1);
         }
@@ -128,28 +129,16 @@ impl<const LPS: usize, const SIZE: usize, const SLOTS: usize, const HEIGHT: usiz
         Ok(())
     }
 
-    fn poll_times(&mut self) {
-        for i in 0..LPS {
-            let ltime = self.local_times[i]
-                .as_ref()
-                .unwrap()
-                .load(Ordering::Relaxed);
-            if ltime < self.global_time {
-                self.global_time = ltime;
-            }
+    pub fn commit(&mut self, id: usize, object: Object) -> Result<(), SimError> {
+        if id >= self.lps.len() {
+            return Err(SimError::InvalidIndex);
         }
+        self.lps[id].as_mut().unwrap().commit(object);
+        Ok(())
     }
 
-    fn try_empty(&mut self, idx: usize) {
-        let len = self.message_overflow[idx].len();
-        for _ in 0..len {
-            let val = self.message_overflow[idx].pop().unwrap();
-            let status = self.comms.as_mut().unwrap().write(val);
-            if status.is_err() {
-                self.message_overflow[idx].push(status.err().unwrap());
-                return;
-            }
-        }
+    pub fn step_counter(&self) -> u64 {
+        self.global_time as u64
     }
 }
 
@@ -159,7 +148,7 @@ pub fn run<const LPS: usize, const SIZE: usize, const SLOTS: usize, const HEIGHT
     let mut handles = Vec::new();
     for i in 0..LPS {
         if let Some(mut lp) = gvt.lps[i].take() {
-            let handle = thread::spawn(move || lp.run());
+            let handle = thread::spawn(move || return lp.run());
             handles.push(handle);
         }
     }
@@ -179,7 +168,8 @@ pub fn run<const LPS: usize, const SIZE: usize, const SLOTS: usize, const HEIGHT
                     }
                 }
                 *global_time = if min_time == usize::MAX { 0 } else { min_time };
-                if global_time >= terminal {
+                if *global_time >= *terminal {
+                    println!("break");
                     break;
                 }
                 for i in 0..LPS {
@@ -220,7 +210,7 @@ pub fn run<const LPS: usize, const SIZE: usize, const SLOTS: usize, const HEIGHT
                     }
                 }
             }
-            Ok(())
+            return Ok(());
         })
     };
     main.join().map_err(|_| SimError::ThreadJoinError)??;

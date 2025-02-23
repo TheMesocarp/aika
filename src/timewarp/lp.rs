@@ -153,7 +153,7 @@ impl<const SLOTS: usize, const HEIGHT: usize, const SIZE: usize> LP<SLOTS, HEIGH
         Ok(())
     }
 
-    fn commit(&mut self, event: Object) {
+    pub fn commit(&mut self, event: Object) {
         let result = self.scheduler.insert(event);
         if result.is_err() {
             self.overflow.insert(Reverse(result.err().unwrap()));
