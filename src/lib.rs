@@ -55,13 +55,13 @@ impl LogicalProcess for TestAgent {
             Message {
                 data: msg.data,
                 sent: time,
-                received: time + 10,
+                received: time + 19,
                 from: msg.to,
                 to: msg.from,
             },
             AntiMessage {
                 sent: time,
-                received: time + 10,
+                received: time + 19,
                 from: msg.to,
                 to: msg.from,
             },
