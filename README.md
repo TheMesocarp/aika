@@ -1,6 +1,8 @@
 # aika
 An attempt at a high-performance Discrete Event Simulator (DES), built in Rust!
 
+> Work In Progress, Do Not Use Yet
+
 ## what for?
 
 This is an agent-based discrete event simulator, where each simulation houses agents on a single-threaded `World`, which can all be managed and housed by a `Universe`. This can be used for anything from simple Monte Carlo simulations, to real-time sensor processing, and even IoT device coordination. See `/examples/` for more details. 
