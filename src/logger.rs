@@ -1,59 +1,42 @@
+use crate::worlds::{Event, SimError};
 use std::{
     alloc::{alloc, dealloc, Layout},
     any::TypeId,
-    cmp::Ordering,
     mem,
     ptr::{self, drop_in_place},
 };
 
-use crate::worlds::{Event, SimError};
-
-pub struct Log<T: 'static>(T, u64);
-
-impl<T: 'static> PartialEq for Log<T> {
-    fn eq(&self, other: &Self) -> bool {
-        self.1 == other.1
-    }
-}
-
-impl<T: 'static> Eq for Log<T> {}
-
-impl<T: 'static> PartialOrd for Log<T> {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl<T: 'static> Ord for Log<T> {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.1.partial_cmp(&other.1).unwrap()
-    }
-}
-
 #[derive(Copy, Clone)]
+/// Metadata for writing and reconstructing an arbitrary type to/from raw bytes
 pub struct MetaData {
     pub type_id: TypeId,
     size: usize,
     align: usize,
     layout: Layout,
-    dropfn: unsafe fn(*mut u8),
+    dropfn: fn(*mut u8),
 }
 
-unsafe fn drop_value<T>(ptr: *mut u8) {
-    drop_in_place(ptr as *mut T)
+// safe wrapper for the `drop_in_place` function for clearing a value.
+fn drop_value<T>(ptr: *mut u8) {
+    unsafe { drop_in_place(ptr as *mut T) }
 }
 
+/// `Lumi` is a type erased, zero-copy, arena-based batch logger.
+// Each instance of the struct is meant only for 1 type.
+// This can be agent states, actions or global states.
+// The intention of this design is to minimize runtime allocations unless entirely necessary, while also allowing type flexibility without the need to propagate up any generics
 pub struct Lumi {
-    arena: Vec<(*mut u8, u64)>,
-    slots: usize,
-    current: usize,
-    time: u64,
-    pub state: *mut u8,
-    pub metadata: MetaData,
-    pub history: Vec<(*mut u8, u64)>,
+    arena: Vec<(*mut u8, u64)>, // preallocated arena using a vector of fixed size
+    slots: usize,               // number of total slots
+    current: usize,             // current slot in the arena
+    time: u64,                  // current simulation time
+    pub state: *mut u8,         // The current state of the logged variable.
+    pub metadata: MetaData,     // Type metadata.
+    pub history: Vec<(*mut u8, u64)>, // Logs
 }
 
 impl Lumi {
+    /// Allocate memory arena, and initialize the logger
     pub fn initialize<T: 'static>(slots: usize) -> Self {
         let current = 0;
         let size = size_of::<T>();
@@ -82,7 +65,7 @@ impl Lumi {
             history,
         }
     }
-
+    /// Write directly to logger arena without updating current state.
     pub fn write<T: 'static>(&mut self, state: T, time: u64) {
         let size = size_of_val(&state);
         let align = align_of_val(&state);
@@ -106,7 +89,7 @@ impl Lumi {
         };
         self.current = (self.current + 1) % self.metadata.size;
     }
-
+    /// flush arena slots into a heap allocation via a push to vec
     fn flush(&mut self) {
         for i in &mut self.arena {
             let newalloc = unsafe { alloc(self.metadata.layout) };
@@ -117,7 +100,8 @@ impl Lumi {
             i.1 = 0;
         }
     }
-
+    /// Rollback the logger by finding the log of a past timestep.
+    // !!need to fix this! the case of infrequent updates means this search will fail if any rollback time falls between logs. need to take the floor!!
     #[cfg(feature = "timewarp")]
     pub fn rollback(&mut self, time: u64) -> Result<(), SimError> {
         if time >= self.time {
@@ -146,11 +130,12 @@ impl Lumi {
         Ok(())
     }
 
+    /// Fetch current state
     pub fn fetch_state<T: 'static>(&self) -> T {
         assert_eq!(self.metadata.type_id, TypeId::of::<T>());
         unsafe { (self.state as *mut T).read() }
     }
-
+    /// safe update function for mutating the agent or global state and zero copy logging.
     pub fn update<T: 'static>(&mut self, new: T, time: u64) {
         assert_eq!(self.metadata.type_id, TypeId::of::<T>());
         unsafe {
@@ -163,7 +148,7 @@ impl Lumi {
             self.time = time
         }
     }
-
+    /// deallocation the arena and push the rest of to historical logs.
     pub fn wrap_up<T: 'static>(&mut self) {
         if self.current != 0 {
             for i in 0..self.current {
@@ -193,6 +178,7 @@ impl Lumi {
 unsafe impl Send for Lumi {}
 unsafe impl Sync for Lumi {}
 
+/// `World`-specific container for all the necessary loggers (global state, events, and agent states).
 pub struct Katko {
     pub agents: Vec<Lumi>,
     pub global: Option<Lumi>,
@@ -200,6 +186,7 @@ pub struct Katko {
 }
 
 impl Katko {
+    /// initialize state container for `World`
     pub fn init<T: 'static>(global: bool, slots: usize) -> Self {
         let global = if global == true {
             Some(Lumi::initialize::<T>(slots))
@@ -212,16 +199,16 @@ impl Katko {
             events: Lumi::initialize::<Event>(slots),
         }
     }
-
+    /// Add an `Agent` with a given state type `T` to the container
     pub fn add_agent<T: 'static>(&mut self, slots: usize) {
         self.agents.push(Lumi::initialize::<T>(slots));
     }
-
+    /// Write an `Event` to logs
     pub fn write_event(&mut self, event: Event) {
         let time = event.time;
         self.events.write(event, time);
     }
-
+    /// update the global state
     pub fn write_global<T: 'static>(&mut self, state: T, time: u64) {
         if self.global.is_some() {
             assert_eq!(

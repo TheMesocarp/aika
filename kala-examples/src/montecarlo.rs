@@ -1,5 +1,5 @@
 #![allow(dead_code, unused_variables)]
-use aika::prelude::*;
+use kala::prelude::*;
 use rand::rng;
 use rand_distr::{Distribution, Normal};
 
@@ -57,7 +57,7 @@ impl MCAgent {
 fn main() {
     let ts = 1.0;
     let config = Config::new(ts, Some(20000000.0), 10, 10, true, false);
-    let mut world = aika::worlds::World::<256, 128, 1>::create::<()>(config, None);
+    let mut world = World::<256, 128, 1>::create::<()>(config, None);
     let agent = MCAgent::new(0, "Test".to_string(), 0.1, 0.2, ts, 100.0);
     world.spawn::<f64>(Box::new(agent));
     world.schedule(0, 0).unwrap();

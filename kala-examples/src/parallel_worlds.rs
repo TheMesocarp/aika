@@ -1,7 +1,6 @@
 use std::time::Instant;
 
-use aika::universes::Universe;
-use aika::worlds::*;
+use kala::prelude::*;
 
 struct AdderAgent {
     id: usize,

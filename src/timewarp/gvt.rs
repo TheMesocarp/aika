@@ -29,6 +29,7 @@ pub struct GVT<const LPS: usize, const SIZE: usize, const SLOTS: usize, const HE
 impl<const LPS: usize, const SIZE: usize, const SLOTS: usize, const HEIGHT: usize>
     GVT<LPS, SIZE, SLOTS, HEIGHT>
 {
+    ///Start the time warp engine
     pub fn start_engine(terminal: usize) -> Box<Self> {
         let lps = [const { None }; LPS];
         let message_overflow: [Vec<Transferable>; LPS] = std::array::from_fn(|_| Vec::new());
@@ -48,7 +49,7 @@ impl<const LPS: usize, const SIZE: usize, const SLOTS: usize, const HEIGHT: usiz
             message_overflow,
         })
     }
-
+    /// Spawn a `LP` in the simulator.
     pub fn spawn_process<T: 'static>(
         &mut self,
         process: Box<dyn LogicalProcess>,
@@ -103,7 +104,7 @@ impl<const LPS: usize, const SIZE: usize, const SLOTS: usize, const HEIGHT: usiz
         self.temp_load.push((circ1, circ2));
         Ok(ptr_idx.unwrap())
     }
-
+    /// Initialize the Comms struct for main thread
     pub fn init_comms(&mut self) -> Result<(), SimError> {
         let len = self.temp_load.len();
         let mut comms_buffers1 = Vec::new();
@@ -128,7 +129,7 @@ impl<const LPS: usize, const SIZE: usize, const SLOTS: usize, const HEIGHT: usiz
         }
         Ok(())
     }
-
+    /// Commit an object to a given LP from the main thread prior to run. Meant for initialization
     pub fn commit(&mut self, id: usize, object: Object) -> Result<(), SimError> {
         if id >= self.lps.len() {
             return Err(SimError::InvalidIndex);
@@ -136,12 +137,14 @@ impl<const LPS: usize, const SIZE: usize, const SLOTS: usize, const HEIGHT: usiz
         self.lps[id].as_mut().unwrap().commit(object);
         Ok(())
     }
-
+    /// Current GVT step
     pub fn step_counter(&self) -> u64 {
         self.global_time as u64
     }
 }
 
+/// Main run function for the timewarp simulator
+/// !!! Needs to be fixed! Comms is not updating properly and its causing a full SIZE iteration each loop which is detrimental to performance as is
 pub fn run<const LPS: usize, const SIZE: usize, const SLOTS: usize, const HEIGHT: usize>(
     gvt: &'static mut GVT<LPS, SIZE, SLOTS, HEIGHT>,
 ) -> Result<(), SimError> {
