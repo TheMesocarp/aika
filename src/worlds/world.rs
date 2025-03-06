@@ -7,17 +7,6 @@ use super::{Action, Agent, Config, Event, Mailbox, SimError};
 use crate::clock::Clock;
 use crate::logger::Katko;
 
-/// Control commands for the real-time simulation
-///
-/// TODO: breakout to universe level & let worlds read them on tick
-// pub enum ControlCommand {
-//     Pause,
-//     Resume,
-//     SetTimeScale(f64),
-//     Quit,
-//     Schedule(f64, usize),
-// }
-
 /// A world that can contain multiple agents and run a simulation.
 pub struct World<const LOGS: usize, const SLOTS: usize, const HEIGHT: usize> {
     pub overflow: BTreeSet<Reverse<Event>>,
@@ -61,7 +50,7 @@ impl<const LOGS: usize, const SLOTS: usize, const HEIGHT: usize> World<LOGS, SLO
         }
         self.agents.len() - 1
     }
-
+    
     fn commit(&mut self, event: Event) {
         let event_maybe = self.clock.insert(event);
         if event_maybe.is_err() {

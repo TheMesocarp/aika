@@ -55,9 +55,11 @@ impl Scheduleable for AntiMessage {
     }
 }
 
+/// A `Message` and `AntiMessage` aannihilate each other if they encounter again after creation. 
 pub struct Annihilator(pub Message, pub AntiMessage);
 
 impl Annihilator {
+    /// conjure an annihilator pair
     pub fn conjure<T: 'static>(
         creation_time: u64,
         from_id: usize,

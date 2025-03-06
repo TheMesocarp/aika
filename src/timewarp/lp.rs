@@ -18,6 +18,7 @@ use super::comms::Transferable;
 use super::paragent::HandlerOutput;
 use super::paragent::LogicalProcess;
 
+// Wrapper for objects in a time warp simulator
 pub enum Object {
     Event(Event),
     Message(Message),
@@ -57,7 +58,7 @@ impl Ord for Object {
         self.time().partial_cmp(&other.time()).unwrap()
     }
 }
-
+/// `LP` provides all the logic for executing local events, processing messages to and from other LPs, and rollbacks when incoming messages are intended to exxecute in the past. 
 pub struct LP<const SLOTS: usize, const HEIGHT: usize, const SIZE: usize> {
     pub scheduler: Clock<Object, SLOTS, HEIGHT>,
     pub overflow: BTreeSet<Reverse<Object>>,
@@ -75,6 +76,7 @@ pub struct LP<const SLOTS: usize, const HEIGHT: usize, const SIZE: usize> {
 }
 
 impl<const SLOTS: usize, const HEIGHT: usize, const SIZE: usize> LP<SLOTS, HEIGHT, SIZE> {
+    /// Spawn new logical process
     pub fn new<T: 'static>(
         id: usize,
         agent: Box<dyn LogicalProcess>,
@@ -99,11 +101,11 @@ impl<const SLOTS: usize, const HEIGHT: usize, const SIZE: usize> LP<SLOTS, HEIGH
             id,
         }
     }
-
+    /// Set terminal time
     pub fn set_terminal(&mut self, terminal: f64) {
         self.scheduler.time.terminal = Some(terminal);
     }
-
+    /// Read incoming messages from Comms
     fn read_incoming(&mut self) {
         let circular = &self.buffers[0];
         let mut r = circular.read_idx.load(Ordering::Acquire);
@@ -122,7 +124,7 @@ impl<const SLOTS: usize, const HEIGHT: usize, const SIZE: usize> LP<SLOTS, HEIGH
             count += 1;
         }
     }
-
+    /// Write outgoing messages to Comms
     fn write_outgoing(&mut self, msg: Transferable) -> Result<(), Transferable> {
         let circular = &self.buffers[1];
         let w = circular.write_idx.load(Ordering::Acquire);
@@ -137,7 +139,7 @@ impl<const SLOTS: usize, const HEIGHT: usize, const SIZE: usize> LP<SLOTS, HEIGH
         circular.write_idx.store(next, Ordering::Release);
         Ok(())
     }
-
+    /// rollback state and clock, and send required anti messages
     fn rollback(&mut self, time: u64) -> Result<(), SimError> {
         self.scheduler.rollback(time, &mut self.overflow)?;
         self.state.rollback(time)?;
@@ -152,14 +154,14 @@ impl<const SLOTS: usize, const HEIGHT: usize, const SIZE: usize> LP<SLOTS, HEIGH
         }
         Ok(())
     }
-
+    /// commit object to scheduler
     pub fn commit(&mut self, event: Object) {
         let result = self.scheduler.insert(event);
         if result.is_err() {
             self.overflow.insert(Reverse(result.err().unwrap()));
         }
     }
-
+    /// one local time step in an LP
     fn step(&mut self) -> Result<(), SimError> {
         self.read_incoming();
         // process messages with insertation and time checks.
@@ -312,7 +314,7 @@ impl<const SLOTS: usize, const HEIGHT: usize, const SIZE: usize> LP<SLOTS, HEIGH
         self.scheduler.increment(&mut self.overflow);
         Ok(())
     }
-
+    /// check if a message needs annihilating.
     fn check_annihilation(&mut self) -> Result<(), Vec<AntiMessage>> {
         if self.in_times.contains(&self.scheduler.time.step) {
             let mut vec = Vec::new();
@@ -329,7 +331,7 @@ impl<const SLOTS: usize, const HEIGHT: usize, const SIZE: usize> LP<SLOTS, HEIGH
         }
         Ok(())
     }
-
+    /// Run the logical process
     pub fn run(&mut self) -> Result<(), SimError> {
         loop {
             if self.scheduler.time.step as f64 * self.scheduler.time.timestep

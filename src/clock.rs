@@ -1,11 +1,14 @@
 use crate::{timewarp::lp::Object, worlds::SimError};
 use std::{any::TypeId, cmp::Reverse, collections::BTreeSet};
 
+
+/// Trait for any time-series object for processing.
 pub trait Scheduleable {
     fn time(&self) -> u64;
     fn commit_time(&self) -> u64;
 }
 
+/// Simulation time, simulation step, timestep size, terminal time, and time scale
 pub struct Time {
     pub time: f64,
     pub step: u64,
@@ -14,13 +17,15 @@ pub struct Time {
     pub terminal: Option<f64>,
 }
 
+/// Hierarchical Timing Wheel (HTW) for scheduling events and messages.
 pub struct Clock<T: Scheduleable + Ord + 'static, const SLOTS: usize, const HEIGHT: usize> {
-    pub wheels: [[Vec<T>; SLOTS]; HEIGHT],
-    pub current_idxs: [usize; HEIGHT],
-    pub time: Time,
+    pub wheels: [[Vec<T>; SLOTS]; HEIGHT], //timing wheels, with sizes {SLOTS, SLOTS^2, ..., SLOTS^HEIGHT}
+    pub current_idxs: [usize; HEIGHT], // wheel parsing offset index
+    pub time: Time, 
 }
 
 impl<T: Scheduleable + Ord, const SLOTS: usize, const HEIGHT: usize> Clock<T, SLOTS, HEIGHT> {
+    /// New HTW from time-step size and terminal time.
     pub fn new(timestep: f64, terminal: Option<f64>) -> Result<Self, SimError> {
         if HEIGHT < 1 {
             return Err(SimError::NoClock);
@@ -39,14 +44,14 @@ impl<T: Scheduleable + Ord, const SLOTS: usize, const HEIGHT: usize> Clock<T, SL
             current_idxs: current,
         })
     }
-
+    /// Find corresponding slot based on `Scheduleable::time()' output, and insert. 
     pub fn insert(&mut self, event: T) -> Result<(), T> {
         let time = event.time();
         let deltaidx = (time - self.time.step) as usize;
 
         for k in 0..HEIGHT {
-            let startidx = ((SLOTS).pow(1 + k as u32) - SLOTS) / (SLOTS - 1);
-            let endidx = ((SLOTS).pow(2 + k as u32) - SLOTS) / (SLOTS - 1) - 1;
+            let startidx = ((SLOTS).pow(1 + k as u32) - SLOTS) / (SLOTS - 1); // start index for each level
+            let endidx = ((SLOTS).pow(2 + k as u32) - SLOTS) / (SLOTS - 1) - 1; // end index for each level
             if deltaidx >= startidx {
                 if deltaidx >= (((SLOTS).pow(1 + HEIGHT as u32) - SLOTS) / (SLOTS - 1)) as usize {
                     return Err(event);
@@ -55,14 +60,14 @@ impl<T: Scheduleable + Ord, const SLOTS: usize, const HEIGHT: usize> Clock<T, SL
                     continue;
                 }
                 let offset =
-                    ((deltaidx - startidx) / (SLOTS.pow(k as u32)) + self.current_idxs[k]) % SLOTS;
+                    ((deltaidx - startidx) / (SLOTS.pow(k as u32)) + self.current_idxs[k]) % SLOTS; // slot based on the current offset index for level k.
                 self.wheels[k][offset as usize].push(event);
                 return Ok(());
             }
         }
         Err(event)
     }
-
+    /// consume the next step's pending events.
     pub fn tick(&mut self) -> Result<Vec<T>, SimError> {
         let row: &mut [Vec<T>] = &mut self.wheels[0];
         let events = std::mem::replace(&mut row[self.current_idxs[0]], Vec::new());
@@ -75,6 +80,7 @@ impl<T: Scheduleable + Ord, const SLOTS: usize, const HEIGHT: usize> Clock<T, SL
         }
         Ok(events)
     }
+    /// roll clock forward one tick, and rotate higher wheels if necessary.
     pub fn increment(&mut self, overflow: &mut BTreeSet<Reverse<T>>) {
         self.current_idxs[0] = (self.current_idxs[0] + 1) % SLOTS;
         self.time.time += self.time.timestep;
@@ -142,6 +148,7 @@ impl<T: Scheduleable + Ord, const SLOTS: usize, const HEIGHT: usize> Clock<T, SL
 }
 
 #[cfg(feature = "timewarp")]
+/// remove local events scheduled after the rollback time.
 fn check_process_object_list<T: Scheduleable + 'static>(time: u64, object_list: &mut Vec<T>) {
     for i in 0..object_list.len() {
         if object_list[i].commit_time() >= time && TypeId::of::<T>() == TypeId::of::<Object>() {
