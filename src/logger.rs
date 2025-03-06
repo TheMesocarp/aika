@@ -1,13 +1,13 @@
+use crate::worlds::{Event, SimError};
 use std::{
     alloc::{alloc, dealloc, Layout},
     any::TypeId,
     mem,
     ptr::{self, drop_in_place},
 };
-use crate::worlds::{Event, SimError};
 
 #[derive(Copy, Clone)]
-/// Metadata for writing and reconstructing an arbitrary type to/from raw bytes 
+/// Metadata for writing and reconstructing an arbitrary type to/from raw bytes
 pub struct MetaData {
     pub type_id: TypeId,
     size: usize,
@@ -18,23 +18,21 @@ pub struct MetaData {
 
 // safe wrapper for the `drop_in_place` function for clearing a value.
 fn drop_value<T>(ptr: *mut u8) {
-    unsafe {
-        drop_in_place(ptr as *mut T)
-    }
+    unsafe { drop_in_place(ptr as *mut T) }
 }
 
 /// `Lumi` is a type erased, zero-copy, arena-based batch logger.
-// Each instance of the struct is meant only for 1 type. 
-// This can be agent states, actions or global states. 
+// Each instance of the struct is meant only for 1 type.
+// This can be agent states, actions or global states.
 // The intention of this design is to minimize runtime allocations unless entirely necessary, while also allowing type flexibility without the need to propagate up any generics
 pub struct Lumi {
-    arena: Vec<(*mut u8, u64)>,         // preallocated arena using a vector of fixed size
-    slots: usize,                       // number of total slots
-    current: usize,                     // current slot in the arena
-    time: u64,                          // current simulation time
-    pub state: *mut u8,                 // The current state of the logged variable.
-    pub metadata: MetaData,             // Type metadata.
-    pub history: Vec<(*mut u8, u64)>,   // Logs
+    arena: Vec<(*mut u8, u64)>, // preallocated arena using a vector of fixed size
+    slots: usize,               // number of total slots
+    current: usize,             // current slot in the arena
+    time: u64,                  // current simulation time
+    pub state: *mut u8,         // The current state of the logged variable.
+    pub metadata: MetaData,     // Type metadata.
+    pub history: Vec<(*mut u8, u64)>, // Logs
 }
 
 impl Lumi {
@@ -67,7 +65,7 @@ impl Lumi {
             history,
         }
     }
-    /// Write directly to logger arena without updating current state. 
+    /// Write directly to logger arena without updating current state.
     pub fn write<T: 'static>(&mut self, state: T, time: u64) {
         let size = size_of_val(&state);
         let align = align_of_val(&state);
@@ -102,7 +100,7 @@ impl Lumi {
             i.1 = 0;
         }
     }
-    /// Rollback the logger by finding the log of a past timestep. 
+    /// Rollback the logger by finding the log of a past timestep.
     // !!need to fix this! the case of infrequent updates means this search will fail if any rollback time falls between logs. need to take the floor!!
     #[cfg(feature = "timewarp")]
     pub fn rollback(&mut self, time: u64) -> Result<(), SimError> {
@@ -201,7 +199,7 @@ impl Katko {
             events: Lumi::initialize::<Event>(slots),
         }
     }
-    /// Add an `Agent` with a given state type `T` to the container 
+    /// Add an `Agent` with a given state type `T` to the container
     pub fn add_agent<T: 'static>(&mut self, slots: usize) {
         self.agents.push(Lumi::initialize::<T>(slots));
     }

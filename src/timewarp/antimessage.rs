@@ -55,7 +55,7 @@ impl Scheduleable for AntiMessage {
     }
 }
 
-/// A `Message` and `AntiMessage` aannihilate each other if they encounter again after creation. 
+/// A `Message` and `AntiMessage` aannihilate each other if they encounter again after creation.
 pub struct Annihilator(pub Message, pub AntiMessage);
 
 impl Annihilator {

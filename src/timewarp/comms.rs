@@ -91,7 +91,7 @@ pub struct CircularBuffer<const SIZE: usize> {
 unsafe impl<const SIZE: usize> Send for CircularBuffer<SIZE> {}
 unsafe impl<const SIZE: usize> Sync for CircularBuffer<SIZE> {}
 
-/// Full communication hub using 2 circular buffers per LP to avoid contention for incoming and outgoing messages. 
+/// Full communication hub using 2 circular buffers per LP to avoid contention for incoming and outgoing messages.
 /// Meant to be housed by the GVT
 pub struct Comms<const LPS: usize, const SIZE: usize> {
     // layer 0 of the wheel is for reading inmsg -> GVT, layer 1 is for writing GVT -> outmsg

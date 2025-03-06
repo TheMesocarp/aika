@@ -13,10 +13,10 @@ pub mod prelude {
 
     #[cfg(feature = "timewarp")]
     pub use crate::timewarp::{
+        antimessage::{Annihilator, AntiMessage},
         gvt::{run, GVT},
         lp::Object,
         paragent::{HandlerOutput, LogicalProcess},
-        antimessage::{Annihilator, AntiMessage},
     };
 
     #[cfg(feature = "universes")]
@@ -54,12 +54,7 @@ mod tests {
         fn step(&mut self, time: &u64, state: &mut Lumi) -> Event {
             Event::new(*time, *time, self.id, Action::Timeout(1))
         }
-        fn process_message(
-            &mut self,
-            msg: Message,
-            time: u64,
-            state: &mut Lumi,
-        ) -> HandlerOutput {
+        fn process_message(&mut self, msg: Message, time: u64, state: &mut Lumi) -> HandlerOutput {
             HandlerOutput::Messages(Annihilator(
                 Message {
                     data: msg.data,

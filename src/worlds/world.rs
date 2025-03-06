@@ -50,7 +50,7 @@ impl<const LOGS: usize, const SLOTS: usize, const HEIGHT: usize> World<LOGS, SLO
         }
         self.agents.len() - 1
     }
-    
+
     fn commit(&mut self, event: Event) {
         let event_maybe = self.clock.insert(event);
         if event_maybe.is_err() {

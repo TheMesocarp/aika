@@ -58,7 +58,7 @@ impl Ord for Object {
         self.time().partial_cmp(&other.time()).unwrap()
     }
 }
-/// `LP` provides all the logic for executing local events, processing messages to and from other LPs, and rollbacks when incoming messages are intended to exxecute in the past. 
+/// `LP` provides all the logic for executing local events, processing messages to and from other LPs, and rollbacks when incoming messages are intended to exxecute in the past.
 pub struct LP<const SLOTS: usize, const HEIGHT: usize, const SIZE: usize> {
     pub scheduler: Clock<Object, SLOTS, HEIGHT>,
     pub overflow: BTreeSet<Reverse<Object>>,

@@ -1,6 +1,5 @@
-use crate::{timewarp::lp::Object, worlds::SimError};
+use crate::worlds::SimError;
 use std::{any::TypeId, cmp::Reverse, collections::BTreeSet};
-
 
 /// Trait for any time-series object for processing.
 pub trait Scheduleable {
@@ -20,8 +19,8 @@ pub struct Time {
 /// Hierarchical Timing Wheel (HTW) for scheduling events and messages.
 pub struct Clock<T: Scheduleable + Ord + 'static, const SLOTS: usize, const HEIGHT: usize> {
     pub wheels: [[Vec<T>; SLOTS]; HEIGHT], //timing wheels, with sizes {SLOTS, SLOTS^2, ..., SLOTS^HEIGHT}
-    pub current_idxs: [usize; HEIGHT], // wheel parsing offset index
-    pub time: Time, 
+    pub current_idxs: [usize; HEIGHT],     // wheel parsing offset index
+    pub time: Time,
 }
 
 impl<T: Scheduleable + Ord, const SLOTS: usize, const HEIGHT: usize> Clock<T, SLOTS, HEIGHT> {
@@ -44,7 +43,7 @@ impl<T: Scheduleable + Ord, const SLOTS: usize, const HEIGHT: usize> Clock<T, SL
             current_idxs: current,
         })
     }
-    /// Find corresponding slot based on `Scheduleable::time()' output, and insert. 
+    /// Find corresponding slot based on `Scheduleable::time()' output, and insert.
     pub fn insert(&mut self, event: T) -> Result<(), T> {
         let time = event.time();
         let deltaidx = (time - self.time.step) as usize;
@@ -147,6 +146,8 @@ impl<T: Scheduleable + Ord, const SLOTS: usize, const HEIGHT: usize> Clock<T, SL
     }
 }
 
+#[cfg(feature = "timewarp")]
+use crate::timewarp::lp::Object;
 #[cfg(feature = "timewarp")]
 /// remove local events scheduled after the rollback time.
 fn check_process_object_list<T: Scheduleable + 'static>(time: u64, object_list: &mut Vec<T>) {
