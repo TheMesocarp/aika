@@ -1,6 +1,6 @@
+use std::time::Instant;
+
 use kala::prelude::*;
-use criterion::{criterion_group, criterion_main, Criterion};
-use std::hint::black_box;
 
 pub struct TestAgent {
     pub id: usize,
@@ -46,29 +46,34 @@ impl LogicalProcess for TestAgent {
     }
 }
 
-fn run_sim(id: usize, config: Config) {
-    let agent = TestAgent::new(id);
-    let mut world = World::<256, 256, 1>::create::<()>(config, None);
-
-    world.spawn::<()>(Box::new(agent));
-    world.schedule(0, id).unwrap();
-
-    world.run().unwrap();
-}
-
-fn sim_bench(c: &mut Criterion) {
-    let duration_secs = 40000000;
+fn main() {
+    let duration_secs = 20000000;
     let timestep = 1.0;
     let terminal = Some(duration_secs as f64);
 
     // minimal config world, no logs, no mail, no live for base processing speed benchmark
-    let config = Config::new(timestep, terminal, 1000, 1000, true, false);
+    let config = Config::new(timestep, terminal, 10, 10, true, false);
+    let mut world = World::<2048, 128, 1>::create::<()>(config, None);
 
-    c.bench_function("run_sim", |b| {
-        b.iter(|| run_sim(black_box(0), black_box(config.clone())));
-    });
+    let agent = TestAgent::new(0);
+    world.spawn::<()>(Box::new(agent));
+    world.schedule(0, 0).unwrap();
+
+    let start = Instant::now();
+    world.run().unwrap();
+    let elapsed = start.elapsed();
+
+    let total_steps = world.step_counter();
+
+    println!("Benchmark Results:");
+    println!("Total time: {:.2?}", elapsed);
+    println!("Total events processed: {}", total_steps);
+    println!(
+        "Events per second: {:.2}",
+        total_steps as f64 / elapsed.as_secs_f64()
+    );
+    println!(
+        "Average event processing time: {:.3?} per event",
+        elapsed / total_steps as u32
+    );
 }
-
-criterion_group!(benches, sim_bench);
-
-criterion_main!(benches);

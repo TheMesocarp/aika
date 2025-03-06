@@ -1,4 +1,48 @@
-use aika::{prelude::*, TestAgent};
+use kala::prelude::*;
+
+pub struct TestAgent {
+    pub id: usize,
+}
+
+impl TestAgent {
+    pub fn new(id: usize) -> Self {
+        TestAgent { id }
+    }
+}
+
+impl Agent for TestAgent {
+    fn step(&mut self, time: &u64, _supports: Supports) -> Event {
+        Event::new(*time, *time, self.id, Action::Timeout(1))
+    }
+}
+
+impl LogicalProcess for TestAgent {
+    fn step(&mut self, time: &u64, state: &mut Lumi) -> Event {
+        Event::new(*time, *time, self.id, Action::Timeout(1))
+    }
+    fn process_message(
+        &mut self,
+        msg: Message,
+        time: u64,
+        state: &mut Lumi,
+    ) -> HandlerOutput {
+        HandlerOutput::Messages(Annihilator(
+            Message {
+                data: msg.data,
+                sent: time,
+                received: time + 19,
+                from: msg.to,
+                to: msg.from,
+            },
+            AntiMessage {
+                sent: time,
+                received: time + 19,
+                from: msg.to,
+                to: msg.from,
+            },
+        ))
+    }
+}
 
 fn main() {
     let terminal = 70000000;

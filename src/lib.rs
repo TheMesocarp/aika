@@ -1,10 +1,3 @@
-use logger::Lumi;
-use timewarp::{
-    antimessage::AntiMessage,
-    paragent::{HandlerOutput, LogicalProcess},
-};
-use worlds::{Action, Agent, Event, Message, Supports};
-
 pub mod clock;
 pub mod logger;
 #[cfg(feature = "timewarp")]
@@ -15,113 +8,121 @@ pub mod worlds;
 
 pub mod prelude {
     pub use crate::clock::Clock;
+    pub use crate::logger::Lumi;
+    pub use crate::worlds::{Action, Agent, Config, Event, Mailbox, Message, Supports, World};
+
     #[cfg(feature = "timewarp")]
     pub use crate::timewarp::{
         gvt::{run, GVT},
         lp::Object,
         paragent::{HandlerOutput, LogicalProcess},
+        antimessage::{Annihilator, AntiMessage},
     };
-    pub use crate::worlds::{Action, Agent, Config, Event, Mailbox, Message, Supports, World};
-}
 
-// Markovian Agent
-pub struct TestAgent {
-    pub id: usize,
-}
-
-impl TestAgent {
-    pub fn new(id: usize) -> Self {
-        TestAgent { id }
-    }
-}
-
-impl Agent for TestAgent {
-    fn step(&mut self, time: &u64, _supports: Supports) -> Event {
-        Event::new(*time, *time, self.id, Action::Timeout(1))
-    }
-}
-
-impl LogicalProcess for TestAgent {
-    fn step(&mut self, time: &u64, state: &mut Lumi) -> Event {
-        Event::new(*time, *time, self.id, Action::Timeout(1))
-    }
-    fn process_message(
-        &mut self,
-        msg: Message,
-        time: u64,
-        state: &mut Lumi,
-    ) -> timewarp::paragent::HandlerOutput {
-        HandlerOutput::Messages(timewarp::antimessage::Annihilator(
-            Message {
-                data: msg.data,
-                sent: time,
-                received: time + 19,
-                from: msg.to,
-                to: msg.from,
-            },
-            AntiMessage {
-                sent: time,
-                received: time + 19,
-                from: msg.to,
-                to: msg.from,
-            },
-        ))
-    }
-}
-
-// Single Step Agent
-pub struct SingleStepAgent {
-    pub id: usize,
-    pub name: String,
-}
-
-impl SingleStepAgent {
-    pub fn new(id: usize, name: String) -> Self {
-        SingleStepAgent { id, name }
-    }
-}
-
-impl Agent for SingleStepAgent {
-    fn step(&mut self, time: &u64, _supports: Supports) -> Event {
-        Event::new(*time, *time, self.id, Action::Wait)
-    }
-}
-
-// Messenger Agent
-pub struct MessengerAgent {
-    pub id: usize,
-    pub message: String,
-}
-
-impl MessengerAgent {
-    pub fn new(id: usize, name: String) -> Self {
-        MessengerAgent { id, message: name }
-    }
-}
-
-impl Agent for MessengerAgent {
-    fn step(&mut self, time: &u64, supports: Supports) -> Event {
-        let mailbox = match supports {
-            Supports::Mailbox(mailbox) => mailbox,
-            _ => panic!("Mailbox not found"),
-        };
-        let _messages = mailbox.receive(self.id);
-        let ptr = &self.message as *const String as *const u8;
-        let return_message = Message::new(ptr, *time, *time + 1, self.id, 1);
-
-        mailbox.send(return_message);
-
-        Event::new(*time, *time, self.id, Action::Wait)
-    }
+    #[cfg(feature = "universes")]
+    pub use crate::universes::Universe;
 }
 
 #[cfg(test)]
 mod tests {
 
+    use crate::logger::Lumi;
     use crate::timewarp::gvt::{run, GVT};
 
+    use super::prelude::*;
     use super::worlds::*;
     use super::*;
+
+    // Markovian Agent
+    pub struct TestAgent {
+        pub id: usize,
+    }
+
+    impl TestAgent {
+        pub fn new(id: usize) -> Self {
+            TestAgent { id }
+        }
+    }
+
+    impl Agent for TestAgent {
+        fn step(&mut self, time: &u64, _supports: Supports) -> Event {
+            Event::new(*time, *time, self.id, Action::Timeout(1))
+        }
+    }
+
+    impl LogicalProcess for TestAgent {
+        fn step(&mut self, time: &u64, state: &mut Lumi) -> Event {
+            Event::new(*time, *time, self.id, Action::Timeout(1))
+        }
+        fn process_message(
+            &mut self,
+            msg: Message,
+            time: u64,
+            state: &mut Lumi,
+        ) -> HandlerOutput {
+            HandlerOutput::Messages(Annihilator(
+                Message {
+                    data: msg.data,
+                    sent: time,
+                    received: time + 19,
+                    from: msg.to,
+                    to: msg.from,
+                },
+                AntiMessage {
+                    sent: time,
+                    received: time + 19,
+                    from: msg.to,
+                    to: msg.from,
+                },
+            ))
+        }
+    }
+
+    // Single Step Agent
+    pub struct SingleStepAgent {
+        pub id: usize,
+        pub name: String,
+    }
+
+    impl SingleStepAgent {
+        pub fn new(id: usize, name: String) -> Self {
+            SingleStepAgent { id, name }
+        }
+    }
+
+    impl Agent for SingleStepAgent {
+        fn step(&mut self, time: &u64, _supports: Supports) -> Event {
+            Event::new(*time, *time, self.id, Action::Wait)
+        }
+    }
+
+    // Messenger Agent
+    pub struct MessengerAgent {
+        pub id: usize,
+        pub message: String,
+    }
+
+    impl MessengerAgent {
+        pub fn new(id: usize, name: String) -> Self {
+            MessengerAgent { id, message: name }
+        }
+    }
+
+    impl Agent for MessengerAgent {
+        fn step(&mut self, time: &u64, supports: Supports) -> Event {
+            let mailbox = match supports {
+                Supports::Mailbox(mailbox) => mailbox,
+                _ => panic!("Mailbox not found"),
+            };
+            let _messages = mailbox.receive(self.id);
+            let ptr = &self.message as *const String as *const u8;
+            let return_message = Message::new(ptr, *time, *time + 1, self.id, 1);
+
+            mailbox.send(return_message);
+
+            Event::new(*time, *time, self.id, Action::Wait)
+        }
+    }
 
     #[test]
     fn test_run() {
