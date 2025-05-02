@@ -87,7 +87,7 @@ impl Lumi {
         if self.current == self.slots - 1 {
             self.flush()
         };
-        self.current = (self.current + 1) % self.metadata.size;
+        self.current = (self.current + 1) % self.slots;
     }
     /// flush arena slots into a heap allocation via a push to vec
     fn flush(&mut self) {
