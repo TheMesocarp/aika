@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use kala::prelude::*;
+use aika::prelude::*;
 
 struct AdderAgent {
     id: usize,

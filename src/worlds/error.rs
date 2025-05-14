@@ -19,4 +19,5 @@ pub enum SimError {
     InvalidIndex,
     NotRealtime,
     TokioError(String),
+    Mesocarp(String),
 }

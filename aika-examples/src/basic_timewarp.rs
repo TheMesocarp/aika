@@ -1,4 +1,4 @@
-use kala::prelude::*;
+use aika::prelude::*;
 
 pub struct TestAgent {
     pub id: usize,
@@ -45,9 +45,9 @@ impl LogicalProcess for TestAgent {
 }
 
 fn main() {
-    let terminal = 70000000;
+    let terminal = 7000000;
     const lps: usize = 16;
-    let mut gvt = GVT::<lps, 1, 128, 1>::start_engine(terminal);
+    let mut gvt = GVT::<lps, 16, 128, 1>::start_engine(terminal);
     for i in 0..lps {
         let lp = Box::new(TestAgent::new(i));
         let idx = gvt.spawn_process::<u8>(lp, 1.0, 4096).unwrap();
@@ -55,7 +55,7 @@ fn main() {
         gvt.commit(idx, Object::Message(Message::new( 0 as *const u8, 0, 19, idx, (idx + 1) % 10))).unwrap();
     }
     gvt.init_comms().unwrap();
-    let staticdown: &'static mut GVT<lps, 1, 128, 1> = Box::leak(gvt);
+    let staticdown: &'static mut GVT<lps, 16, 128, 1> = Box::leak(gvt);
     let start = std::time::Instant::now();
     run(staticdown).unwrap();
     let elapsed = start.elapsed();

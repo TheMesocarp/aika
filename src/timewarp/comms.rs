@@ -1,8 +1,6 @@
 // spsc circular buffer with atomics for notifying thread2thread communications
-use std::sync::{
-    atomic::{AtomicUsize, Ordering},
-    Arc,
-};
+use mesocarp::concurrency::spsc::BufferWheel;
+use std::sync::Arc;
 
 use crate::worlds::{Message, SimError};
 
@@ -80,66 +78,38 @@ impl Ord for Transferable {
     }
 }
 
-#[derive(Debug)]
-/// Basic lock-free circular buffer for sending messages between LPs and the GVT thread.
-pub struct CircularBuffer<const SIZE: usize> {
-    pub ptr: *mut [Option<Transferable>; SIZE],
-    pub write_idx: Arc<AtomicUsize>,
-    pub read_idx: Arc<AtomicUsize>,
-}
-
-unsafe impl<const SIZE: usize> Send for CircularBuffer<SIZE> {}
-unsafe impl<const SIZE: usize> Sync for CircularBuffer<SIZE> {}
-
 /// Full communication hub using 2 circular buffers per LP to avoid contention for incoming and outgoing messages.
 /// Meant to be housed by the GVT
 pub struct Comms<const LPS: usize, const SIZE: usize> {
     // layer 0 of the wheel is for reading inmsg -> GVT, layer 1 is for writing GVT -> outmsg
-    wheel: [[CircularBuffer<SIZE>; LPS]; 2],
+    wheel: [[Arc<BufferWheel<SIZE, Transferable>>; LPS]; 2],
 }
 
 impl<const LPS: usize, const SIZE: usize> Comms<LPS, SIZE> {
     /// new Comms hub for the GVT
-    pub fn new(wheel: [[CircularBuffer<SIZE>; LPS]; 2]) -> Self {
+    pub fn new(wheel: [[Arc<BufferWheel<SIZE, Transferable>>; LPS]; 2]) -> Self {
         Comms { wheel }
     }
     /// Write a message to the respective buffer
     pub fn write(&mut self, msg: Transferable) -> Result<(), Transferable> {
         let target = msg.to();
         let cbuff = &mut self.wheel[1][target];
-        let w = cbuff.write_idx.load(Ordering::Acquire);
-        let r = cbuff.read_idx.load(Ordering::Acquire);
-        let next = (w + 1) % SIZE;
-        if next == r {
-            return Err(msg);
-        }
-        unsafe {
-            (*cbuff.ptr)[w] = Some(msg);
-        }
-        // publish by storing next
-        cbuff.write_idx.store(next, Ordering::Release);
-        Ok(())
+        cbuff.write(msg.clone()).map_err(|_| msg)
     }
     /// read a particular LP's mailbox for outgoing messages or antimessages.
     pub fn read(&mut self, target: usize) -> Result<Transferable, SimError> {
         let cbuff = &mut self.wheel[0][target];
-        let w = cbuff.write_idx.load(Ordering::Acquire);
-        let r = cbuff.read_idx.load(Ordering::Acquire);
-        if w == r {
-            return Err(SimError::MailboxEmpty);
-        }
-        let msg = unsafe { (*cbuff.ptr)[r].take().unwrap() };
-        cbuff.read_idx.store((r + 1) % SIZE, Ordering::Release);
-        Ok(msg)
+        cbuff
+            .read()
+            .map_err(|err| SimError::Mesocarp(format!("{err:?}")))
     }
     /// poll atomics for any outgoing messages that need processing
-    pub fn poll(&self) -> Result<[bool; LPS], SimError> {
-        let mut ready = [false; LPS];
+    pub fn poll(&mut self) -> Result<[Option<Transferable>; LPS], SimError> {
+        let mut ready = [const { None }; LPS];
         for i in 0..LPS {
-            let read = self.wheel[0][i].read_idx.load(Ordering::Acquire);
-            let write = self.wheel[0][i].write_idx.load(Ordering::Acquire);
-            if read != write {
-                ready[i] = true;
+            let msg = self.read(i);
+            if msg.is_ok() {
+                ready[i] = Some(msg.unwrap())
             }
         }
         Ok(ready)
@@ -147,10 +117,8 @@ impl<const LPS: usize, const SIZE: usize> Comms<LPS, SIZE> {
     /// reset the comms wheel indexes.
     pub fn flush(&mut self) {
         for i in 0..LPS {
-            self.wheel[0][i].read_idx.store(
-                self.wheel[0][i].write_idx.load(Ordering::Acquire),
-                Ordering::Release,
-            );
+            self.wheel[0][i] = Arc::new(BufferWheel::new());
+            self.wheel[1][i] = Arc::new(BufferWheel::new());
         }
     }
 }

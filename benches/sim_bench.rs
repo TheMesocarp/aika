@@ -1,5 +1,5 @@
+use aika::prelude::*;
 use criterion::{criterion_group, criterion_main, Criterion};
-use kala::prelude::*;
 use std::hint::black_box;
 
 pub struct TestAgent {
@@ -19,10 +19,10 @@ impl Agent for TestAgent {
 }
 
 impl LogicalProcess for TestAgent {
-    fn step(&mut self, time: &u64, state: &mut Lumi) -> Event {
+    fn step(&mut self, time: &u64, _state: &mut Lumi) -> Event {
         Event::new(*time, *time, self.id, Action::Timeout(1))
     }
-    fn process_message(&mut self, msg: Message, time: u64, state: &mut Lumi) -> HandlerOutput {
+    fn process_message(&mut self, msg: Message, time: u64, _state: &mut Lumi) -> HandlerOutput {
         HandlerOutput::Messages(Annihilator(
             Message {
                 data: msg.data,

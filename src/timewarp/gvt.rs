@@ -7,10 +7,13 @@ use std::{
     thread,
 };
 
+use bytemuck::Pod;
+use mesocarp::concurrency::spsc::BufferWheel;
+
 use crate::worlds::SimError;
 
 use super::{
-    comms::{CircularBuffer, Comms, Transferable},
+    comms::{Comms, Transferable},
     lp::{Object, LP},
     paragent::LogicalProcess,
 };
@@ -20,8 +23,11 @@ pub struct GVT<const LPS: usize, const SIZE: usize, const SLOTS: usize, const HE
     terminal: usize,
     local_times: [Option<Arc<AtomicUsize>>; LPS],
     pub comms: Option<Comms<LPS, SIZE>>,
-    host: Vec<Vec<[Option<Transferable>; SIZE]>>,
-    temp_load: Vec<(CircularBuffer<SIZE>, CircularBuffer<SIZE>)>,
+    _host: Vec<Vec<[Option<Transferable>; SIZE]>>,
+    temp_load: Vec<(
+        Arc<BufferWheel<SIZE, Transferable>>,
+        Arc<BufferWheel<SIZE, Transferable>>,
+    )>,
     lps: [Option<LP<SLOTS, HEIGHT, SIZE>>; LPS],
     message_overflow: [Vec<Transferable>; LPS],
 }
@@ -35,7 +41,7 @@ impl<const LPS: usize, const SIZE: usize, const SLOTS: usize, const HEIGHT: usiz
         let message_overflow: [Vec<Transferable>; LPS] = std::array::from_fn(|_| Vec::new());
         let local_times = [const { None }; LPS];
         let comms = None;
-        let host: Vec<Vec<[Option<Transferable>; SIZE]>> = (0..2)
+        let _host: Vec<Vec<[Option<Transferable>; SIZE]>> = (0..2)
             .map(|_| (0..LPS).map(|_| [const { None }; SIZE]).collect())
             .collect();
         Box::new(GVT {
@@ -43,14 +49,14 @@ impl<const LPS: usize, const SIZE: usize, const SLOTS: usize, const HEIGHT: usiz
             local_times,
             terminal,
             comms,
-            host,
+            _host,
             temp_load: Vec::new(),
             lps,
             message_overflow,
         })
     }
     /// Spawn a `LP` in the simulator.
-    pub fn spawn_process<T: 'static>(
+    pub fn spawn_process<T: Pod + 'static>(
         &mut self,
         process: Box<dyn LogicalProcess>,
         timestep: f64,
@@ -60,38 +66,12 @@ impl<const LPS: usize, const SIZE: usize, const SLOTS: usize, const HEIGHT: usiz
         if ptr_idx.is_none() {
             return Err(SimError::LPsFull);
         }
-        let ptr1 = &mut self.host[0][ptr_idx.unwrap()] as *mut [Option<Transferable>; SIZE];
-        let ptr2 = &mut self.host[1][ptr_idx.unwrap()] as *mut [Option<Transferable>; SIZE];
 
-        let r1 = Arc::new(AtomicUsize::from(0));
-        let w1 = Arc::new(AtomicUsize::from(0));
-        let r2 = Arc::new(AtomicUsize::from(0));
-        let w2 = Arc::new(AtomicUsize::from(0));
-
-        let circ1 = CircularBuffer {
-            ptr: ptr1.clone(),
-            write_idx: Arc::clone(&w1),
-            read_idx: Arc::clone(&r1),
-        };
-        let circ2 = CircularBuffer {
-            ptr: ptr2.clone(),
-            write_idx: Arc::clone(&w2),
-            read_idx: Arc::clone(&r2),
-        };
+        let circ1 = Arc::new(BufferWheel::new());
+        let circ2 = Arc::new(BufferWheel::new());
         let step = Arc::new(AtomicUsize::from(0));
         self.local_times[ptr_idx.unwrap()] = Some(Arc::clone(&step));
-        let lp_comms = [
-            CircularBuffer {
-                ptr: ptr1,
-                write_idx: w1,
-                read_idx: r1,
-            },
-            CircularBuffer {
-                ptr: ptr2,
-                write_idx: w2,
-                read_idx: r2,
-            },
-        ];
+        let lp_comms = [circ1.clone(), circ2.clone()];
         let lp = LP::<SLOTS, HEIGHT, SIZE>::new::<T>(
             ptr_idx.unwrap(),
             process,
@@ -104,12 +84,13 @@ impl<const LPS: usize, const SIZE: usize, const SLOTS: usize, const HEIGHT: usiz
         self.temp_load.push((circ1, circ2));
         Ok(ptr_idx.unwrap())
     }
+
     /// Initialize the Comms struct for main thread
     pub fn init_comms(&mut self) -> Result<(), SimError> {
         let len = self.temp_load.len();
         let mut comms_buffers1 = Vec::new();
         let mut comms_buffers2 = Vec::new();
-        for i in 0..len {
+        for _ in 0..len {
             let pair = self.temp_load.remove(0);
             comms_buffers1.push(pair.0);
             comms_buffers2.push(pair.1);
@@ -117,8 +98,10 @@ impl<const LPS: usize, const SIZE: usize, const SLOTS: usize, const HEIGHT: usiz
         if comms_buffers1.len() < LPS || comms_buffers2.len() < LPS {
             return Err(SimError::MismatchLPsCount);
         }
-        let slc1: Result<[CircularBuffer<SIZE>; LPS], _> = comms_buffers1.try_into();
-        let slc2: Result<[CircularBuffer<SIZE>; LPS], _> = comms_buffers2.try_into();
+        let slc1: Result<[Arc<BufferWheel<SIZE, Transferable>>; LPS], _> =
+            comms_buffers1.try_into();
+        let slc2: Result<[Arc<BufferWheel<SIZE, Transferable>>; LPS], _> =
+            comms_buffers2.try_into();
         let comms_wheel = [slc1.unwrap(), slc2.unwrap()];
         self.comms = Some(Comms::new(comms_wheel));
         for i in 0..LPS {
@@ -163,14 +146,19 @@ pub fn run<const LPS: usize, const SIZE: usize, const SLOTS: usize, const HEIGHT
         let terminal = &mut gvt.terminal;
         thread::spawn(move || {
             loop {
-                let mut min_time = usize::MAX;
-                for time in local_times.iter().flatten() {
-                    let ltime = time.load(Ordering::Relaxed);
-                    if ltime < min_time {
-                        min_time = ltime;
-                    }
+                let min_step = local_times
+                    .iter()
+                    .flatten()
+                    .map(|t| t.load(Ordering::Relaxed))
+                    .min()
+                    .unwrap_or(0);
+                *global_time = min_step;
+
+                // convert back to real time
+                let virtual_time = min_step as f64;
+                if virtual_time >= *terminal as f64 {
+                    break;
                 }
-                *global_time = if min_time == usize::MAX { 0 } else { min_time };
                 if *global_time >= *terminal {
                     println!("break");
                     break;
@@ -193,7 +181,7 @@ pub fn run<const LPS: usize, const SIZE: usize, const SLOTS: usize, const HEIGHT
                     return Err(SimError::PollError);
                 }
                 for (i, j) in results.unwrap().iter().enumerate() {
-                    if *j {
+                    if j.is_some() {
                         let mut counter = 0;
                         loop {
                             if counter == SIZE {

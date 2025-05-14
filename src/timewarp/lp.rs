@@ -4,6 +4,9 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
+use bytemuck::Pod;
+use mesocarp::concurrency::spsc::BufferWheel;
+
 use crate::clock::Clock;
 use crate::clock::Scheduleable;
 use crate::logger::Lumi;
@@ -13,7 +16,6 @@ use crate::worlds::Message;
 use crate::worlds::SimError;
 
 use super::antimessage::AntiMessage;
-use super::comms::CircularBuffer;
 use super::comms::Transferable;
 use super::paragent::HandlerOutput;
 use super::paragent::LogicalProcess;
@@ -68,7 +70,7 @@ pub struct LP<const SLOTS: usize, const HEIGHT: usize, const SIZE: usize> {
     in_times: Vec<u64>,
     in_queue: [Transferable; SIZE],
     out_queue: BTreeSet<Reverse<Transferable>>,
-    buffers: [CircularBuffer<SIZE>; 2],
+    buffers: [Arc<BufferWheel<SIZE, Transferable>>; 2],
     agent: Box<dyn LogicalProcess>,
     pub step: Arc<AtomicUsize>,
     pub rollbacks: usize,
@@ -77,12 +79,12 @@ pub struct LP<const SLOTS: usize, const HEIGHT: usize, const SIZE: usize> {
 
 impl<const SLOTS: usize, const HEIGHT: usize, const SIZE: usize> LP<SLOTS, HEIGHT, SIZE> {
     /// Spawn new logical process
-    pub fn new<T: 'static>(
+    pub fn new<T: Pod + 'static>(
         id: usize,
         agent: Box<dyn LogicalProcess>,
         timestep: f64,
         step: Arc<AtomicUsize>,
-        buffers: [CircularBuffer<SIZE>; 2],
+        buffers: [Arc<BufferWheel<SIZE, Transferable>>; 2],
         log_slots: usize,
     ) -> Self {
         LP {
@@ -108,36 +110,20 @@ impl<const SLOTS: usize, const HEIGHT: usize, const SIZE: usize> LP<SLOTS, HEIGH
     /// Read incoming messages from Comms
     fn read_incoming(&mut self) {
         let circular = &self.buffers[0];
-        let mut r = circular.read_idx.load(Ordering::Acquire);
-        let w = circular.write_idx.load(Ordering::Acquire);
         let mut count = 0;
         loop {
-            if r == w {
-                return;
+            let msg = circular.read();
+            if !msg.is_ok() {
+                break;
             }
-            if count == SIZE {
-                return;
-            }
-            let msg = unsafe { (*circular.ptr)[r].take().unwrap() };
-            self.in_queue[count] = msg;
-            r = (r + 1) % SIZE;
+            self.in_queue[count] = msg.unwrap();
             count += 1;
         }
     }
     /// Write outgoing messages to Comms
     fn write_outgoing(&mut self, msg: Transferable) -> Result<(), Transferable> {
         let circular = &self.buffers[1];
-        let w = circular.write_idx.load(Ordering::Acquire);
-        let r = circular.read_idx.load(Ordering::Acquire);
-        let next = (w + 1) % SIZE;
-        if next == r {
-            return Err(msg);
-        }
-        unsafe {
-            (*circular.ptr)[w] = Some(msg);
-        }
-        circular.write_idx.store(next, Ordering::Release);
-        Ok(())
+        circular.write(msg.clone()).map_err(|_| msg)
     }
     /// rollback state and clock, and send required anti messages
     fn rollback(&mut self, time: u64) -> Result<(), SimError> {
@@ -334,14 +320,19 @@ impl<const SLOTS: usize, const HEIGHT: usize, const SIZE: usize> LP<SLOTS, HEIGH
     /// Run the logical process
     pub fn run(&mut self) -> Result<(), SimError> {
         loop {
-            if self.scheduler.time.step as f64 * self.scheduler.time.timestep
+            // first, tell GVT “this is my current step”
+            self.step
+                .store(self.scheduler.time.step as usize, Ordering::Release);
+
+            // now check termination
+            if (self.scheduler.time.step as f64 * self.scheduler.time.timestep)
                 >= self.scheduler.time.terminal.unwrap_or(f64::INFINITY)
             {
                 break;
             }
+
+            // do one simulation step
             self.step()?;
-            self.step
-                .store(self.scheduler.time.step as usize, Ordering::Release);
         }
         Ok(())
     }

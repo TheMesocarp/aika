@@ -1,10 +1,10 @@
 [package]
-name = "kala-examples"
+name = "aika-examples"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-kala = { path = "..", version = "0.1.0", features = ["timewarp", "universes"] }
+aika = { path = "..", version = "0.1.0", features = ["timewarp", "universes"] }
 rand = "0.9.0"
 rand_distr = "0.5.1"
 

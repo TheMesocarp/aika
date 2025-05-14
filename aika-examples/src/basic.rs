@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use kala::prelude::*;
+use aika::prelude::*;
 
 pub struct TestAgent {
     pub id: usize,
