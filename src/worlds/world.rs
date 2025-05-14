@@ -78,32 +78,8 @@ impl<const LOGS: usize, const SLOTS: usize, const HEIGHT: usize> World<LOGS, SLO
 
     /// Clone the current state pointer of the simulation.
     pub fn state(&self) -> Option<*mut c_void> {
-        self.state.clone()
+        self.state
     }
-
-    /// Block the long term actions of agents !!this is broken since the shift to the timing wheel!!
-    // pub fn block_agent(&mut self, idx: usize, until: Option<f64>) -> Result<(), SimError> {
-    //     if self.agents.len() <= idx {
-    //         return Err(SimError::InvalidIndex);
-    //     }
-    //     if until.is_none() {
-    //         self.overflow.retain(|x| x.0.agent != idx);
-    //     }
-    //     self.overflow
-    //         .retain(|x| x.0.agent != idx && x.0.time < until.unwrap());
-    //     Ok(())
-    // }
-    // /// remove a particular pending event !!this is broken since the shift to the timing wheel!!
-    // pub fn remove_event(&mut self, idx: usize, time: f64) -> Result<(), SimError> {
-    //     if self.agents.len() <= idx {
-    //         return Err(SimError::InvalidIndex);
-    //     } else if self.clock.time.time > time {
-    //         return Err(SimError::TimeTravel);
-    //     }
-    //     self.overflow
-    //         .retain(|x| x.0.agent != idx && x.0.time != time);
-    //     Ok(())
-    // }
 
     /// Schedule an event for an agent at a given time.
     pub fn schedule(&mut self, time: u64, agent: usize) -> Result<(), SimError> {
@@ -128,61 +104,53 @@ impl<const LOGS: usize, const SLOTS: usize, const HEIGHT: usize> World<LOGS, SLO
                 break;
             }
 
-            match self.clock.tick() {
-                Ok(events) => {
-                    for event in events {
-                        if event.time as f64 * self.clock.time.timestep
-                            > self.clock.time.terminal.unwrap_or(f64::INFINITY)
-                        {
+            if let Ok(events) = self.clock.tick() {
+                for event in events {
+                    if event.time as f64 * self.clock.time.timestep
+                        > self.clock.time.terminal.unwrap_or(f64::INFINITY)
+                    {
+                        break;
+                    }
+                    let supports = if self.logger.is_none() {
+                        Supports::Mailbox(&mut self.mailbox)
+                    } else {
+                        Supports::Both(
+                            &mut self.mailbox,
+                            &mut self.logger.as_mut().unwrap().agents[event.agent],
+                        )
+                    };
+                    let event = self.agents[event.agent].step(&event.time, supports);
+
+                    match event.yield_ {
+                        Action::Timeout(time) => {
+                            if (self.now() + time) as f64 * self.clock.time.timestep
+                                > self.clock.time.terminal.unwrap_or(f64::INFINITY)
+                            {
+                                continue;
+                            }
+
+                            self.commit(Event::new(
+                                self.now(),
+                                self.now() + time,
+                                event.agent,
+                                Action::Wait,
+                            ));
+                        }
+                        Action::Schedule(time) => {
+                            self.commit(Event::new(self.now(), time, event.agent, Action::Wait));
+                        }
+                        Action::Trigger { time, idx } => {
+                            self.commit(Event::new(self.now(), time, idx, Action::Wait));
+                        }
+                        Action::Wait => {}
+                        Action::Break => {
                             break;
                         }
-                        let supports = if self.logger.is_none() {
-                            Supports::Mailbox(&mut self.mailbox)
-                        } else {
-                            Supports::Both(
-                                &mut self.mailbox,
-                                &mut self.logger.as_mut().unwrap().agents[event.agent],
-                            )
-                        };
-                        let event = self.agents[event.agent].step(&event.time, supports);
-
-                        match event.yield_ {
-                            Action::Timeout(time) => {
-                                if (self.now() + time) as f64 * self.clock.time.timestep
-                                    > self.clock.time.terminal.unwrap_or(f64::INFINITY)
-                                {
-                                    continue;
-                                }
-
-                                self.commit(Event::new(
-                                    self.now(),
-                                    self.now() + time,
-                                    event.agent,
-                                    Action::Wait,
-                                ));
-                            }
-                            Action::Schedule(time) => {
-                                self.commit(Event::new(
-                                    self.now(),
-                                    time,
-                                    event.agent,
-                                    Action::Wait,
-                                ));
-                            }
-                            Action::Trigger { time, idx } => {
-                                self.commit(Event::new(self.now(), time, idx, Action::Wait));
-                            }
-                            Action::Wait => {}
-                            Action::Break => {
-                                break;
-                            }
-                        }
-                        if self.logger.is_some() {
-                            self.logger.as_mut().unwrap().write_event(event);
-                        }
+                    }
+                    if self.logger.is_some() {
+                        self.logger.as_mut().unwrap().write_event(event);
                     }
                 }
-                Err(_) => {}
             }
             self.clock.increment(&mut self.overflow);
         }

@@ -1,9 +1,6 @@
 // spsc circular buffer with atomics for notifying thread2thread communications
-use std::sync::{
-    atomic::{AtomicUsize, Ordering},
-    Arc,
-};
 use mesocarp::concurrency::spsc::BufferWheel;
+use std::sync::Arc;
 
 use crate::worlds::{Message, SimError};
 
@@ -102,8 +99,9 @@ impl<const LPS: usize, const SIZE: usize> Comms<LPS, SIZE> {
     /// read a particular LP's mailbox for outgoing messages or antimessages.
     pub fn read(&mut self, target: usize) -> Result<Transferable, SimError> {
         let cbuff = &mut self.wheel[0][target];
-        cbuff.read().map_err(|err| SimError::Mesocarp(format!("{err:?}")))
-
+        cbuff
+            .read()
+            .map_err(|err| SimError::Mesocarp(format!("{err:?}")))
     }
     /// poll atomics for any outgoing messages that need processing
     pub fn poll(&mut self) -> Result<[Option<Transferable>; LPS], SimError> {
@@ -119,8 +117,8 @@ impl<const LPS: usize, const SIZE: usize> Comms<LPS, SIZE> {
     /// reset the comms wheel indexes.
     pub fn flush(&mut self) {
         for i in 0..LPS {
-            self.wheel[0][i] =  Arc::new(BufferWheel::new());
-            self.wheel[1][i] =  Arc::new(BufferWheel::new());
+            self.wheel[0][i] = Arc::new(BufferWheel::new());
+            self.wheel[1][i] = Arc::new(BufferWheel::new());
         }
     }
 }

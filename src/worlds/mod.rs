@@ -13,4 +13,3 @@ pub use event::{Action, Event};
 pub use mailbox::Mailbox;
 pub use message::Message;
 pub use world::World;
-use bytemuck::{Pod, Zeroable};

@@ -1,5 +1,5 @@
 use crate::worlds::SimError;
-use std::{any::TypeId, cmp::Reverse, collections::BTreeSet};
+use std::{cmp::Reverse, collections::BTreeSet};
 
 /// Trait for any time-series object for processing.
 pub trait Scheduleable {
@@ -30,15 +30,15 @@ impl<T: Scheduleable + Ord, const SLOTS: usize, const HEIGHT: usize> Clock<T, SL
             return Err(SimError::NoClock);
         }
         let wheels = std::array::from_fn(|_| std::array::from_fn(|_| Vec::new()));
-        let current = [0 as usize; HEIGHT];
+        let current = [0_usize; HEIGHT];
         Ok(Clock {
             wheels,
             time: Time {
                 time: 0.0,
                 step: 0,
-                timestep: timestep,
+                timestep,
                 timescale: 1.0,
-                terminal: terminal,
+                terminal,
             },
             current_idxs: current,
         })
@@ -52,7 +52,7 @@ impl<T: Scheduleable + Ord, const SLOTS: usize, const HEIGHT: usize> Clock<T, SL
             let startidx = ((SLOTS).pow(1 + k as u32) - SLOTS) / (SLOTS - 1); // start index for each level
             let endidx = ((SLOTS).pow(2 + k as u32) - SLOTS) / (SLOTS - 1) - 1; // end index for each level
             if deltaidx >= startidx {
-                if deltaidx >= (((SLOTS).pow(1 + HEIGHT as u32) - SLOTS) / (SLOTS - 1)) as usize {
+                if deltaidx >= (((SLOTS).pow(1 + HEIGHT as u32) - SLOTS) / (SLOTS - 1)) {
                     return Err(event);
                 }
                 if deltaidx > endidx {
@@ -60,7 +60,7 @@ impl<T: Scheduleable + Ord, const SLOTS: usize, const HEIGHT: usize> Clock<T, SL
                 }
                 let offset =
                     ((deltaidx - startidx) / (SLOTS.pow(k as u32)) + self.current_idxs[k]) % SLOTS; // slot based on the current offset index for level k.
-                self.wheels[k][offset as usize].push(event);
+                self.wheels[k][offset].push(event);
                 return Ok(());
             }
         }
@@ -69,7 +69,7 @@ impl<T: Scheduleable + Ord, const SLOTS: usize, const HEIGHT: usize> Clock<T, SL
     /// consume the next step's pending events.
     pub fn tick(&mut self) -> Result<Vec<T>, SimError> {
         let row: &mut [Vec<T>] = &mut self.wheels[0];
-        let events = std::mem::replace(&mut row[self.current_idxs[0]], Vec::new());
+        let events = std::mem::take(&mut row[self.current_idxs[0]]);
         if !events.is_empty() && events[0].time() < self.time.step {
             println!("Time travel detected");
             return Err(SimError::TimeTravel);
@@ -100,7 +100,7 @@ impl<T: Scheduleable + Ord, const SLOTS: usize, const HEIGHT: usize> Clock<T, SL
                     return;
                 }
                 let row = &mut self.wheels[k];
-                let higher_events = std::mem::replace(&mut row[self.current_idxs[k]], Vec::new());
+                let higher_events = std::mem::take(&mut row[self.current_idxs[k]]);
                 self.current_idxs[k] = (self.current_idxs[k] + 1) % SLOTS;
                 for event in higher_events {
                     let _ = self.insert(event).map_err(|event| {
@@ -148,6 +148,9 @@ impl<T: Scheduleable + Ord, const SLOTS: usize, const HEIGHT: usize> Clock<T, SL
 
 #[cfg(feature = "timewarp")]
 use crate::timewarp::lp::Object;
+#[cfg(feature = "timewarp")]
+use std::any::TypeId;
+
 #[cfg(feature = "timewarp")]
 /// remove local events scheduled after the rollback time.
 fn check_process_object_list<T: Scheduleable + 'static>(time: u64, object_list: &mut Vec<T>) {

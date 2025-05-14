@@ -51,10 +51,10 @@ mod tests {
     }
 
     impl LogicalProcess for TestAgent {
-        fn step(&mut self, time: &u64, state: &mut Lumi) -> Event {
+        fn step(&mut self, time: &u64, _state: &mut Lumi) -> Event {
             Event::new(*time, *time, self.id, Action::Timeout(1))
         }
-        fn process_message(&mut self, msg: Message, time: u64, state: &mut Lumi) -> HandlerOutput {
+        fn process_message(&mut self, msg: Message, time: u64, _state: &mut Lumi) -> HandlerOutput {
             HandlerOutput::Messages(Annihilator(
                 Message {
                     data: msg.data,
@@ -76,12 +76,12 @@ mod tests {
     // Single Step Agent
     pub struct SingleStepAgent {
         pub id: usize,
-        pub name: String,
+        pub _name: String,
     }
 
     impl SingleStepAgent {
-        pub fn new(id: usize, name: String) -> Self {
-            SingleStepAgent { id, name }
+        pub fn new(id: usize, _name: String) -> Self {
+            SingleStepAgent { id, _name }
         }
     }
 

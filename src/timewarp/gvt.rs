@@ -23,8 +23,11 @@ pub struct GVT<const LPS: usize, const SIZE: usize, const SLOTS: usize, const HE
     terminal: usize,
     local_times: [Option<Arc<AtomicUsize>>; LPS],
     pub comms: Option<Comms<LPS, SIZE>>,
-    host: Vec<Vec<[Option<Transferable>; SIZE]>>,
-    temp_load: Vec<(Arc<BufferWheel<SIZE, Transferable>>, Arc<BufferWheel<SIZE, Transferable>>)>,
+    _host: Vec<Vec<[Option<Transferable>; SIZE]>>,
+    temp_load: Vec<(
+        Arc<BufferWheel<SIZE, Transferable>>,
+        Arc<BufferWheel<SIZE, Transferable>>,
+    )>,
     lps: [Option<LP<SLOTS, HEIGHT, SIZE>>; LPS],
     message_overflow: [Vec<Transferable>; LPS],
 }
@@ -38,7 +41,7 @@ impl<const LPS: usize, const SIZE: usize, const SLOTS: usize, const HEIGHT: usiz
         let message_overflow: [Vec<Transferable>; LPS] = std::array::from_fn(|_| Vec::new());
         let local_times = [const { None }; LPS];
         let comms = None;
-        let host: Vec<Vec<[Option<Transferable>; SIZE]>> = (0..2)
+        let _host: Vec<Vec<[Option<Transferable>; SIZE]>> = (0..2)
             .map(|_| (0..LPS).map(|_| [const { None }; SIZE]).collect())
             .collect();
         Box::new(GVT {
@@ -46,7 +49,7 @@ impl<const LPS: usize, const SIZE: usize, const SLOTS: usize, const HEIGHT: usiz
             local_times,
             terminal,
             comms,
-            host,
+            _host,
             temp_load: Vec::new(),
             lps,
             message_overflow,
@@ -68,10 +71,7 @@ impl<const LPS: usize, const SIZE: usize, const SLOTS: usize, const HEIGHT: usiz
         let circ2 = Arc::new(BufferWheel::new());
         let step = Arc::new(AtomicUsize::from(0));
         self.local_times[ptr_idx.unwrap()] = Some(Arc::clone(&step));
-        let lp_comms = [
-            circ1.clone(),
-            circ2.clone()
-        ];
+        let lp_comms = [circ1.clone(), circ2.clone()];
         let lp = LP::<SLOTS, HEIGHT, SIZE>::new::<T>(
             ptr_idx.unwrap(),
             process,
@@ -90,7 +90,7 @@ impl<const LPS: usize, const SIZE: usize, const SLOTS: usize, const HEIGHT: usiz
         let len = self.temp_load.len();
         let mut comms_buffers1 = Vec::new();
         let mut comms_buffers2 = Vec::new();
-        for i in 0..len {
+        for _ in 0..len {
             let pair = self.temp_load.remove(0);
             comms_buffers1.push(pair.0);
             comms_buffers2.push(pair.1);
@@ -98,8 +98,10 @@ impl<const LPS: usize, const SIZE: usize, const SLOTS: usize, const HEIGHT: usiz
         if comms_buffers1.len() < LPS || comms_buffers2.len() < LPS {
             return Err(SimError::MismatchLPsCount);
         }
-        let slc1: Result<[Arc<BufferWheel<SIZE, Transferable>>; LPS], _> = comms_buffers1.try_into();
-        let slc2: Result<[Arc<BufferWheel<SIZE, Transferable>>; LPS], _> = comms_buffers2.try_into();
+        let slc1: Result<[Arc<BufferWheel<SIZE, Transferable>>; LPS], _> =
+            comms_buffers1.try_into();
+        let slc2: Result<[Arc<BufferWheel<SIZE, Transferable>>; LPS], _> =
+            comms_buffers2.try_into();
         let comms_wheel = [slc1.unwrap(), slc2.unwrap()];
         self.comms = Some(Comms::new(comms_wheel));
         for i in 0..LPS {

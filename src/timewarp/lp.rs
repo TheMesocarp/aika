@@ -114,7 +114,7 @@ impl<const SLOTS: usize, const HEIGHT: usize, const SIZE: usize> LP<SLOTS, HEIGH
         loop {
             let msg = circular.read();
             if !msg.is_ok() {
-                break
+                break;
             }
             self.in_queue[count] = msg.unwrap();
             count += 1;

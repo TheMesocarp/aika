@@ -1,7 +1,7 @@
 # aika
 An attempt at a high-performance Discrete Event Simulator (DES), built in Rust!
 
-> Work In Progress, Do Not Use Yet
+> Work In Progress, changes are unstable
 
 ## what for?
 
