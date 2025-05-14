@@ -166,7 +166,7 @@ pub fn run<const LPS: usize, const SIZE: usize, const SLOTS: usize, const HEIGHT
                 for i in 0..LPS {
                     if message_overflow[i].len() > 0 {
                         let len = message_overflow[i].len();
-                        for i in 0..len {
+                        for _ in 0..len {
                             let val = message_overflow[i].pop().unwrap();
                             let status = comms.write(val);
                             if status.is_err() {
@@ -180,24 +180,10 @@ pub fn run<const LPS: usize, const SIZE: usize, const SLOTS: usize, const HEIGHT
                 if results.is_err() {
                     return Err(SimError::PollError);
                 }
-                for (i, j) in results.unwrap().iter().enumerate() {
+                let results = results.unwrap();
+                for (i, j) in results.into_iter().enumerate() {
                     if j.is_some() {
-                        let mut counter = 0;
-                        loop {
-                            if counter == SIZE {
-                                break;
-                            }
-                            let msg = comms.read(i);
-                            if msg.is_err() {
-                                break;
-                            }
-                            let status = comms.write(msg.unwrap());
-                            if status.is_err() {
-                                let msg = status.err().unwrap();
-                                message_overflow[msg.to()].push(msg);
-                            }
-                            counter += 1;
-                        }
+                        message_overflow[i].push(j.unwrap())
                     }
                 }
             }

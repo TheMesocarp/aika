@@ -17,14 +17,14 @@ impl Agent for TestAgent {
 }
 
 impl LogicalProcess for TestAgent {
-    fn step(&mut self, time: &u64, state: &mut Lumi) -> Event {
-        Event::new(*time, *time, self.id, Action::Timeout(1))
+    fn step(&mut self, time: &u64, _state: &mut Lumi) -> Event {
+        Event::new(*time, *time + 1, self.id, Action::Timeout(1))
     }
     fn process_message(
         &mut self,
         msg: Message,
         time: u64,
-        state: &mut Lumi,
+        _state: &mut Lumi,
     ) -> HandlerOutput {
         HandlerOutput::Messages(Annihilator(
             Message {
@@ -45,29 +45,31 @@ impl LogicalProcess for TestAgent {
 }
 
 fn main() {
-    let terminal = 7000000;
-    const lps: usize = 16;
-    let mut gvt = GVT::<lps, 16, 128, 1>::start_engine(terminal);
-    for i in 0..lps {
+    let terminal = 1000000;
+    const LPS: usize = 16;
+    let mut gvt = GVT::<LPS, 10, 128, 1>::start_engine(terminal);
+    for i in 0..LPS {
         let lp = Box::new(TestAgent::new(i));
         let idx = gvt.spawn_process::<u8>(lp, 1.0, 4096).unwrap();
         gvt.commit(idx, Object::Event(Event::new(0, 1, idx, Action::Timeout(1)))).unwrap();
-        gvt.commit(idx, Object::Message(Message::new( 0 as *const u8, 0, 19, idx, (idx + 1) % 10))).unwrap();
     }
     gvt.init_comms().unwrap();
-    let staticdown: &'static mut GVT<lps, 16, 128, 1> = Box::leak(gvt);
+    gvt.commit(2, Object::Message(Message::new( 0 as *const u8, 0, 1, 1, 2))).unwrap();
+    let staticdown: &'static mut GVT<LPS, 10, 128, 1> = Box::leak(gvt);
     let start = std::time::Instant::now();
     run(staticdown).unwrap();
     let elapsed = start.elapsed();
     println!("Benchmark Results:");
+    println!("------------------");
+    println!("Total agents: {LPS:?}");
     println!("Total time: {:.2?}", elapsed);
-    println!("Total events processed: {}", (terminal * lps));
+    println!("Total events processed: {:.3}m", (terminal * LPS) as f64 / 1000000.0 );
     println!(
-        "Events per second: {:.2}",
-        (terminal * lps) as f64 / elapsed.as_secs_f64()
+        "Events per second: {:.3}m",
+        (terminal * LPS) as f64 / (elapsed.as_secs_f64() * 1000000.0)
     );
     println!(
         "Average event processing time: {:.3?} per event",
-        elapsed / (terminal * lps) as u32
+        elapsed / (terminal * LPS) as u32
     );
 }

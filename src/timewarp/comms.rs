@@ -93,6 +93,7 @@ impl<const LPS: usize, const SIZE: usize> Comms<LPS, SIZE> {
     /// Write a message to the respective buffer
     pub fn write(&mut self, msg: Transferable) -> Result<(), Transferable> {
         let target = msg.to();
+        println!("writing to commms outgoing dispatch to {target}");
         let cbuff = &mut self.wheel[1][target];
         cbuff.write(msg.clone()).map_err(|_| msg)
     }
@@ -109,7 +110,13 @@ impl<const LPS: usize, const SIZE: usize> Comms<LPS, SIZE> {
         for i in 0..LPS {
             let msg = self.read(i);
             if msg.is_ok() {
-                ready[i] = Some(msg.unwrap())
+                let msg = msg.unwrap();
+                let out = self.write(msg);
+                if out.is_err() {
+                    ready[i] = Some(out.err().unwrap())
+                }
+                println!("found message in comms channel {i} waiting dispatch!")
+
             }
         }
         Ok(ready)

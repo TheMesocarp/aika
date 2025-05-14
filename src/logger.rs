@@ -90,7 +90,7 @@ impl Lumi {
         if self.current == self.slots - 1 {
             self.flush()
         };
-        self.current = (self.current + 1) % self.metadata.size;
+        self.current = (self.current + 1) % self.slots;
     }
     /// flush arena slots into a heap allocation via a push to vec
     fn flush(&mut self) {
@@ -269,24 +269,23 @@ mod tests {
         );
     }
 
-    // Only run this if you built with `--features timewarp`
-    // #[cfg(feature = "timewarp")]
-    // #[test]
-    // fn test_rollback_restores_previous_state() {
-    //     let mut lumi = Lumi::initialize::<u8>(5);
-    //     // seed a String so that rollback has something valid to swap
-    //     unsafe { seed_state(&mut lumi, 0u8) };
+    #[cfg(feature = "timewarp")]
+    #[test]
+    fn test_rollback_restores_previous_state() {
+        let mut lumi = Lumi::initialize::<u8>(5);
+        // seed a String so that rollback has something valid to swap
+        unsafe { seed_state(&mut lumi, 0u8) };
 
-    //     lumi.update(1u8, 1);
-    //     lumi.update(2u8, 2);
-    //     lumi.update(3u8, 3);
+        lumi.update(1u8, 1);
+        lumi.update(2u8, 2);
+        lumi.update(3u8, 3);
 
-    //     // roll back to time=2, should go back to "second"
-    //     lumi.rollback(2).expect("rollback should succeed");
-    //     assert_eq!(lumi.fetch_state::<u8>(), 2u8);
+        // roll back to time=2, should go back to "second"
+        lumi.rollback(2).expect("rollback should succeed");
+        assert_eq!(lumi.fetch_state::<u8>(), 2u8);
 
-    //     // roll back to time=1, now "first"
-    //     lumi.rollback(1).expect("rollback should succeed");
-    //     assert_eq!(lumi.fetch_state::<u8>(), 1u8);
-    // }
+        // roll back to time=1, now "first"
+        lumi.rollback(1).expect("rollback should succeed");
+        assert_eq!(lumi.fetch_state::<u8>(), 1u8);
+    }
 }

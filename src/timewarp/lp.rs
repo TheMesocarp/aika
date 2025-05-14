@@ -109,7 +109,7 @@ impl<const SLOTS: usize, const HEIGHT: usize, const SIZE: usize> LP<SLOTS, HEIGH
     }
     /// Read incoming messages from Comms
     fn read_incoming(&mut self) {
-        let circular = &self.buffers[0];
+        let circular = &self.buffers[1];
         let mut count = 0;
         loop {
             let msg = circular.read();
@@ -118,15 +118,18 @@ impl<const SLOTS: usize, const HEIGHT: usize, const SIZE: usize> LP<SLOTS, HEIGH
             }
             self.in_queue[count] = msg.unwrap();
             count += 1;
+            println!("read incoming message! time: {:?}", self.step.load(Ordering::Relaxed));
         }
     }
     /// Write outgoing messages to Comms
     fn write_outgoing(&mut self, msg: Transferable) -> Result<(), Transferable> {
-        let circular = &self.buffers[1];
+        let circular = &self.buffers[0];
+        println!("write outgoing message! time: {:?}", self.step.load(Ordering::Relaxed));
         circular.write(msg.clone()).map_err(|_| msg)
     }
     /// rollback state and clock, and send required anti messages
     fn rollback(&mut self, time: u64) -> Result<(), SimError> {
+        println!("rollback triggered!");
         self.scheduler.rollback(time, &mut self.overflow)?;
         self.state.rollback(time)?;
         for i in 0..self.out_antimessages.len() {
