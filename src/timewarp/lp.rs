@@ -320,14 +320,19 @@ impl<const SLOTS: usize, const HEIGHT: usize, const SIZE: usize> LP<SLOTS, HEIGH
     /// Run the logical process
     pub fn run(&mut self) -> Result<(), SimError> {
         loop {
-            if self.scheduler.time.step as f64 * self.scheduler.time.timestep
+            // first, tell GVT “this is my current step”
+            self.step
+                .store(self.scheduler.time.step as usize, Ordering::Release);
+
+            // now check termination
+            if (self.scheduler.time.step as f64 * self.scheduler.time.timestep)
                 >= self.scheduler.time.terminal.unwrap_or(f64::INFINITY)
             {
                 break;
             }
+
+            // do one simulation step
             self.step()?;
-            self.step
-                .store(self.scheduler.time.step as usize, Ordering::Release);
         }
         Ok(())
     }

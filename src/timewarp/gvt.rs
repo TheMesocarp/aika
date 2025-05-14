@@ -144,14 +144,19 @@ pub fn run<const LPS: usize, const SIZE: usize, const SLOTS: usize, const HEIGHT
         let terminal = &mut gvt.terminal;
         thread::spawn(move || {
             loop {
-                let mut min_time = usize::MAX;
-                for time in local_times.iter().flatten() {
-                    let ltime = time.load(Ordering::Relaxed);
-                    if ltime < min_time {
-                        min_time = ltime;
-                    }
+                let min_step = local_times
+                    .iter()
+                    .flatten()
+                    .map(|t| t.load(Ordering::Relaxed))
+                    .min()
+                    .unwrap_or(0);
+                *global_time = min_step;
+
+                // convert back to real time
+                let virtual_time = min_step as f64;
+                if virtual_time >= *terminal as f64 {
+                    break;
                 }
-                *global_time = if min_time == usize::MAX { 0 } else { min_time };
                 if *global_time >= *terminal {
                     println!("break");
                     break;
