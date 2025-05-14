@@ -1,3 +1,5 @@
+use mesocarp::error::Error;
+
 /// Error enum for provide feedback on simulation errors
 #[derive(Debug, Clone)]
 pub enum SimError {
@@ -19,4 +21,5 @@ pub enum SimError {
     InvalidIndex,
     NotRealtime,
     TokioError(String),
+    Mesocarp(String)
 }

@@ -2,6 +2,8 @@ use std::cmp::Reverse;
 use std::collections::BTreeSet;
 use std::ffi::c_void;
 
+use bytemuck::Pod;
+
 use super::agent::Supports;
 use super::{Action, Agent, Config, Event, Mailbox, SimError};
 use crate::clock::Clock;
@@ -29,7 +31,7 @@ unsafe impl<const LOGS: usize, const SLOTS: usize, const HEIGHT: usize> Sync
 impl<const LOGS: usize, const SLOTS: usize, const HEIGHT: usize> World<LOGS, SLOTS, HEIGHT> {
     /// Create a new world with the given configuration.
     /// By default, this will include a logger for state logging and a mailbox for message passing between agents.
-    pub fn create<T: 'static>(config: Config, init_state: Option<*mut c_void>) -> Self {
+    pub fn create<T: Pod + 'static>(config: Config, init_state: Option<*mut c_void>) -> Self {
         World {
             overflow: BTreeSet::new(),
             clock: Clock::<Event, SLOTS, HEIGHT>::new(config.timestep, config.terminal).unwrap(),
@@ -43,7 +45,7 @@ impl<const LOGS: usize, const SLOTS: usize, const HEIGHT: usize> World<LOGS, SLO
     }
 
     /// Spawn a new agent into the world.
-    pub fn spawn<T: 'static>(&mut self, agent: Box<dyn Agent>) -> usize {
+    pub fn spawn<T: Pod + 'static>(&mut self, agent: Box<dyn Agent>) -> usize {
         self.agents.push(agent);
         if self.logger.is_some() {
             self.logger.as_mut().unwrap().add_agent::<T>(LOGS);

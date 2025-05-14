@@ -219,3 +219,75 @@ impl Katko {
         }
     }
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::alloc::Layout;
+
+    // Helper to write an initial T into the raw state pointer
+    unsafe fn seed_state<T: 'static + Copy>(lumi: &mut Lumi, val: T) {
+        let p = lumi.state as *mut T;
+        p.write(val);
+        // also update metadata so size_of_val on drop checks out
+        assert_eq!(lumi.metadata.type_id, TypeId::of::<T>());
+    }
+
+    #[test]
+    fn test_update_and_fetch_state() {
+        let mut lumi = Lumi::initialize::<u32>(2);
+        // Seed an initial state of 7
+        unsafe { seed_state(&mut lumi, 7u32) };
+        assert_eq!(lumi.fetch_state::<u32>(), 7);
+
+        // Update to 42 at t=1
+        lumi.update(42u32, 1);
+        assert_eq!(lumi.fetch_state::<u32>(), 42);
+
+        // Update to 100 at t=2
+        lumi.update(100u32, 2);
+        assert_eq!(lumi.fetch_state::<u32>(), 100);
+    }
+
+    #[test]
+    fn test_flush_triggers_history_growth() {
+        let mut lumi = Lumi::initialize::<u32>(2);
+        // Seed initial state so the first update writes something sensible
+        unsafe { seed_state(&mut lumi, 10u32) };
+
+        // First update goes into arena, no flush yet
+        lumi.update(20u32, 5);
+        assert_eq!(lumi.history.len(), 0, "haven't hit a full slot cycle yet");
+
+        // Second update: current==slots-1 (1), so write() will call flush()
+        lumi.update(30u32, 6);
+        // flush pushes both arena entries into history
+        assert_eq!(
+            lumi.history.len(),
+            2,
+            "after two updates on a 2-slot arena, flush should have dumped both entries"
+        );
+    }
+
+    // Only run this if you built with `--features timewarp`
+    #[cfg(feature = "timewarp")]
+    #[test]
+    fn test_rollback_restores_previous_state() {
+        let mut lumi = Lumi::initialize::<u8>(5);
+        // seed a String so that rollback has something valid to swap
+        unsafe { seed_state(&mut lumi, 0u8) };
+
+        lumi.update(1u8, 1);
+        lumi.update(2u8, 2);
+        lumi.update(3u8, 3);
+
+        // roll back to time=2, should go back to "second"
+        lumi.rollback(2).expect("rollback should succeed");
+        assert_eq!(lumi.fetch_state::<u8>(), 2u8);
+
+        // roll back to time=1, now "first"
+        lumi.rollback(1).expect("rollback should succeed");
+        assert_eq!(lumi.fetch_state::<u8>(), 1u8);
+    }
+}

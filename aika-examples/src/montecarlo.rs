@@ -1,5 +1,5 @@
 #![allow(dead_code, unused_variables)]
-use kala::prelude::*;
+use aika::prelude::*;
 use rand::rng;
 use rand_distr::{Distribution, Normal};
 

@@ -1,5 +1,5 @@
 /target/
 /Cargo.lock
 
-/kala-examples/target/
-/kala-examples/Cargo.lock
+/aika-examples/target/
+/aika-examples/Cargo.lock

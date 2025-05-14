@@ -1,9 +1,11 @@
 use std::cmp::Ordering;
 
+use bytemuck::{Pod, Zeroable};
+
 use crate::clock::Scheduleable;
 
 /// A scheduling action that an agent can take.
-#[derive(Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub enum Action {
     Timeout(u64),
     Schedule(u64),
@@ -13,7 +15,8 @@ pub enum Action {
 }
 
 /// An event that can be scheduled in a simulation. This is used to trigger an agent, or schedule another event.
-#[derive(Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
+#[repr(C)]
 pub struct Event {
     pub time: u64,
     pub commit_time: u64,
@@ -62,3 +65,7 @@ impl Scheduleable for Event {
         self.commit_time
     }
 }
+
+unsafe impl Zeroable for Event {}
+
+unsafe impl Pod for Event {}
