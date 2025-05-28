@@ -7,7 +7,7 @@ use std::{
 };
 
 #[cfg(feature = "timewarp")]
-use crate::worlds::SimError;
+use crate::error::SimError;
 
 #[derive(Copy, Clone)]
 /// Metadata for writing and reconstructing an arbitrary type to/from raw bytes

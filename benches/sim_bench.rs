@@ -18,29 +18,6 @@ impl Agent for TestAgent {
     }
 }
 
-impl LogicalProcess for TestAgent {
-    fn step(&mut self, time: &u64, _state: &mut Lumi) -> Event {
-        Event::new(*time, *time, self.id, Action::Timeout(1))
-    }
-    fn process_message(&mut self, msg: Message, time: u64, _state: &mut Lumi) -> HandlerOutput {
-        HandlerOutput::Messages(Annihilator(
-            Message {
-                data: msg.data,
-                sent: time,
-                received: time + 19,
-                from: msg.to,
-                to: msg.from,
-            },
-            AntiMessage {
-                sent: time,
-                received: time + 19,
-                from: msg.to,
-                to: msg.from,
-            },
-        ))
-    }
-}
-
 fn run_sim(id: usize, config: Config) {
     let agent = TestAgent::new(id);
     let mut world = World::<256, 256, 1>::create::<()>(config, None);

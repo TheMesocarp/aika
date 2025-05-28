@@ -1,4 +1,4 @@
-use crate::worlds::SimError;
+use crate::error::SimError;
 use std::{cmp::Reverse, collections::BTreeSet};
 
 /// Trait for any time-series object for processing.
@@ -107,61 +107,6 @@ impl<T: Scheduleable + Ord, const SLOTS: usize, const HEIGHT: usize> Clock<T, SL
                         overflow.insert(Reverse(event));
                     });
                 }
-            }
-        }
-    }
-
-    #[cfg(feature = "timewarp")]
-    /// Rollback the wheel
-    pub fn rollback(
-        &mut self,
-        time: u64,
-        overflow: &mut BTreeSet<Reverse<T>>,
-    ) -> Result<(), SimError> {
-        self.current_idxs.iter_mut().for_each(|x| *x = 0);
-        self.time.step = time;
-        self.time.time = time as f64 * self.time.timestep;
-
-        let mut resubmit = Vec::new();
-        self.wheels.iter_mut().for_each(|x| {
-            x.iter_mut().for_each(|x| {
-                if x.len() > 0 {
-                    check_process_object_list(time, x);
-                    for i in 0..x.len() {
-                        let g = x.remove(i);
-                        resubmit.push(g);
-                    }
-                }
-            })
-        });
-        for i in 0..resubmit.len() {
-            let result = self.insert(resubmit.remove(i));
-            if result.is_err() {
-                if overflow.insert(Reverse(result.err().unwrap())) == false {
-                    return Err(SimError::ClockSubmissionFailed);
-                }
-            }
-        }
-        Ok(())
-    }
-}
-
-#[cfg(feature = "timewarp")]
-use crate::timewarp::lp::Object;
-#[cfg(feature = "timewarp")]
-use std::any::TypeId;
-
-#[cfg(feature = "timewarp")]
-/// remove local events scheduled after the rollback time.
-fn check_process_object_list<T: Scheduleable + 'static>(time: u64, object_list: &mut Vec<T>) {
-    for i in 0..object_list.len() {
-        if object_list[i].commit_time() >= time && TypeId::of::<T>() == TypeId::of::<Object>() {
-            let obj: &Object = unsafe { &*(&object_list[i] as *const T as *const Object) };
-            match obj {
-                Object::Event(_) => {
-                    object_list.remove(i);
-                }
-                Object::Message(_) => {}
             }
         }
     }

@@ -5,7 +5,8 @@ use std::ffi::c_void;
 use bytemuck::Pod;
 
 use super::agent::Supports;
-use super::{Action, Agent, Config, Event, Mailbox, SimError};
+use super::{Action, Agent, Config, Event, Mailbox};
+use crate::error::SimError;
 use crate::clock::Clock;
 use crate::logger::Katko;
 

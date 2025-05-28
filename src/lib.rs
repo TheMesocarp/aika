@@ -1,33 +1,18 @@
 pub mod clock;
 pub mod logger;
-#[cfg(feature = "timewarp")]
-pub mod timewarp;
-#[cfg(feature = "universes")]
-pub mod universes;
 pub mod worlds;
+pub mod error;
 
 pub mod prelude {
     pub use crate::clock::Clock;
     pub use crate::logger::Lumi;
     pub use crate::worlds::{Action, Agent, Config, Event, Mailbox, Message, Supports, World};
-
-    #[cfg(feature = "timewarp")]
-    pub use crate::timewarp::{
-        antimessage::{Annihilator, AntiMessage},
-        gvt::{run, GVT},
-        lp::Object,
-        paragent::{HandlerOutput, LogicalProcess},
-    };
-
-    #[cfg(feature = "universes")]
-    pub use crate::universes::Universe;
 }
 
 #[cfg(test)]
 mod tests {
 
     use crate::logger::Lumi;
-    use crate::timewarp::gvt::{run, GVT};
 
     use super::prelude::*;
     use super::worlds::*;
@@ -47,29 +32,6 @@ mod tests {
     impl Agent for TestAgent {
         fn step(&mut self, time: &u64, _supports: Supports) -> Event {
             Event::new(*time, *time, self.id, Action::Timeout(1))
-        }
-    }
-
-    impl LogicalProcess for TestAgent {
-        fn step(&mut self, time: &u64, _state: &mut Lumi) -> Event {
-            Event::new(*time, *time, self.id, Action::Timeout(1))
-        }
-        fn process_message(&mut self, msg: Message, time: u64, _state: &mut Lumi) -> HandlerOutput {
-            HandlerOutput::Messages(Annihilator(
-                Message {
-                    data: msg.data,
-                    sent: time,
-                    received: time + 19,
-                    from: msg.to,
-                    to: msg.from,
-                },
-                AntiMessage {
-                    sent: time,
-                    received: time + 19,
-                    from: msg.to,
-                    to: msg.from,
-                },
-            ))
         }
     }
 
@@ -178,42 +140,5 @@ mod tests {
 
         assert!(world.now() == 1000);
         assert!(world.step_counter() == 1000);
-    }
-
-    #[test]
-    fn test_time_warp() {
-        let terminal = 20000000;
-        let mut gvt = GVT::<10, 8, 128, 1>::start_engine(terminal);
-        for i in 0..10 {
-            let lp = Box::new(TestAgent::new(i));
-            let idx = gvt.spawn_process::<u8>(lp, 1.0, 4096).unwrap();
-            gvt.commit(
-                idx,
-                timewarp::lp::Object::Message(Message::new(
-                    0 as *const u8,
-                    0,
-                    2,
-                    idx,
-                    (idx + 1) % 10,
-                )),
-            )
-            .unwrap();
-        }
-        gvt.init_comms().unwrap();
-        let staticdown: &'static mut GVT<10, 8, 128, 1> = Box::leak(gvt);
-        let start = std::time::Instant::now();
-        run(staticdown).unwrap();
-        let elapsed = start.elapsed();
-        println!("Benchmark Results:");
-        println!("Total time: {:.2?}", elapsed);
-        println!("Total events processed: {}", terminal);
-        println!(
-            "Events per second: {:.2}",
-            terminal as f64 / elapsed.as_secs_f64()
-        );
-        println!(
-            "Average event processing time: {:.3?} per event",
-            elapsed / terminal as u32
-        );
     }
 }
