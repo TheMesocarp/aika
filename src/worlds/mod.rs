@@ -173,7 +173,7 @@ mod tests {
 
     #[test]
     fn test_run() {
-        let mut world = World::<8, 128, 1, u8>::init(10000000.0, 1.0).unwrap();
+        let mut world = World::<8, 128, 1, u8>::init(4000000.0, 1.0).unwrap();
         let agent_test = TestAgent::new(0);
         world.spawn_agent(Box::new(agent_test));
         world.init_mailbox(Vec::new(), Some(128)).unwrap();
