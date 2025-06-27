@@ -1,57 +1,58 @@
-use std::cmp::Ordering;
+use mesocarp::{comms::mailbox::Message, scheduling::Scheduleable};
 
-use crate::clock::Scheduleable;
-
-/// A message that can be sent between agents
-#[derive(Debug, Clone)]
-pub struct Message {
-    pub data: *const u8,
-    pub sent: u64,
-    pub received: u64,
-    pub from: usize,
-    pub to: usize,
+#[derive(Clone, Debug)]
+pub struct Msg<T: Clone> {
+    from_id: usize,
+    to_id: Option<usize>,
+    commit_time: u64,
+    recv_time: u64,
+    data: T
 }
 
-unsafe impl Send for Message {}
-unsafe impl Sync for Message {}
+impl<T: Clone> Message for Msg<T> {
+    fn to(&self) -> Option<usize> {
+        self.to_id
+    }
 
-impl Message {
-    pub fn new(data: *const u8, sent: u64, received: u64, from: usize, to: usize) -> Self {
-        Message {
-            data,
-            sent,
-            received,
-            from,
-            to,
+    fn from(&self) -> usize {
+        self.from_id
+    }
+
+    fn broadcast(&self) -> bool {
+        if self.to_id.is_none() {
+            true
+        } else {
+            false
         }
     }
 }
 
-impl PartialEq for Message {
-    fn eq(&self, other: &Self) -> bool {
-        self.sent == other.sent && self.received == other.received
-    }
-}
-
-impl Eq for Message {}
-
-impl PartialOrd for Message {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for Message {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.received.partial_cmp(&other.received).unwrap()
-    }
-}
-
-impl Scheduleable for Message {
+impl<T: Clone> Scheduleable for Msg<T> {
     fn time(&self) -> u64 {
-        self.received
+        self.recv_time
     }
+
     fn commit_time(&self) -> u64 {
-        self.sent
+        self.commit_time
+    }
+}
+
+impl<T: Clone> PartialOrd for Msg<T> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.recv_time.partial_cmp(&other.recv_time)
+    }
+}
+
+impl<T: Clone> PartialEq for Msg<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.from_id == other.from_id && self.to_id == other.to_id && self.commit_time == other.commit_time && self.recv_time == other.recv_time
+    }
+}
+
+impl<T: Clone> Eq for Msg<T> {}
+
+impl<T: Clone> Ord for Msg<T> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.recv_time.cmp(&other.recv_time)
     }
 }

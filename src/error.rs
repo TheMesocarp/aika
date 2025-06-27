@@ -1,23 +1,9 @@
+use mesocarp::MesoError;
+
 /// Error enum for provide feedback on simulation errors
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum SimError {
     TimeTravel,
     PastTerminal,
-    ScheduleFailed,
-    PlaybackFroze,
-    MailboxFull,
-    MailboxEmpty,
-    RollbackTimeMismatch,
-    ClockSubmissionFailed,
-    LPsFull,
-    MismatchLPsCount,
-    NoState,
-    NoEvents,
-    NoClock,
-    PollError,
-    ThreadJoinError,
-    InvalidIndex,
-    NotRealtime,
-    TokioError(String),
-    Mesocarp(String),
+    MesoError(MesoError)
 }
