@@ -2,7 +2,7 @@ use std::cmp::Ordering;
 
 use bytemuck::{Pod, Zeroable};
 
-use crate::clock::Scheduleable;
+use mesocarp::scheduling::Scheduleable;
 
 /// A scheduling action that an agent can take.
 #[derive(Copy, Clone, Debug)]
