@@ -199,6 +199,6 @@ mod tests {
         world.init_support_layers(None).unwrap();
         world.schedule(1, 0).unwrap();
         assert!(world.agent_supports.len() == 1);
-        assert!(world.run().unwrap() == ());
+        world.run().unwrap();
     }
 }
