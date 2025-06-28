@@ -2,13 +2,11 @@ use std::{cmp::Reverse, collections::BTreeSet};
 
 use mesocarp::{comms::mailbox::ThreadWorld, scheduling::htw::Clock};
 
-use crate::{error::SimError, worlds::{agent::{Agent, AgentSupport}, event::{Action, Event}, message::Msg}};
+use crate::{SimError, messages::Msg, agents::{Agent, AgentSupport}, st::event::{Action, Event}};
 
-pub mod agent;
-pub mod message;
 pub mod event;
 
-pub struct Time {
+pub struct TimeInfo {
     timestep: f64,
     terminal: f64
 }
@@ -18,9 +16,9 @@ pub struct World<const MESSAGE_SLOTS: usize, const CLOCK_SLOTS: usize, const CLO
     pub overflow: BTreeSet<Reverse<Event>>,
     pub clock: Clock<Event, CLOCK_SLOTS, CLOCK_HEIGHT>,
     pub agents: Vec<Box<dyn Agent<MESSAGE_SLOTS, MessageType>>>,
-    pub agent_supports: Vec<Option<AgentSupport<MESSAGE_SLOTS, MessageType>>>,
+    pub agent_supports: Vec<AgentSupport<MESSAGE_SLOTS, MessageType>>,
     mailbox: Option<ThreadWorld<MESSAGE_SLOTS, Msg<MessageType>>>,
-    pub time_info: Time
+    pub time_info: TimeInfo
 }
 
 unsafe impl<const MESSAGE_SLOTS: usize, const CLOCK_SLOTS: usize, const CLOCK_HEIGHT: usize, MessageType: Clone> Send for World<MESSAGE_SLOTS, CLOCK_SLOTS, CLOCK_HEIGHT, MessageType> {}
@@ -34,7 +32,7 @@ impl<const MESSAGE_SLOTS: usize, const CLOCK_SLOTS: usize, const CLOCK_HEIGHT: u
             agents: Vec::new(),
             agent_supports: Vec::new(),
             mailbox: None,
-            time_info: Time {
+            time_info: TimeInfo {
                 timestep,
                 terminal
             }
@@ -46,20 +44,14 @@ impl<const MESSAGE_SLOTS: usize, const CLOCK_SLOTS: usize, const CLOCK_HEIGHT: u
         self.agents.len() - 1
     }
 
-    pub fn init_mailbox(&mut self, agents: Vec<usize>, arena_size: Option<usize>) -> Result<(), SimError> {
-        let mut agent_ids = agents;
-        if agent_ids.is_empty() {
-            agent_ids = self.agents.iter().enumerate().map(|x| x.0).collect::<Vec<_>>();
-        }
+    pub fn init_support_layers(&mut self, arena_size: Option<usize>) -> Result<(), SimError> {
+        let agent_ids = self.agents.iter().enumerate().map(|x| x.0).collect::<Vec<_>>();
         let thread_world = ThreadWorld::<MESSAGE_SLOTS, Msg<MessageType>>::new(agent_ids.clone()).map_err(SimError::MesoError)?;
         let len = self.agents.len();
-        let mut supports: Vec<Option<AgentSupport<MESSAGE_SLOTS, _>>> = Vec::with_capacity(len);
-        for _ in 0..len {
-            supports.push(None);
-        }
+        let mut supports: Vec<AgentSupport<MESSAGE_SLOTS, _>> = Vec::with_capacity(len);
         for i in agent_ids {
             let sup = AgentSupport::new(Some(thread_world.get_user(i).map_err(SimError::MesoError)?), arena_size);
-            supports[i] = Some(sup);
+            supports.push(sup);
         }
         self.mailbox = Some(thread_world);
         self.agent_supports = supports;
@@ -111,9 +103,7 @@ impl<const MESSAGE_SLOTS: usize, const CLOCK_SLOTS: usize, const CLOCK_HEIGHT: u
                         break;
                     }
                     let supports = &mut self.agent_supports[event.agent];
-                    if supports.is_some() {
-                        supports.as_mut().unwrap().current_time = event.time;
-                    }
+                    supports.current_time = event.time;
                     let event = self.agents[event.agent].step(supports);
                     match event.yield_ {
                         Action::Timeout(time) => {
@@ -165,18 +155,18 @@ mod tests {
     }
 
     impl Agent<8, u8> for TestAgent {
-        fn step(&self, supports: &mut Option<AgentSupport<8, u8>>) -> Event {
-            let time = supports.as_ref().unwrap().current_time;
+        fn step(&self, supports: &mut AgentSupport<8, u8>) -> Event {
+            let time = supports.current_time;
             Event::new(time, time, self.id, Action::Timeout(1))
         }
     }
 
     #[test]
     fn test_run() {
-        let mut world = World::<8, 128, 1, u8>::init(4000000.0, 1.0).unwrap();
+        let mut world = World::<8, 128, 1, u8>::init(40000000.0, 1.0).unwrap();
         let agent_test = TestAgent::new(0);
         world.spawn_agent(Box::new(agent_test));
-        world.init_mailbox(Vec::new(), Some(128)).unwrap();
+        world.init_support_layers(None).unwrap();
         world.schedule(1, 0).unwrap();
         assert!(world.agent_supports.len() == 1);
         assert!(world.run().unwrap() == ());
