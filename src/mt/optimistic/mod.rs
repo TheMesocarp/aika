@@ -141,7 +141,7 @@ impl<
         let gvt_handle = thread::spawn(move || -> Result<GVT<SLOTS, MessageType>, SimError> {
             while !gvt_flag.load(std::sync::atomic::Ordering::Relaxed) {
                 if let Err(e) = gvt_controller.poll() {
-                    eprintln!("GVT polling error: {:?}", e);
+                    eprintln!("GVT polling error: {e:?}");
                     return Err(e);
                 }
             }
@@ -169,13 +169,13 @@ impl<
             match handle.join() {
                 Ok(result) => {
                     if let Err(e) = result {
-                        eprintln!("LP {} terminated with error: {:?}", i, e);
+                        eprintln!("LP {i} terminated with error: {e:?}");
                         return Err(e);
                     }
                     results_lps.push(result.unwrap());
                 }
                 Err(_) => {
-                    eprintln!("LP {} thread panicked", i);
+                    eprintln!("LP {i} thread panicked");
                     return Err(SimError::ThreadPanic);
                 }
             }
@@ -185,7 +185,7 @@ impl<
         let gvt = match gvt_handle.join() {
             Ok(result) => {
                 if let Err(e) = result {
-                    eprintln!("GVT thread terminated with error: {:?}", e);
+                    eprintln!("GVT thread terminated with error: {e:?}");
                     return Err(e);
                 }
                 result.unwrap()
@@ -221,7 +221,7 @@ impl<
         let gvt_handle = thread::spawn(move || -> Result<GVT<SLOTS, MessageType>, SimError> {
             while !gvt_flag.load(std::sync::atomic::Ordering::Relaxed) {
                 if let Err(e) = gvt_controller.poll() {
-                    eprintln!("GVT polling error: {:?}", e);
+                    eprintln!("GVT polling error: {e:?}");
                     return Err(e);
                 }
             }
@@ -254,13 +254,13 @@ impl<
             match handle.join() {
                 Ok(result) => {
                     if let Err(e) = result {
-                        eprintln!("LP {} terminated with error: {:?}", i, e);
+                        eprintln!("LP {i} terminated with error: {e:?}");
                         return Err(e);
                     }
                     results_lps.push(result.unwrap());
                 }
                 Err(_) => {
-                    eprintln!("LP {} thread panicked", i);
+                    eprintln!("LP {i} thread panicked");
                     return Err(SimError::ThreadPanic);
                 }
             }
@@ -270,7 +270,7 @@ impl<
         let gvt = match gvt_handle.join() {
             Ok(result) => {
                 if let Err(e) = result {
-                    eprintln!("GVT thread terminated with error: {:?}", e);
+                    eprintln!("GVT thread terminated with error: {e:?}");
                     return Err(e);
                 }
                 result.unwrap()
