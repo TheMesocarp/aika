@@ -1,15 +1,18 @@
-use mesocarp::{comms::mailbox::ThreadWorldUser, logging::journal::Journal};
+use mesocarp::{
+    comms::mailbox::{Message, ThreadWorldUser},
+    logging::journal::Journal,
+};
 
-use crate::{messages::Msg, st::event::Event};
+use crate::st::event::Event;
 
-pub struct AgentSupport<const SLOTS: usize, T: Clone> {
-    mailbox: Option<ThreadWorldUser<SLOTS, Msg<T>>>,
-    logger: Option<Journal>,
+pub struct AgentSupport<const SLOTS: usize, T: Message> {
+    pub mailbox: Option<ThreadWorldUser<SLOTS, T>>,
+    pub logger: Option<Journal>,
     pub current_time: u64,
 }
 
-impl<const SLOTS: usize, T: Clone> AgentSupport<SLOTS, T>{
-    pub fn new(mail: Option<ThreadWorldUser<SLOTS, Msg<T>>>, size: Option<usize>) -> Self {
+impl<const SLOTS: usize, T: Message> AgentSupport<SLOTS, T> {
+    pub fn new(mail: Option<ThreadWorldUser<SLOTS, T>>, size: Option<usize>) -> Self {
         let logger = if size.is_some() {
             let size = size.unwrap();
             Some(Journal::init(size))
@@ -19,11 +22,15 @@ impl<const SLOTS: usize, T: Clone> AgentSupport<SLOTS, T>{
         Self {
             mailbox: mail,
             logger,
-            current_time: 0
+            current_time: 0,
         }
     }
 }
 
-pub trait Agent<const SLOTS: usize, MessageType: Clone> {
-    fn step(&self, supports: &mut AgentSupport<SLOTS, MessageType>) -> Event;
+pub trait Agent<const SLOTS: usize, T: Message> {
+    fn step(&mut self, supports: &mut AgentSupport<SLOTS, T>) -> Event;
+}
+
+pub trait ThreadedAgent<const SLOTS: usize, T: Message>: Agent<SLOTS, T> {
+    fn read_message(&mut self, supports: &mut AgentSupport<SLOTS, T>);
 }

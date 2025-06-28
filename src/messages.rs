@@ -8,7 +8,7 @@ pub struct Msg<T: Clone> {
     pub to: Option<usize>,
     pub sent: u64,
     pub recv: u64,
-    pub data: T
+    pub data: T,
 }
 
 impl<T: Clone> Msg<T> {
@@ -18,7 +18,7 @@ impl<T: Clone> Msg<T> {
             to,
             sent,
             recv,
-            data
+            data,
         }
     }
 }
@@ -59,7 +59,10 @@ impl<T: Clone> PartialOrd for Msg<T> {
 
 impl<T: Clone> PartialEq for Msg<T> {
     fn eq(&self, other: &Self) -> bool {
-        self.from == other.from && self.to == other.to && self.sent == other.sent && self.recv == other.recv
+        self.from == other.from
+            && self.to == other.to
+            && self.sent == other.sent
+            && self.recv == other.recv
     }
 }
 
@@ -70,7 +73,6 @@ impl<T: Clone> Ord for Msg<T> {
         self.recv.cmp(&other.recv)
     }
 }
-
 
 #[derive(Debug, Clone)]
 /// A message that can be sent between agents.
@@ -160,7 +162,7 @@ impl<T: Clone> Annihilator<T> {
 #[derive(Clone)]
 pub enum Transfer<T: Clone> {
     Msg(Msg<T>),
-    AntiMsg(AntiMsg)
+    AntiMsg(AntiMsg),
 }
 
 impl<T: Clone> Message for Transfer<T> {
@@ -210,7 +212,10 @@ impl<T: Clone> PartialOrd for Transfer<T> {
 
 impl<T: Clone> PartialEq for Transfer<T> {
     fn eq(&self, other: &Self) -> bool {
-        self.from() == other.from() && self.to() == other.to() && self.commit_time() == other.commit_time() && self.time() == other.time()
+        self.from() == other.from()
+            && self.to() == other.to()
+            && self.commit_time() == other.commit_time()
+            && self.time() == other.time()
     }
 }
 
