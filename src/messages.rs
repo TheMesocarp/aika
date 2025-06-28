@@ -1,8 +1,9 @@
 use std::cmp::Ordering;
 
+use bytemuck::{Pod, Zeroable};
 use mesocarp::{comms::mailbox::Message, scheduling::Scheduleable};
 
-#[derive(Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct Msg<T: Clone> {
     pub from: usize,
     pub to: Option<usize>,
@@ -74,7 +75,7 @@ impl<T: Clone> Ord for Msg<T> {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Copy, Clone)]
 /// A message that can be sent between agents.
 pub struct AntiMsg {
     pub sent: u64,
@@ -140,6 +141,9 @@ impl Message for AntiMsg {
         false
     }
 }
+
+unsafe impl Pod for AntiMsg {}
+unsafe impl Zeroable for AntiMsg {}
 
 /// A `Message` and `AntiMessage` aannihilate each other if they encounter again after creation.
 pub struct Annihilator<T: Clone>(pub Msg<T>, pub AntiMsg);

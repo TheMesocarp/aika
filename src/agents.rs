@@ -32,5 +32,5 @@ pub trait Agent<const SLOTS: usize, T: Message> {
 }
 
 pub trait ThreadedAgent<const SLOTS: usize, T: Message>: Agent<SLOTS, T> {
-    fn read_message(&mut self, supports: &mut AgentSupport<SLOTS, T>);
+    fn read_message(&mut self, supports: &mut AgentSupport<SLOTS, T>, agent_id: usize);
 }

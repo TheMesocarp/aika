@@ -3,7 +3,7 @@
 use std::{
     cmp::Reverse,
     collections::BTreeSet,
-    sync::{atomic::AtomicU64, Arc},
+    sync::{atomic::{AtomicU64, Ordering}, Arc},
 };
 
 use mesocarp::{
@@ -98,6 +98,7 @@ pub struct LP<
     event_process: LocalEventSystem<CLOCK_SLOTS, CLOCK_HEIGHT>,
     mail_process: LocalMailSystem<SLOTS, CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>,
     time: LocalTime,
+    paused: bool
 }
 
 impl<
@@ -131,7 +132,8 @@ impl<
             supports,
             event_process,
             mail_process,
-            time
+            time,
+            paused: false
         })
     }
 
@@ -216,7 +218,7 @@ impl<
                 }
                 let supports = &mut self.supports;
                 supports.current_time = msg.recv;
-                self.agent.read_message(supports);
+                self.agent.read_message(supports, self.agent_id);
             }
         }
         self.mail_process.schedule.increment(&mut self.mail_process.overflow);
@@ -266,14 +268,33 @@ impl<
             return Err(SimError::TimeTravel)
         }
         self.supports.logger.as_mut().unwrap().rollback(time);
-        // need to fetch antimessages from journal and send them out
+        self.mail_process.schedule.rollback(&mut self.mail_process.overflow, time);
+        let out = self.mail_process.anti_messages.rollback_return::<AntiMsg>(time);
+        for (anti, _) in out {
+            self.supports.mailbox.as_mut().unwrap().send(Transfer::AntiMsg(anti)).map_err(SimError::MesoError)?;
+        }
 
         self.event_process.local_clock = Clock::new().map_err(SimError::MesoError)?;
         self.event_process.local_clock.set_time(time);
-
-        // need to rollback message clock
         self.time.time = time;
-        todo!();
+        Ok(())
+    }
+
+    pub fn run(&mut self) -> Result<(), SimError> {
+        while self.time.time as f64 * self.time.time_info.timestep < self.time.time_info.terminal {
+            let gvt = self.time.global_clock.load(Ordering::SeqCst);
+            if self.time.time > gvt + self.time.horizon && !self.paused {
+                self.paused = true;
+                continue;
+            }
+            if self.paused {
+                if self.time.time == gvt + 1 {
+                    self.paused = false;
+                }
+                continue;
+            }
+            self.step()?;
+        }
         Ok(())
     }
 }
