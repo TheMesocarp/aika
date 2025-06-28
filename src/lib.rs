@@ -10,5 +10,8 @@ pub mod st;
 pub enum SimError {
     TimeTravel,
     PastTerminal,
+    MaximumAgentsAllowed,
+    NotAllAgentsRegistered,
+    ThreadPanic,
     MesoError(MesoError),
 }

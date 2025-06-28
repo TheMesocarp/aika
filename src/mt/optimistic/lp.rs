@@ -4,7 +4,7 @@ use std::{
     cmp::Reverse,
     collections::BTreeSet,
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc,
     },
 };
@@ -302,8 +302,11 @@ impl<
         Ok(())
     }
 
-    pub fn run(&mut self) -> Result<(), SimError> {
+    pub fn run(&mut self, termination_flag: Arc<AtomicBool>) -> Result<(), SimError> {
         while self.time.time as f64 * self.time.time_info.timestep < self.time.time_info.terminal {
+            if termination_flag.load(Ordering::Acquire) {
+                break;
+            }
             let gvt = self.time.global_clock.load(Ordering::SeqCst);
             let throttled = self.time.horizon.is_some();
             if throttled {
@@ -322,4 +325,22 @@ impl<
         }
         Ok(())
     }
+}
+
+unsafe impl<
+        const SLOTS: usize,
+        const CLOCK_SLOTS: usize,
+        const CLOCK_HEIGHT: usize,
+        MessageType: Clone,
+    > Send for LP<SLOTS, CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>
+{
+}
+
+unsafe impl<
+        const SLOTS: usize,
+        const CLOCK_SLOTS: usize,
+        const CLOCK_HEIGHT: usize,
+        MessageType: Clone,
+    > Sync for LP<SLOTS, CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>
+{
 }

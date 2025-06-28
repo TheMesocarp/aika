@@ -1,3 +1,4 @@
+#[derive(Copy, Clone, Debug)]
 pub struct LPConfig {
     pub horizon: Option<u64>,
     pub timestep: f64,
