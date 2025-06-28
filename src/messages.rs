@@ -34,11 +34,7 @@ impl<T: Clone> Message for Msg<T> {
     }
 
     fn broadcast(&self) -> bool {
-        if self.to.is_none() {
-            true
-        } else {
-            false
-        }
+        self.to.is_none()
     }
 }
 
@@ -54,7 +50,7 @@ impl<T: Clone> Scheduleable for Msg<T> {
 
 impl<T: Clone> PartialOrd for Msg<T> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        self.recv.partial_cmp(&other.recv)
+        Some(self.cmp(other))
     }
 }
 
@@ -210,7 +206,7 @@ impl<T: Clone> Scheduleable for Transfer<T> {
 
 impl<T: Clone> PartialOrd for Transfer<T> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        self.time().partial_cmp(&other.time())
+        Some(self.cmp(other))
     }
 }
 

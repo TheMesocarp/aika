@@ -9,6 +9,12 @@ use mesocarp::{
 
 use crate::{messages::Transfer, SimError};
 
+pub type RegistryOutput<const SLOTS: usize, MessageType> = (
+    Arc<AtomicU64>,
+    ThreadWorldUser<SLOTS, Transfer<MessageType>>,
+    usize,
+);
+
 pub struct GVT<const SLOTS: usize, MessageType: Clone> {
     global_clock: Arc<AtomicU64>,
     thread_world: ThreadWorld<SLOTS, Transfer<MessageType>>,
@@ -30,16 +36,7 @@ impl<const SLOTS: usize, MessageType: Clone> GVT<SLOTS, MessageType> {
         })
     }
 
-    pub fn register_agent(
-        &mut self,
-    ) -> Result<
-        (
-            Arc<AtomicU64>,
-            ThreadWorldUser<SLOTS, Transfer<MessageType>>,
-            usize,
-        ),
-        SimError,
-    > {
+    pub fn register_agent(&mut self) -> Result<RegistryOutput<SLOTS, MessageType>, SimError> {
         let arc = Arc::clone(&self.global_clock);
         let user = self
             .thread_world
