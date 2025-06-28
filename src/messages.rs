@@ -156,3 +156,71 @@ impl<T: Clone> Annihilator<T> {
         Self(msg, anti)
     }
 }
+
+#[derive(Clone)]
+pub enum Transfer<T: Clone> {
+    Msg(Msg<T>),
+    AntiMsg(AntiMsg)
+}
+
+impl<T: Clone> Message for Transfer<T> {
+    fn to(&self) -> Option<usize> {
+        match self {
+            Transfer::Msg(msg) => msg.to(),
+            Transfer::AntiMsg(anti_msg) => anti_msg.to(),
+        }
+    }
+
+    fn from(&self) -> usize {
+        match self {
+            Transfer::Msg(msg) => msg.from(),
+            Transfer::AntiMsg(anti_msg) => anti_msg.from(),
+        }
+    }
+
+    fn broadcast(&self) -> bool {
+        match self {
+            Transfer::Msg(msg) => msg.broadcast(),
+            Transfer::AntiMsg(anti_msg) => anti_msg.broadcast(),
+        }
+    }
+}
+
+impl<T: Clone> Scheduleable for Transfer<T> {
+    fn time(&self) -> u64 {
+        match self {
+            Transfer::Msg(msg) => msg.time(),
+            Transfer::AntiMsg(anti_msg) => anti_msg.time(),
+        }
+    }
+
+    fn commit_time(&self) -> u64 {
+        match self {
+            Transfer::Msg(msg) => msg.commit_time(),
+            Transfer::AntiMsg(anti_msg) => anti_msg.commit_time(),
+        }
+    }
+}
+
+impl<T: Clone> PartialOrd for Transfer<T> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        self.time().partial_cmp(&other.time())
+    }
+}
+
+impl<T: Clone> PartialEq for Transfer<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.from() == other.from() && self.to() == other.to() && self.commit_time() == other.commit_time() && self.time() == other.time()
+    }
+}
+
+impl<T: Clone> Eq for Transfer<T> {}
+
+impl<T: Clone> Ord for Transfer<T> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.time().cmp(&other.time())
+    }
+}
+
+unsafe impl<T: Clone> Send for Transfer<T> {}
+unsafe impl<T: Clone> Sync for Transfer<T> {}
