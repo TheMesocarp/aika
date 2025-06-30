@@ -8,21 +8,15 @@ debug = true
 
 [features]
 
-timewarp = []
-universes = ["dep:rayon"]
-
 [dependencies]
-rayon = { version = "1.10.0", optional = true }
 bytemuck = "1.23.0"
-mesocarp = "1.0.0"
+mesocarp = "0.5.6"
 
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
-aika = { path = ".", features = ["timewarp", "universes"] }
-rand = "0.9.0"
-rand_distr = "0.5.1"
+aika = { path = "." }
 
 [[bench]]
-name = "sim_bench"
+name = "event_throughput"
 harness = false
