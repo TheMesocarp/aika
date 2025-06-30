@@ -6,7 +6,7 @@ use aika::{
         World,
     },
 };
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
 // Minimal agent that just schedules timeout events
 struct ThroughputAgent {
@@ -70,7 +70,8 @@ fn bench_event_throughput(c: &mut Criterion) {
                     },
                     |mut world| {
                         // Benchmark: Run the simulation
-                        black_box(world.run().unwrap());
+                        world.run().unwrap();
+                        black_box(());
                     },
                 );
             },
@@ -139,7 +140,8 @@ fn bench_single_agent_long_run(c: &mut Criterion) {
                         world
                     },
                     |mut world| {
-                        black_box(world.run().unwrap());
+                        world.run().unwrap();
+                        black_box(());
                     },
                 );
             },
@@ -154,43 +156,38 @@ fn bench_events_per_second(c: &mut Criterion) {
     let mut group = c.benchmark_group("events_per_second");
 
     // Fixed time window
-    let sim_time = 10000.0;
+    let sim_time = 1000000.0;
 
-    for num_agents in [1, 10, 100].iter() {
-        let total_events = sim_time as usize * num_agents; // Each agent generates 1 event per time step
+    for &num_agents in [1, 10, 100].iter() {
+        let total_events = sim_time as u64 * num_agents as u64; // Each agent generates 1 event per time step
+
+        // Inform Criterion of the number of events to be processed.
+        group.throughput(Throughput::Elements(total_events));
 
         group.bench_with_input(
             BenchmarkId::new("agents", num_agents),
-            num_agents,
+            &num_agents,
             |b, &num_agents| {
                 b.iter_with_setup(
                     || {
+                        // The setup remains the same
                         let mut world = World::<8, 128, 1, ()>::init(sim_time, 1.0).unwrap();
-
                         for i in 0..num_agents {
                             let agent = ThroughputAgent::new(i, sim_time as usize);
                             world.spawn_agent(Box::new(agent));
                         }
-
                         world.init_support_layers(None).unwrap();
-
                         for i in 0..num_agents {
                             world.schedule(1, i).unwrap();
                         }
-
                         world
                     },
                     |mut world| {
-                        let start = std::time::Instant::now();
-                        black_box(world.run().unwrap());
-                        let duration = start.elapsed();
-
-                        // Log events per second for analysis
-                        let events_per_sec = total_events as f64 / duration.as_secs_f64();
-                        println!(
-                            "Events/sec with {} agents: {:.0}",
-                            num_agents, events_per_sec
-                        );
+                        // The core benchmarking logic is simplified
+                        world.run().unwrap();
+                        // We still use black_box to prevent the compiler from optimizing
+                        // away the world.run() call if it has no observable side effects.
+                        black_box(());
                     },
                 );
             },
