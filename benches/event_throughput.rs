@@ -110,7 +110,8 @@ fn bench_event_throughput_fixed_time(c: &mut Criterion) {
                         world
                     },
                     |mut world| {
-                        black_box(world.run().unwrap());
+                        world.run().unwrap();
+                        black_box(());
                     },
                 );
             },
