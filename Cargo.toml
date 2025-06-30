@@ -13,7 +13,7 @@ universes = ["dep:rayon"]
 [dependencies]
 rayon = { version = "1.10.0", optional = true }
 bytemuck = "1.23.0"
-mesocarp = "0.5.3"
+mesocarp = "0.5.6"
 
 
 [dev-dependencies]

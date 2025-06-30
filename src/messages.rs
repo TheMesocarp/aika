@@ -67,7 +67,11 @@ impl<T: Clone> Eq for Msg<T> {}
 
 impl<T: Clone> Ord for Msg<T> {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.recv.cmp(&other.recv)
+        self.recv
+            .cmp(&other.recv)
+            .then_with(|| self.sent.cmp(&other.sent))
+            .then_with(|| self.from.cmp(&other.from))
+            .then_with(|| self.to.cmp(&other.to))
     }
 }
 

@@ -2,7 +2,7 @@
 
 use std::{
     cmp::Reverse,
-    collections::BTreeSet,
+    collections::{BTreeSet, BinaryHeap},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         Arc,
@@ -31,7 +31,7 @@ pub struct LocalMailSystem<
     const CLOCK_HEIGHT: usize,
     MessageType: Clone,
 > {
-    overflow: BTreeSet<Reverse<Msg<MessageType>>>,
+    overflow: BinaryHeap<Reverse<Msg<MessageType>>>,
     schedule: Clock<Msg<MessageType>, CLOCK_SLOTS, CLOCK_HEIGHT>,
     anti_messages: Journal,
 }
@@ -44,7 +44,7 @@ impl<
     > LocalMailSystem<SLOTS, CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>
 {
     pub fn new(arena_size: usize) -> Result<Self, SimError> {
-        let overflow = BTreeSet::new();
+        let overflow = BinaryHeap::new();
         let schedule = Clock::new().map_err(SimError::MesoError)?;
         let anti_messages = Journal::init(arena_size);
         Ok(Self {
@@ -56,7 +56,7 @@ impl<
 }
 
 pub struct LocalEventSystem<const CLOCK_SLOTS: usize, const CLOCK_HEIGHT: usize> {
-    overflow: BTreeSet<Reverse<Event>>,
+    overflow: BinaryHeap<Reverse<Event>>,
     local_clock: Clock<Event, CLOCK_SLOTS, CLOCK_HEIGHT>,
 }
 
@@ -64,7 +64,7 @@ impl<const CLOCK_SLOTS: usize, const CLOCK_HEIGHT: usize>
     LocalEventSystem<CLOCK_SLOTS, CLOCK_HEIGHT>
 {
     pub fn new() -> Result<Self, SimError> {
-        let overflow = BTreeSet::new();
+        let overflow = BinaryHeap::new();
         let local_clock = Clock::new().map_err(SimError::MesoError)?;
         Ok(Self {
             overflow,
@@ -145,16 +145,14 @@ impl<
         if event_maybe.is_err() {
             self.event_process
                 .overflow
-                .insert(Reverse(event_maybe.err().unwrap()));
+                .push(Reverse(event_maybe.err().unwrap()));
         }
     }
 
     fn commit_mail(&mut self, msg: Msg<MessageType>) {
         let msg = self.mail_process.schedule.insert(msg);
         if msg.is_err() {
-            self.mail_process
-                .overflow
-                .insert(Reverse(msg.err().unwrap()));
+            self.mail_process.overflow.push(Reverse(msg.err().unwrap()));
         }
     }
 
@@ -201,7 +199,7 @@ impl<
             let idx = i.0;
             vec.remove(idx);
         }
-        self.mail_process.overflow = BTreeSet::from_iter(vec);
+        self.mail_process.overflow = BinaryHeap::from_iter(vec);
     }
 
     pub fn step(&mut self) -> Result<(), SimError> {
