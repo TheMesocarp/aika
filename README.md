@@ -1,4 +1,6 @@
 # Aika
+[![License: LGPL v2.1](https://img.shields.io/badge/License-LGPL_v2.1-blue.svg)](https://www.gnu.org/licenses/lgpl-2.1)
+
 A Rust-native coordination layer for multi-agent systems, with support for single-threaded, multi-threaded, and distributed execution. Finnish for "Time". Built entirely from systems theory first developed in the mid '80s through early '90s.
 
 > Work In Progress, changes are unstable
@@ -35,4 +37,4 @@ Contributors are welcome and greatly appreciated! Please feel free to submit a P
 
 ## License
 
-This project is licensed under the AGPL-3.0 copyleft license - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the LGPL-2.1 copyleft license - see the [LICENSE](LICENSE) file for details.
