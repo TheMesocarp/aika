@@ -1,0 +1,21 @@
+version: 2
+updates:
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    groups:
+      all-updates:
+        patterns:
+          - "*"
+    open-pull-requests-limit: 10
+    reviewers:
+      - "FiberedSkies"
+    labels:
+      - "dependencies"
+      - "automated pr"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    allow:
+      - dependency-type: "all"
