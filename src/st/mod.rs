@@ -78,10 +78,7 @@ impl<
         let len = self.agents.len();
         let mut supports: Vec<AgentSupport<MESSAGE_SLOTS, _>> = Vec::with_capacity(len);
         for i in agent_ids {
-            let sup = AgentSupport::new(
-                Some(thread_world.get_user(i)?),
-                arena_size,
-            );
+            let sup = AgentSupport::new(Some(thread_world.get_user(i)?), arena_size);
             supports.push(sup);
         }
         self.mailbox = Some(thread_world);

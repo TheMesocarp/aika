@@ -4,7 +4,11 @@ use mesocarp::{
     logging::journal::Journal,
 };
 
-use crate::{event::Event, messages::{AntiMsg, Mail, Msg, Transfer}, SimError};
+use crate::{
+    event::Event,
+    messages::{AntiMsg, Mail, Msg, Transfer},
+    SimError,
+};
 
 pub struct AgentSupport<const SLOTS: usize, T: Message> {
     pub mailbox: Option<ThreadedMessengerUser<SLOTS, T>>,
@@ -48,18 +52,24 @@ pub struct PlanetContext<const INTER_SLOTS: usize, MessageType: Pod + Zeroable +
     pub time: u64,
     pub world_id: usize,
     pub user: ThreadedMessengerUser<INTER_SLOTS, Mail<MessageType>>,
-    pub anti_msgs: Vec<Journal>
+    pub anti_msgs: Vec<Journal>,
 }
 
-impl<const INTER_SLOTS: usize, MessageType: Pod + Zeroable + Clone> PlanetContext<INTER_SLOTS, MessageType> {
-    pub fn new(world_arena_size: usize, user: ThreadedMessengerUser<INTER_SLOTS, Mail<MessageType>>, world_id: usize) -> Self {
+impl<const INTER_SLOTS: usize, MessageType: Pod + Zeroable + Clone>
+    PlanetContext<INTER_SLOTS, MessageType>
+{
+    pub fn new(
+        world_arena_size: usize,
+        user: ThreadedMessengerUser<INTER_SLOTS, Mail<MessageType>>,
+        world_id: usize,
+    ) -> Self {
         Self {
             agent_states: Vec::new(),
             world_state: Journal::init(world_arena_size),
             time: 0,
             user,
-            world_id, 
-            anti_msgs: Vec::new()
+            world_id,
+            anti_msgs: Vec::new(),
         }
     }
 
@@ -68,17 +78,22 @@ impl<const INTER_SLOTS: usize, MessageType: Pod + Zeroable + Clone> PlanetContex
         self.anti_msgs.push(Journal::init(anti_msg_arena_size));
     }
 
-    pub fn send_mail(&mut self, msg: Msg<MessageType>, to_world: usize, local_sender_id: usize) -> Result<(), SimError> {
+    pub fn send_mail(
+        &mut self,
+        msg: Msg<MessageType>,
+        to_world: usize,
+        local_sender_id: usize,
+    ) -> Result<(), SimError> {
         let anti = AntiMsg::new(msg.sent, msg.recv, msg.from, msg.to);
         let outgoing = Mail::write_letter(Transfer::Msg(msg), self.world_id, Some(to_world));
         self.user.send(outgoing)?;
 
-        let stays: Mail<MessageType> = Mail::write_letter(Transfer::AntiMsg(anti), self.world_id, Some(to_world));
+        let stays: Mail<MessageType> =
+            Mail::write_letter(Transfer::AntiMsg(anti), self.world_id, Some(to_world));
         self.anti_msgs[local_sender_id].write(stays, self.time, None);
         Ok(())
     }
 }
-
 
 pub trait Agent<const SLOTS: usize, T: Message> {
     fn step(&mut self, context: &mut WorldContext<SLOTS, T>, agent_id: usize) -> Event;
@@ -86,5 +101,10 @@ pub trait Agent<const SLOTS: usize, T: Message> {
 
 pub trait ThreadedAgent<const SLOTS: usize, MessageType: Pod + Zeroable + Clone> {
     fn step(&mut self, context: &mut PlanetContext<SLOTS, MessageType>, agent_id: usize) -> Event;
-    fn read_message(&mut self, context: &mut PlanetContext<SLOTS, MessageType>, msg: Msg<MessageType>, agent_id: usize);
+    fn read_message(
+        &mut self,
+        context: &mut PlanetContext<SLOTS, MessageType>,
+        msg: Msg<MessageType>,
+        agent_id: usize,
+    );
 }

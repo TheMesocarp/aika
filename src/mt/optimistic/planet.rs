@@ -1,10 +1,27 @@
-use std::{cmp::Reverse, collections::{BTreeSet, BinaryHeap}, sync::{atomic::{AtomicU64, Ordering}, Arc}, thread::sleep, time::Duration};
+use std::{
+    cmp::Reverse,
+    collections::{BTreeSet, BinaryHeap},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
+    thread::sleep,
+    time::Duration,
+};
 
 use bytemuck::{Pod, Zeroable};
-use mesocarp::{comms::mailbox::ThreadedMessengerUser, logging::journal::Journal, scheduling::{htw::Clock, Scheduleable}};
+use mesocarp::{
+    comms::mailbox::ThreadedMessengerUser,
+    logging::journal::Journal,
+    scheduling::{htw::Clock, Scheduleable},
+};
 
 use crate::{
-    agents::{PlanetContext, ThreadedAgent}, event::{Action, Event, LocalEventSystem}, messages::{AntiMsg, LocalMailSystem, Mail, Msg, Transfer}, st::TimeInfo, SimError
+    agents::{PlanetContext, ThreadedAgent},
+    event::{Action, Event, LocalEventSystem},
+    messages::{AntiMsg, LocalMailSystem, Mail, Msg, Transfer},
+    st::TimeInfo,
+    SimError,
 };
 
 pub type RegistryOutput<const SLOTS: usize, MessageType> = (
@@ -26,7 +43,7 @@ pub struct Planet<
     local_messages: LocalMailSystem<CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>,
     gvt: Arc<AtomicU64>,
     local_time: Arc<AtomicU64>,
-    throttle_horizon: u64
+    throttle_horizon: u64,
 }
 
 unsafe impl<
@@ -53,7 +70,13 @@ impl<
         MessageType: Pod + Zeroable + Clone,
     > Planet<INTER_SLOTS, CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>
 {
-    pub fn create(terminal: f64, timestep: f64, throttle_horizon: u64, world_arena_size: usize, registry: RegistryOutput<INTER_SLOTS, MessageType>) -> Result<Self, SimError> {
+    pub fn create(
+        terminal: f64,
+        timestep: f64,
+        throttle_horizon: u64,
+        world_arena_size: usize,
+        registry: RegistryOutput<INTER_SLOTS, MessageType>,
+    ) -> Result<Self, SimError> {
         Ok(Self {
             agents: Vec::new(),
             context: PlanetContext::new(world_arena_size, registry.1, registry.2),
@@ -73,7 +96,9 @@ impl<
     fn commit_mail(&mut self, msg: Msg<MessageType>) {
         let msg = self.local_messages.schedule.insert(msg);
         if msg.is_err() {
-            self.local_messages.overflow.push(Reverse(msg.err().unwrap()));
+            self.local_messages
+                .overflow
+                .push(Reverse(msg.err().unwrap()));
         }
     }
 
@@ -95,9 +120,15 @@ impl<
         self.event_system.local_clock.time
     }
 
-    pub fn spawn_agent(&mut self, agent: Box<dyn ThreadedAgent<INTER_SLOTS, MessageType>>, state_arena_size: usize) -> usize {
+    pub fn spawn_agent(
+        &mut self,
+        agent: Box<dyn ThreadedAgent<INTER_SLOTS, MessageType>>,
+        state_arena_size: usize,
+    ) -> usize {
         self.agents.push(agent);
-        self.context.agent_states.push(Journal::init(state_arena_size));
+        self.context
+            .agent_states
+            .push(Journal::init(state_arena_size));
         self.agents.len() - 1
     }
 
@@ -189,7 +220,7 @@ impl<
         for msg in maybe.unwrap() {
             if let Some(to) = msg.to_world {
                 if to != self.context.world_id {
-                    return Err(SimError::MismatchedDeliveryAddress)
+                    return Err(SimError::MismatchedDeliveryAddress);
                 }
             }
             let time = msg.transfer.time();
@@ -216,12 +247,12 @@ impl<
                 if id.is_none() {
                     for i in 0..self.agents.len() {
                         self.context.time = msg.recv;
-                        self.agents[i].read_message(&mut self.context, msg.clone(), i);
+                        self.agents[i].read_message(&mut self.context, msg, i);
                     }
                     continue;
                 }
                 let id = id.unwrap();
-                self.agents[id].read_message(&mut self.context, msg.clone(), id);
+                self.agents[id].read_message(&mut self.context, msg, id);
             }
         }
         // process events at the next time step
@@ -257,26 +288,32 @@ impl<
                 }
             }
         }
-        self.event_system.local_clock.increment(&mut self.event_system.overflow);
-        self.local_messages.schedule.increment(&mut self.local_messages.overflow);
+        self.event_system
+            .local_clock
+            .increment(&mut self.event_system.overflow);
+        self.local_messages
+            .schedule
+            .increment(&mut self.local_messages.overflow);
         self.local_time.store(self.now(), Ordering::Release);
         Ok(())
     }
 
     fn check_time_validity(&self) -> Result<(), SimError> {
         let load = self.local_time.load(Ordering::Acquire);
-        if self.local_messages.schedule.time != self.event_system.local_clock.time && self.local_messages.schedule.time != load {
-            return Err(SimError::ClockSyncIssue)
+        if self.local_messages.schedule.time != self.event_system.local_clock.time
+            && self.local_messages.schedule.time != load
+        {
+            return Err(SimError::ClockSyncIssue);
         }
         if self.time_info.terminal <= self.time_info.timestep * load as f64 {
-            return Err(SimError::PastTerminal)
+            return Err(SimError::PastTerminal);
         }
         Ok(())
     }
 
     pub fn run(&mut self) -> Result<(), SimError> {
         let mut flag = false;
-        while flag == false {
+        while !flag {
             let gvt = self.gvt.load(Ordering::Acquire);
             if gvt + self.throttle_horizon < self.now() {
                 sleep(Duration::from_nanos(100));

@@ -10,7 +10,7 @@ debug = true
 
 [dependencies]
 bytemuck = "1.23.0"
-thiserror  = "2.0.12"
+thiserror = "2.0.12"
 
 mesocarp = "0.7.0"
 

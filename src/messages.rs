@@ -99,7 +99,10 @@ impl AntiMsg {
     }
 
     pub fn annihilate<T: Clone>(&self, other: &Msg<T>) -> bool {
-        self.sent == other.sent && self.received == other.recv && self.from == other.from && self.to == other.to
+        self.sent == other.sent
+            && self.received == other.recv
+            && self.from == other.from
+            && self.to == other.to
     }
 }
 
@@ -264,42 +267,27 @@ impl<T: Pod + Zeroable + Clone> Message for Mail<T> {
 unsafe impl<T: Pod + Zeroable + Clone> Pod for Mail<T> {}
 unsafe impl<T: Pod + Zeroable + Clone> Zeroable for Mail<T> {}
 
-pub struct LocalMailSystem<
-    const CLOCK_SLOTS: usize,
-    const CLOCK_HEIGHT: usize,
-    MessageType: Clone,
-> {
+pub struct LocalMailSystem<const CLOCK_SLOTS: usize, const CLOCK_HEIGHT: usize, MessageType: Clone>
+{
     pub overflow: BinaryHeap<Reverse<Msg<MessageType>>>,
     pub schedule: Clock<Msg<MessageType>, CLOCK_SLOTS, CLOCK_HEIGHT>,
 }
 
-impl<
-        const CLOCK_SLOTS: usize,
-        const CLOCK_HEIGHT: usize,
-        MessageType: Clone,
-    > LocalMailSystem<CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>
+impl<const CLOCK_SLOTS: usize, const CLOCK_HEIGHT: usize, MessageType: Clone>
+    LocalMailSystem<CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>
 {
     pub fn new() -> Result<Self, SimError> {
         let overflow = BinaryHeap::new();
         let schedule = Clock::new()?;
-        Ok(Self {
-            overflow,
-            schedule,
-        })
+        Ok(Self { overflow, schedule })
     }
 }
 
-unsafe impl<
-        const CLOCK_SLOTS: usize,
-        const CLOCK_HEIGHT: usize,
-        MessageType: Clone,
-    > Send for LocalMailSystem<CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>
+unsafe impl<const CLOCK_SLOTS: usize, const CLOCK_HEIGHT: usize, MessageType: Clone> Send
+    for LocalMailSystem<CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>
 {
 }
-unsafe impl<
-        const CLOCK_SLOTS: usize,
-        const CLOCK_HEIGHT: usize,
-        MessageType: Clone,
-    > Sync for LocalMailSystem<CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>
+unsafe impl<const CLOCK_SLOTS: usize, const CLOCK_HEIGHT: usize, MessageType: Clone> Sync
+    for LocalMailSystem<CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>
 {
 }

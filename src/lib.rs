@@ -10,7 +10,9 @@ pub mod st;
 /// Error enum for provide feedback on simulation errors
 #[derive(Debug, Error)]
 pub enum SimError {
-    #[error("Attempted to process an event whos execution timestamp doesn't match simulation time.")]
+    #[error(
+        "Attempted to process an event whos execution timestamp doesn't match simulation time."
+    )]
     TimeTravel,
     #[error("Terminal time stamp hit, no more scheduling allowed.")]
     PastTerminal,
