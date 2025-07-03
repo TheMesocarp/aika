@@ -7,8 +7,6 @@ use crate::{
     SimError,
 };
 
-pub mod planet;
-
 pub struct TimeInfo {
     pub timestep: f64,
     pub terminal: f64,
