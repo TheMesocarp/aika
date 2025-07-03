@@ -9,7 +9,7 @@ In its current state, the framework supports single-threaded and multi-threaded 
 
 - [x] single-threaded world (found in `st::World`) execution with messaging support via lock-free shared buffers 
 - [x] bench single-threaded `st::World` on more complex and distant scheduling tasks.
-- [ ] optimistic synchronization via [Time Warp](https://dl.acm.org/doi/10.1145/37499.37508) inspired architecture for multi-threaded execution (found in `mt::optimistic`) ***(in progress)***
+- [ ] optimistic synchronization via a modified [Time Warp](https://dl.acm.org/doi/10.1145/37499.37508) architecture for multi-threaded execution (found in `mt::optimistic`) ***(in progress)***
 - [ ] conservative synchronization via a [Chandy-Misra-Bryant](https://dl.acm.org/doi/10.1145/130611.130613) (CMB) inspired architecture
  for multi-threaded execution (soon to be found in `mt::conservative`)
 - [ ] *PHOLD* benches for both conservative and optimistic multi-threaded execution schemes

@@ -1,15 +1,10 @@
-use std::{cmp::Reverse, collections::BinaryHeap};
-
-use mesocarp::{comms::mailbox::ThreadWorld, scheduling::htw::Clock};
+use mesocarp::comms::mailbox::ThreadedMessenger;
 
 use crate::{
-    agents::{Agent, AgentSupport},
-    messages::Msg,
-    st::event::{Action, Event},
-    SimError,
+    agents::{Agent, AgentSupport, WorldContext}, event::{Action, Event, LocalEventSystem}, messages::Msg, SimError
 };
 
-pub mod event;
+pub mod planet;
 
 pub struct TimeInfo {
     pub timestep: f64,
@@ -23,11 +18,10 @@ pub struct World<
     const CLOCK_HEIGHT: usize,
     MessageType: Clone,
 > {
-    pub overflow: BinaryHeap<Reverse<Event>>,
-    pub clock: Clock<Event, CLOCK_SLOTS, CLOCK_HEIGHT>,
     pub agents: Vec<Box<dyn Agent<MESSAGE_SLOTS, Msg<MessageType>>>>,
-    pub agent_supports: Vec<AgentSupport<MESSAGE_SLOTS, Msg<MessageType>>>,
-    mailbox: Option<ThreadWorld<MESSAGE_SLOTS, Msg<MessageType>>>,
+    pub world_context: WorldContext<MESSAGE_SLOTS, Msg<MessageType>>, 
+    mailbox: Option<ThreadedMessenger<MESSAGE_SLOTS, Msg<MessageType>>>,
+    event_system: LocalEventSystem<CLOCK_SLOTS, CLOCK_HEIGHT>,
     pub time_info: TimeInfo,
 }
 
@@ -55,13 +49,13 @@ impl<
         MessageType: Clone,
     > World<MESSAGE_SLOTS, CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>
 {
-    pub fn init(terminal: f64, timestep: f64) -> Result<Self, SimError> {
+    pub fn init(terminal: f64, timestep: f64, world_arena_size: usize) -> Result<Self, SimError> {
+        let event_system = LocalEventSystem::<CLOCK_SLOTS, CLOCK_HEIGHT>::new()?;
         Ok(Self {
-            overflow: BinaryHeap::new(),
-            clock: Clock::<Event, CLOCK_SLOTS, CLOCK_HEIGHT>::new().map_err(SimError::MesoError)?,
             agents: Vec::new(),
-            agent_supports: Vec::new(),
+            world_context: WorldContext::new(world_arena_size),
             mailbox: None,
+            event_system,
             time_info: TimeInfo { timestep, terminal },
         })
     }
@@ -78,7 +72,7 @@ impl<
             .enumerate()
             .map(|x| x.0)
             .collect::<Vec<_>>();
-        let thread_world = ThreadWorld::<MESSAGE_SLOTS, Msg<MessageType>>::new(agent_ids.clone())
+        let thread_world = ThreadedMessenger::<MESSAGE_SLOTS, Msg<MessageType>>::new(agent_ids.clone())
             .map_err(SimError::MesoError)?;
         let len = self.agents.len();
         let mut supports: Vec<AgentSupport<MESSAGE_SLOTS, _>> = Vec::with_capacity(len);
@@ -90,21 +84,18 @@ impl<
             supports.push(sup);
         }
         self.mailbox = Some(thread_world);
-        self.agent_supports = supports;
+        self.world_context.agent_states = supports;
         Ok(())
     }
 
     fn commit(&mut self, event: Event) {
-        let event_maybe = self.clock.insert(event);
-        if event_maybe.is_err() {
-            self.overflow.push(Reverse(event_maybe.err().unwrap()));
-        }
+        self.event_system.insert(event)
     }
 
     /// Get the current time of the simulation.
     #[inline(always)]
     pub fn now(&self) -> u64 {
-        self.clock.time
+        self.event_system.local_clock.time
     }
 
     /// Schedule an event for an agent at a given time.
@@ -126,15 +117,15 @@ impl<
                 break;
             }
 
-            if let Ok(events) = self.clock.tick() {
+            if let Ok(events) = self.event_system.local_clock.tick() {
                 for event in events {
                     if event.time as f64 * self.time_info.timestep > self.time_info.terminal {
                         break;
                     }
 
-                    let supports = &mut self.agent_supports[event.agent];
-                    supports.current_time = event.time;
-                    let event = self.agents[event.agent].step(supports);
+                    let supports = &mut self.world_context;
+                    supports.time = event.time;
+                    let event = self.agents[event.agent].step(supports, event.agent);
                     match event.yield_ {
                         Action::Timeout(time) => {
                             if (self.now() + time) as f64 * self.time_info.timestep
@@ -175,7 +166,7 @@ impl<
                     }
                 }
             }
-            self.clock.increment(&mut self.overflow);
+            self.event_system.local_clock.increment(&mut self.event_system.overflow);
         }
         Ok(())
     }
@@ -189,19 +180,19 @@ mod tests {
 
     // Simple agent that just schedules timeouts
     pub struct TestAgent {
-        pub id: usize,
+        pub _id: usize,
     }
 
     impl TestAgent {
-        pub fn new(id: usize) -> Self {
-            TestAgent { id }
+        pub fn new(_id: usize) -> Self {
+            TestAgent { _id }
         }
     }
 
     impl Agent<8, Msg<u8>> for TestAgent {
-        fn step(&mut self, supports: &mut AgentSupport<8, Msg<u8>>) -> Event {
-            let time = supports.current_time;
-            Event::new(time, time, self.id, Action::Timeout(1))
+        fn step(&mut self, supports: &mut WorldContext<8, Msg<u8>>, id: usize) -> Event {
+            let time = supports.time;
+            Event::new(time, time, id, Action::Timeout(1))
         }
     }
 
@@ -225,12 +216,12 @@ mod tests {
     }
 
     impl Agent<8, Msg<u8>> for SendingAgent {
-        fn step(&mut self, supports: &mut AgentSupport<8, Msg<u8>>) -> Event {
-            let time = supports.current_time;
+        fn step(&mut self, supports: &mut WorldContext<8, Msg<u8>>, id: usize) -> Event {
+            let time = supports.time;
 
             // Send messages until we've sent the desired count
             if self.messages_sent < self.message_count {
-                if let Some(mailbox) = &supports.mailbox {
+                if let Some(mailbox) = &supports.agent_states[id].mailbox {
                     let msg = Msg::new(
                         self.messages_sent as u8,
                         time,
@@ -256,25 +247,25 @@ mod tests {
 
     // Agent that receives and counts messages
     pub struct ReceivingAgent {
-        pub id: usize,
+        pub _id: usize,
         pub messages_received: Rc<RefCell<Vec<Msg<u8>>>>,
     }
 
     impl ReceivingAgent {
-        pub fn new(id: usize) -> Self {
+        pub fn new(_id: usize) -> Self {
             ReceivingAgent {
-                id,
+                _id,
                 messages_received: Rc::new(RefCell::new(Vec::new())),
             }
         }
     }
 
     impl Agent<8, Msg<u8>> for ReceivingAgent {
-        fn step(&mut self, supports: &mut AgentSupport<8, Msg<u8>>) -> Event {
-            let time = supports.current_time;
+        fn step(&mut self, context: &mut WorldContext<8, Msg<u8>>, id: usize) -> Event {
+            let time = context.time;
 
             // Check for messages
-            if let Some(mailbox) = &mut supports.mailbox {
+            if let Some(mailbox) = &mut context.agent_states[id].mailbox {
                 for _ in 0..3 {
                     if let Some(messages) = mailbox.poll() {
                         for msg in messages {
@@ -285,7 +276,7 @@ mod tests {
             }
 
             // Keep checking every time unit
-            Event::new(time, time, self.id, Action::Timeout(1))
+            Event::new(time, time, id, Action::Timeout(1))
         }
     }
 
@@ -307,11 +298,11 @@ mod tests {
     }
 
     impl Agent<8, Msg<u8>> for BroadcastingAgent {
-        fn step(&mut self, supports: &mut AgentSupport<8, Msg<u8>>) -> Event {
-            let time = supports.current_time;
+        fn step(&mut self, context: &mut WorldContext<8, Msg<u8>>, id: usize) -> Event {
+            let time = context.time;
 
             if self.broadcasts_sent < self.broadcast_count {
-                if let Some(mailbox) = &supports.mailbox {
+                if let Some(mailbox) = &context.agent_states[id].mailbox {
                     let msg = Msg::new(
                         (100 + self.broadcasts_sent) as u8,
                         time,
@@ -327,25 +318,25 @@ mod tests {
             }
 
             if self.broadcasts_sent < self.broadcast_count {
-                Event::new(time, time, self.id, Action::Timeout(10))
+                Event::new(time, time, id, Action::Timeout(10))
             } else {
-                Event::new(time, time, self.id, Action::Wait)
+                Event::new(time, time, id, Action::Wait)
             }
         }
     }
 
     // Agent that triggers other agents
     pub struct TriggeringAgent {
-        pub id: usize,
+        pub _id: usize,
         pub target: usize,
         pub trigger_times: Vec<u64>,
         pub trigger_index: usize,
     }
 
     impl TriggeringAgent {
-        pub fn new(id: usize, target: usize, trigger_times: Vec<u64>) -> Self {
+        pub fn new(_id: usize, target: usize, trigger_times: Vec<u64>) -> Self {
             TriggeringAgent {
-                id,
+                _id,
                 target,
                 trigger_times,
                 trigger_index: 0,
@@ -354,8 +345,8 @@ mod tests {
     }
 
     impl Agent<8, Msg<u8>> for TriggeringAgent {
-        fn step(&mut self, supports: &mut AgentSupport<8, Msg<u8>>) -> Event {
-            let time = supports.current_time;
+        fn step(&mut self, context: &mut WorldContext<8, Msg<u8>>, id: usize) -> Event {
+            let time = context.time;
 
             // Check if we should trigger the target
             if self.trigger_index < self.trigger_times.len() {
@@ -364,7 +355,7 @@ mod tests {
                 return Event::new(
                     time,
                     time,
-                    self.id,
+                    id,
                     Action::Trigger {
                         time: trigger_time,
                         idx: self.target,
@@ -372,24 +363,24 @@ mod tests {
                 );
             }
 
-            Event::new(time, time, self.id, Action::Wait)
+            Event::new(time, time, id, Action::Wait)
         }
     }
 
     #[test]
     fn test_run() {
-        let mut world = World::<8, 128, 1, u8>::init(40000000.0, 1.0).unwrap();
+        let mut world = World::<8, 128, 1, u8>::init(400000.0, 1.0, 0).unwrap();
         let agent_test = TestAgent::new(0);
         world.spawn_agent(Box::new(agent_test));
         world.init_support_layers(None).unwrap();
         world.schedule(1, 0).unwrap();
-        assert!(world.agent_supports.len() == 1);
+        assert!(world.world_context.agent_states.len() == 1);
         world.run().unwrap();
     }
 
     #[test]
     fn test_simple_message_passing() {
-        let mut world = World::<8, 128, 1, u8>::init(100.0, 1.0).unwrap();
+        let mut world = World::<8, 128, 1, u8>::init(100.0, 1.0, 0).unwrap();
 
         // Create sender and receiver
         let sender = SendingAgent::new(0, 1, 3);
@@ -418,7 +409,7 @@ mod tests {
 
     #[test]
     fn test_broadcast_messages() {
-        let mut world = World::<8, 128, 1, u8>::init(100.0, 1.0).unwrap();
+        let mut world = World::<8, 128, 1, u8>::init(100.0, 1.0, 0).unwrap();
 
         // Create one broadcaster and two receivers
         let broadcaster = BroadcastingAgent::new(0, 2);
@@ -457,7 +448,7 @@ mod tests {
 
     #[test]
     fn test_agent_triggering() {
-        let mut world = World::<8, 128, 1, u8>::init(100.0, 1.0).unwrap();
+        let mut world = World::<8, 128, 1, u8>::init(100.0, 1.0, 0).unwrap();
 
         // Create a triggering agent that will trigger agent 1 at specific times
         let trigger_times = vec![10, 20, 30];
@@ -482,7 +473,7 @@ mod tests {
 
     #[test]
     fn test_multiple_simultaneous_messages() {
-        let mut world = World::<8, 128, 1, u8>::init(50.0, 1.0).unwrap();
+        let mut world = World::<8, 128, 1, u8>::init(50.0, 1.0, 0).unwrap();
 
         // Create multiple senders all targeting the same receiver
         let sender1 = SendingAgent::new(0, 3, 2);
@@ -529,22 +520,22 @@ mod tests {
 
     #[test]
     fn test_invalid_target_handling() {
-        let mut world = World::<8, 128, 1, u8>::init(50.0, 1.0).unwrap();
+        let mut world = World::<8, 128, 1, u8>::init(50.0, 1.0, 0).unwrap();
 
         // Agent that tries to send to non-existent agent
         pub struct InvalidTargetAgent {
-            id: usize,
+            _id: usize,
             attempted: bool,
         }
 
         impl Agent<8, Msg<u8>> for InvalidTargetAgent {
-            fn step(&mut self, supports: &mut AgentSupport<8, Msg<u8>>) -> Event {
-                let time = supports.current_time;
+            fn step(&mut self, context: &mut WorldContext<8, Msg<u8>>, id: usize) -> Event {
+                let time = context.time;
 
                 if !self.attempted {
-                    if let Some(mailbox) = &supports.mailbox {
+                    if let Some(mailbox) = &context.agent_states[id].mailbox {
                         // Try to send to agent 99 which doesn't exist
-                        let msg = Msg::new(1, time, time + 5, self.id, Some(99));
+                        let msg = Msg::new(1, time, time + 5, id, Some(99));
 
                         // This should fail gracefully
                         let _ = mailbox.send(msg);
@@ -552,12 +543,12 @@ mod tests {
                     }
                 }
 
-                Event::new(time, time, self.id, Action::Wait)
+                Event::new(time, time, id, Action::Wait)
             }
         }
 
         let sender = InvalidTargetAgent {
-            id: 0,
+            _id: 0,
             attempted: false,
         };
 

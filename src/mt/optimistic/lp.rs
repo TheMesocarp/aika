@@ -9,69 +9,11 @@ use std::{
     },
 };
 
-use mesocarp::{
-    logging::journal::Journal,
-    scheduling::{htw::Clock, Scheduleable},
-};
+use mesocarp::scheduling::{htw::Clock, Scheduleable};
 
 use crate::{
-    agents::{AgentSupport, ThreadedAgent},
-    messages::{AntiMsg, Msg, Transfer},
-    mt::optimistic::{config::LPConfig, gvt::RegistryOutput},
-    st::{
-        event::{Action, Event},
-        TimeInfo,
-    },
-    SimError,
+    agents::{AgentSupport, ThreadedAgent}, event::{Action, Event, LocalEventSystem}, messages::{AntiMsg, LocalMailSystem, Msg, Transfer}, mt::optimistic::{config::LPConfig, gvt::RegistryOutput}, st::TimeInfo, SimError
 };
-
-pub struct LocalMailSystem<
-    const SLOTS: usize,
-    const CLOCK_SLOTS: usize,
-    const CLOCK_HEIGHT: usize,
-    MessageType: Clone,
-> {
-    overflow: BinaryHeap<Reverse<Msg<MessageType>>>,
-    schedule: Clock<Msg<MessageType>, CLOCK_SLOTS, CLOCK_HEIGHT>,
-    anti_messages: Journal,
-}
-
-impl<
-        const SLOTS: usize,
-        const CLOCK_SLOTS: usize,
-        const CLOCK_HEIGHT: usize,
-        MessageType: Clone,
-    > LocalMailSystem<SLOTS, CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>
-{
-    pub fn new(arena_size: usize) -> Result<Self, SimError> {
-        let overflow = BinaryHeap::new();
-        let schedule = Clock::new().map_err(SimError::MesoError)?;
-        let anti_messages = Journal::init(arena_size);
-        Ok(Self {
-            overflow,
-            schedule,
-            anti_messages,
-        })
-    }
-}
-
-pub struct LocalEventSystem<const CLOCK_SLOTS: usize, const CLOCK_HEIGHT: usize> {
-    overflow: BinaryHeap<Reverse<Event>>,
-    local_clock: Clock<Event, CLOCK_SLOTS, CLOCK_HEIGHT>,
-}
-
-impl<const CLOCK_SLOTS: usize, const CLOCK_HEIGHT: usize>
-    LocalEventSystem<CLOCK_SLOTS, CLOCK_HEIGHT>
-{
-    pub fn new() -> Result<Self, SimError> {
-        let overflow = BinaryHeap::new();
-        let local_clock = Clock::new().map_err(SimError::MesoError)?;
-        Ok(Self {
-            overflow,
-            local_clock,
-        })
-    }
-}
 
 pub struct LocalTime {
     time: u64,
@@ -223,8 +165,8 @@ impl<
                     break;
                 }
                 let supports = &mut self.supports;
-                supports.current_time = msg.recv;
-                self.agent.read_message(supports, self.agent_id);
+                //supports.time = msg.recv;
+                //self.agent.read_message(supports, self.agent_id);
             }
         }
         self.mail_process
@@ -236,8 +178,8 @@ impl<
                     break;
                 }
                 let supports = &mut self.supports;
-                supports.current_time = event.time;
-                let event = self.agent.step(supports);
+                //supports.current_time = event.time;
+                //let event = self.agent.step(supports);
                 match event.yield_ {
                     Action::Timeout(time) => {
                         if (self.time.time + time) as f64 * self.time.time_info.timestep
@@ -277,7 +219,7 @@ impl<
         if time > self.time.time {
             return Err(SimError::TimeTravel);
         }
-        self.supports.logger.as_mut().unwrap().rollback(time);
+        self.supports.state.as_mut().unwrap().rollback(time);
         self.mail_process
             .schedule
             .rollback(&mut self.mail_process.overflow, time);

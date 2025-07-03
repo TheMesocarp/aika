@@ -10,7 +10,7 @@ debug = true
 
 [dependencies]
 bytemuck = "1.23.0"
-mesocarp = "0.5.6"
+mesocarp = "0.7.0"
 
 
 [dev-dependencies]

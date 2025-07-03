@@ -1,8 +1,10 @@
-use std::cmp::Ordering;
+use std::{cmp::{Ordering, Reverse}, collections::BinaryHeap};
 
 use bytemuck::{Pod, Zeroable};
 
-use mesocarp::scheduling::Scheduleable;
+use mesocarp::scheduling::{htw::Clock, Scheduleable};
+
+use crate::SimError;
 
 /// A scheduling action that an agent can take.
 #[derive(Copy, Clone, Debug)]
@@ -67,5 +69,37 @@ impl Scheduleable for Event {
 }
 
 unsafe impl Zeroable for Event {}
-
 unsafe impl Pod for Event {}
+
+unsafe impl Send for Event {}
+unsafe impl Sync for Event {}
+
+
+pub struct LocalEventSystem<const CLOCK_SLOTS: usize, const CLOCK_HEIGHT: usize> {
+    pub overflow: BinaryHeap<Reverse<Event>>,
+    pub local_clock: Clock<Event, CLOCK_SLOTS, CLOCK_HEIGHT>,
+}
+
+impl<const CLOCK_SLOTS: usize, const CLOCK_HEIGHT: usize>
+    LocalEventSystem<CLOCK_SLOTS, CLOCK_HEIGHT>
+{
+    pub fn new() -> Result<Self, SimError> {
+        let overflow = BinaryHeap::new();
+        let local_clock = Clock::new().map_err(SimError::MesoError)?;
+        Ok(Self {
+            overflow,
+            local_clock,
+        })
+    }
+
+    pub fn insert(&mut self, event: Event) {
+        let possible_overflow = self.local_clock.insert(event);
+        if possible_overflow.is_err() {
+            let event = possible_overflow.err().unwrap();
+            self.overflow.push(Reverse(event));
+        }
+    }
+}
+
+unsafe impl<const CLOCK_SLOTS: usize, const CLOCK_HEIGHT: usize> Send for LocalEventSystem<CLOCK_SLOTS, CLOCK_HEIGHT> {}
+unsafe impl<const CLOCK_SLOTS: usize, const CLOCK_HEIGHT: usize> Sync for LocalEventSystem<CLOCK_SLOTS, CLOCK_HEIGHT> {}

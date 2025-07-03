@@ -2,6 +2,7 @@ use mesocarp::MesoError;
 
 pub mod agents;
 pub mod messages;
+pub mod event;
 pub mod mt;
 pub mod st;
 

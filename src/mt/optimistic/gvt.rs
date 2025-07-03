@@ -3,7 +3,7 @@
 use std::sync::{atomic::AtomicU64, Arc};
 
 use mesocarp::{
-    comms::mailbox::{ThreadWorld, ThreadWorldUser},
+    comms::mailbox::{ThreadedMessenger, ThreadedMessengerUser},
     scheduling::Scheduleable,
 };
 
@@ -11,13 +11,13 @@ use crate::{messages::Transfer, SimError};
 
 pub type RegistryOutput<const SLOTS: usize, MessageType> = (
     Arc<AtomicU64>,
-    ThreadWorldUser<SLOTS, Transfer<MessageType>>,
+    ThreadedMessengerUser<SLOTS, Transfer<MessageType>>,
     usize,
 );
 
 pub struct GVT<const SLOTS: usize, MessageType: Clone> {
     global_clock: Arc<AtomicU64>,
-    thread_world: ThreadWorld<SLOTS, Transfer<MessageType>>,
+    thread_world: ThreadedMessenger<SLOTS, Transfer<MessageType>>,
     registered: usize,
 }
 
@@ -28,7 +28,7 @@ impl<const SLOTS: usize, MessageType: Clone> GVT<SLOTS, MessageType> {
         for i in 0..num_agents {
             agent_ids.push(i);
         }
-        let thread_world = ThreadWorld::new(agent_ids).map_err(SimError::MesoError)?;
+        let thread_world = ThreadedMessenger::new(agent_ids).map_err(SimError::MesoError)?;
         Ok(Self {
             global_clock,
             thread_world,

@@ -1,7 +1,9 @@
-use std::cmp::Ordering;
+use std::{cmp::{Ordering, Reverse}, collections::BinaryHeap};
 
 use bytemuck::{Pod, Zeroable};
-use mesocarp::{comms::mailbox::Message, scheduling::Scheduleable};
+use mesocarp::{comms::mailbox::Message, logging::journal::Journal, scheduling::{htw::Clock, Scheduleable}};
+
+use crate::SimError;
 
 #[derive(Copy, Clone, Debug)]
 pub struct Msg<T: Clone> {
@@ -31,10 +33,6 @@ impl<T: Clone> Message for Msg<T> {
 
     fn from(&self) -> usize {
         self.from
-    }
-
-    fn broadcast(&self) -> bool {
-        self.to.is_none()
     }
 }
 
@@ -136,10 +134,6 @@ impl Message for AntiMsg {
     fn from(&self) -> usize {
         self.from
     }
-
-    fn broadcast(&self) -> bool {
-        false
-    }
 }
 
 unsafe impl Pod for AntiMsg {}
@@ -163,7 +157,7 @@ impl<T: Clone> Annihilator<T> {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum Transfer<T: Clone> {
     Msg(Msg<T>),
     AntiMsg(AntiMsg),
@@ -181,13 +175,6 @@ impl<T: Clone> Message for Transfer<T> {
         match self {
             Transfer::Msg(msg) => msg.from(),
             Transfer::AntiMsg(anti_msg) => anti_msg.from(),
-        }
-    }
-
-    fn broadcast(&self) -> bool {
-        match self {
-            Transfer::Msg(msg) => msg.broadcast(),
-            Transfer::AntiMsg(anti_msg) => anti_msg.broadcast(),
         }
     }
 }
@@ -233,3 +220,63 @@ impl<T: Clone> Ord for Transfer<T> {
 
 unsafe impl<T: Clone> Send for Transfer<T> {}
 unsafe impl<T: Clone> Sync for Transfer<T> {}
+
+#[derive(Debug, Clone)]
+pub struct Mail<T: Clone> {
+    transfer: Transfer<T>,
+    to_world: Option<usize>,
+    from_world: usize
+}
+
+impl<T: Clone> Mail<T> {
+    pub fn write_letter(transfer: Transfer<T>, from_world: usize, to_world: Option<usize>) -> Self {
+        Self { transfer, to_world, from_world }
+    }
+
+    pub fn open_letter(self) -> Transfer<T> {
+        self.transfer
+    }
+}
+
+impl<T: Clone> Message for Mail<T> {
+    fn to(&self) -> Option<usize> {
+        self.to_world
+    }
+
+    fn from(&self) -> usize {
+        self.from_world
+    }
+}
+
+pub struct LocalMailSystem<
+    const SLOTS: usize,
+    const CLOCK_SLOTS: usize,
+    const CLOCK_HEIGHT: usize,
+    MessageType: Clone,
+> {
+    pub overflow: BinaryHeap<Reverse<Msg<MessageType>>>,
+    pub schedule: Clock<Msg<MessageType>, CLOCK_SLOTS, CLOCK_HEIGHT>,
+    pub anti_messages: Journal,
+}
+
+impl<
+        const SLOTS: usize,
+        const CLOCK_SLOTS: usize,
+        const CLOCK_HEIGHT: usize,
+        MessageType: Clone,
+    > LocalMailSystem<SLOTS, CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>
+{
+    pub fn new(arena_size: usize) -> Result<Self, SimError> {
+        let overflow = BinaryHeap::new();
+        let schedule = Clock::new().map_err(SimError::MesoError)?;
+        let anti_messages = Journal::init(arena_size);
+        Ok(Self {
+            overflow,
+            schedule,
+            anti_messages,
+        })
+    }
+}
+
+unsafe impl<const SLOTS: usize, const CLOCK_SLOTS: usize, const CLOCK_HEIGHT: usize, MessageType: Clone> Send for LocalMailSystem<SLOTS, CLOCK_SLOTS, CLOCK_HEIGHT, MessageType> {}
+unsafe impl<const SLOTS: usize, const CLOCK_SLOTS: usize, const CLOCK_HEIGHT: usize, MessageType: Clone> Sync for LocalMailSystem<SLOTS, CLOCK_SLOTS, CLOCK_HEIGHT, MessageType> {}
