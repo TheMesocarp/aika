@@ -1,4 +1,7 @@
-use std::{cmp::{Ordering, Reverse}, collections::BinaryHeap};
+use std::{
+    cmp::{Ordering, Reverse},
+    collections::BinaryHeap,
+};
 
 use bytemuck::{Pod, Zeroable};
 
@@ -74,7 +77,6 @@ unsafe impl Pod for Event {}
 unsafe impl Send for Event {}
 unsafe impl Sync for Event {}
 
-
 pub struct LocalEventSystem<const CLOCK_SLOTS: usize, const CLOCK_HEIGHT: usize> {
     pub overflow: BinaryHeap<Reverse<Event>>,
     pub local_clock: Clock<Event, CLOCK_SLOTS, CLOCK_HEIGHT>,
@@ -101,5 +103,11 @@ impl<const CLOCK_SLOTS: usize, const CLOCK_HEIGHT: usize>
     }
 }
 
-unsafe impl<const CLOCK_SLOTS: usize, const CLOCK_HEIGHT: usize> Send for LocalEventSystem<CLOCK_SLOTS, CLOCK_HEIGHT> {}
-unsafe impl<const CLOCK_SLOTS: usize, const CLOCK_HEIGHT: usize> Sync for LocalEventSystem<CLOCK_SLOTS, CLOCK_HEIGHT> {}
+unsafe impl<const CLOCK_SLOTS: usize, const CLOCK_HEIGHT: usize> Send
+    for LocalEventSystem<CLOCK_SLOTS, CLOCK_HEIGHT>
+{
+}
+unsafe impl<const CLOCK_SLOTS: usize, const CLOCK_HEIGHT: usize> Sync
+    for LocalEventSystem<CLOCK_SLOTS, CLOCK_HEIGHT>
+{
+}

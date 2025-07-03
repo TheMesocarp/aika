@@ -36,10 +36,27 @@ impl<const SLOTS: usize, T: Message> WorldContext<SLOTS, T> {
         Self {
             agent_states: Vec::new(),
             world_state: Journal::init(world_arena_size),
-            time: 0
+            time: 0,
         }
     }
 }
+
+pub struct PlanetContext {
+    pub agent_states: Vec<Journal>,
+    pub world_state: Journal,
+    pub time: u64,
+}
+
+impl PlanetContext {
+    pub fn new(world_arena_size: usize) -> Self {
+        Self {
+            agent_states: Vec::new(),
+            world_state: Journal::init(world_arena_size),
+            time: 0,
+        }
+    }
+}
+
 
 pub trait Agent<const SLOTS: usize, T: Message> {
     fn step(&mut self, context: &mut WorldContext<SLOTS, T>, agent_id: usize) -> Event;

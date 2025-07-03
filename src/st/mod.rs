@@ -1,7 +1,10 @@
 use mesocarp::comms::mailbox::ThreadedMessenger;
 
 use crate::{
-    agents::{Agent, AgentSupport, WorldContext}, event::{Action, Event, LocalEventSystem}, messages::Msg, SimError
+    agents::{Agent, AgentSupport, WorldContext},
+    event::{Action, Event, LocalEventSystem},
+    messages::Msg,
+    SimError,
 };
 
 pub mod planet;
@@ -19,7 +22,7 @@ pub struct World<
     MessageType: Clone,
 > {
     pub agents: Vec<Box<dyn Agent<MESSAGE_SLOTS, Msg<MessageType>>>>,
-    pub world_context: WorldContext<MESSAGE_SLOTS, Msg<MessageType>>, 
+    pub world_context: WorldContext<MESSAGE_SLOTS, Msg<MessageType>>,
     mailbox: Option<ThreadedMessenger<MESSAGE_SLOTS, Msg<MessageType>>>,
     event_system: LocalEventSystem<CLOCK_SLOTS, CLOCK_HEIGHT>,
     pub time_info: TimeInfo,
@@ -72,8 +75,9 @@ impl<
             .enumerate()
             .map(|x| x.0)
             .collect::<Vec<_>>();
-        let thread_world = ThreadedMessenger::<MESSAGE_SLOTS, Msg<MessageType>>::new(agent_ids.clone())
-            .map_err(SimError::MesoError)?;
+        let thread_world =
+            ThreadedMessenger::<MESSAGE_SLOTS, Msg<MessageType>>::new(agent_ids.clone())
+                .map_err(SimError::MesoError)?;
         let len = self.agents.len();
         let mut supports: Vec<AgentSupport<MESSAGE_SLOTS, _>> = Vec::with_capacity(len);
         for i in agent_ids {
@@ -166,7 +170,9 @@ impl<
                     }
                 }
             }
-            self.event_system.local_clock.increment(&mut self.event_system.overflow);
+            self.event_system
+                .local_clock
+                .increment(&mut self.event_system.overflow);
         }
         Ok(())
     }
