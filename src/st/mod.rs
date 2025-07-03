@@ -74,13 +74,12 @@ impl<
             .map(|x| x.0)
             .collect::<Vec<_>>();
         let thread_world =
-            ThreadedMessenger::<MESSAGE_SLOTS, Msg<MessageType>>::new(agent_ids.clone())
-                .map_err(SimError::MesoError)?;
+            ThreadedMessenger::<MESSAGE_SLOTS, Msg<MessageType>>::new(agent_ids.clone())?;
         let len = self.agents.len();
         let mut supports: Vec<AgentSupport<MESSAGE_SLOTS, _>> = Vec::with_capacity(len);
         for i in agent_ids {
             let sup = AgentSupport::new(
-                Some(thread_world.get_user(i).map_err(SimError::MesoError)?),
+                Some(thread_world.get_user(i)?),
                 arena_size,
             );
             supports.push(sup);
@@ -161,7 +160,7 @@ impl<
                     for _ in 0..MESSAGE_SLOTS {
                         match mailbox.poll() {
                             Ok(mail) => {
-                                mailbox.deliver(mail).map_err(SimError::MesoError)?;
+                                mailbox.deliver(mail)?;
                             }
                             Err(_) => break,
                         }

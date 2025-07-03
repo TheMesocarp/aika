@@ -6,7 +6,6 @@ use std::{
 use bytemuck::{Pod, Zeroable};
 use mesocarp::{
     comms::mailbox::Message,
-    logging::journal::Journal,
     scheduling::{htw::Clock, Scheduleable},
 };
 
@@ -228,6 +227,9 @@ impl<T: Pod + Zeroable + Clone> Ord for Transfer<T> {
 unsafe impl<T: Pod + Zeroable + Clone> Send for Transfer<T> {}
 unsafe impl<T: Pod + Zeroable + Clone> Sync for Transfer<T> {}
 
+unsafe impl<T: Pod + Zeroable + Clone> Pod for Transfer<T> {}
+unsafe impl<T: Pod + Zeroable + Clone> Zeroable for Transfer<T> {}
+
 #[derive(Debug, Clone, Copy)]
 pub struct Mail<T: Pod + Zeroable + Clone> {
     pub transfer: Transfer<T>,
@@ -263,48 +265,41 @@ unsafe impl<T: Pod + Zeroable + Clone> Pod for Mail<T> {}
 unsafe impl<T: Pod + Zeroable + Clone> Zeroable for Mail<T> {}
 
 pub struct LocalMailSystem<
-    const SLOTS: usize,
     const CLOCK_SLOTS: usize,
     const CLOCK_HEIGHT: usize,
     MessageType: Clone,
 > {
     pub overflow: BinaryHeap<Reverse<Msg<MessageType>>>,
     pub schedule: Clock<Msg<MessageType>, CLOCK_SLOTS, CLOCK_HEIGHT>,
-    pub anti_messages: Vec<Journal>,
 }
 
 impl<
-        const SLOTS: usize,
         const CLOCK_SLOTS: usize,
         const CLOCK_HEIGHT: usize,
         MessageType: Clone,
-    > LocalMailSystem<SLOTS, CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>
+    > LocalMailSystem<CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>
 {
     pub fn new() -> Result<Self, SimError> {
         let overflow = BinaryHeap::new();
-        let schedule = Clock::new().map_err(SimError::MesoError)?;
-        let anti_messages = Vec::new();
+        let schedule = Clock::new()?;
         Ok(Self {
             overflow,
             schedule,
-            anti_messages,
         })
     }
 }
 
 unsafe impl<
-        const SLOTS: usize,
         const CLOCK_SLOTS: usize,
         const CLOCK_HEIGHT: usize,
         MessageType: Clone,
-    > Send for LocalMailSystem<SLOTS, CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>
+    > Send for LocalMailSystem<CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>
 {
 }
 unsafe impl<
-        const SLOTS: usize,
         const CLOCK_SLOTS: usize,
         const CLOCK_HEIGHT: usize,
         MessageType: Clone,
-    > Sync for LocalMailSystem<SLOTS, CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>
+    > Sync for LocalMailSystem<CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>
 {
 }

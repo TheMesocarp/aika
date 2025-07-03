@@ -87,7 +87,7 @@ impl<const CLOCK_SLOTS: usize, const CLOCK_HEIGHT: usize>
 {
     pub fn new() -> Result<Self, SimError> {
         let overflow = BinaryHeap::new();
-        let local_clock = Clock::new().map_err(SimError::MesoError)?;
+        let local_clock = Clock::new()?;
         Ok(Self {
             overflow,
             local_clock,

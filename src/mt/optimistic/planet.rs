@@ -1,4 +1,4 @@
-use std::{cmp::Reverse, collections::{BTreeSet, BinaryHeap}, sync::{atomic::AtomicU64, Arc}};
+use std::{cmp::Reverse, collections::{BTreeSet, BinaryHeap}, sync::{atomic::{AtomicU64, Ordering}, Arc}, thread::sleep, time::Duration};
 
 use bytemuck::{Pod, Zeroable};
 use mesocarp::{comms::mailbox::ThreadedMessengerUser, logging::journal::Journal, scheduling::{htw::Clock, Scheduleable}};
@@ -15,58 +15,54 @@ pub type RegistryOutput<const SLOTS: usize, MessageType> = (
 
 pub struct Planet<
     const INTER_SLOTS: usize,
-    const LOCAL_SLOTS: usize,
     const CLOCK_SLOTS: usize,
     const CLOCK_HEIGHT: usize,
     MessageType: Pod + Zeroable + Clone,
 > {
-    pub agents: Vec<Box<dyn ThreadedAgent<LOCAL_SLOTS, Msg<MessageType>>>>,
-    pub context: PlanetContext,
+    pub agents: Vec<Box<dyn ThreadedAgent<INTER_SLOTS, MessageType>>>,
+    pub context: PlanetContext<INTER_SLOTS, MessageType>,
     pub time_info: TimeInfo,
     event_system: LocalEventSystem<CLOCK_SLOTS, CLOCK_HEIGHT>,
-    local_messages: LocalMailSystem<LOCAL_SLOTS, CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>,
-    interworld_messages: ThreadedMessengerUser<INTER_SLOTS, Mail<MessageType>>,
+    local_messages: LocalMailSystem<CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>,
     gvt: Arc<AtomicU64>,
-    world_id: usize,
+    local_time: Arc<AtomicU64>,
+    throttle_horizon: u64
 }
 
 unsafe impl<
         const INTER_SLOTS: usize,
-        const LOCAL_SLOTS: usize,
         const CLOCK_SLOTS: usize,
         const CLOCK_HEIGHT: usize,
         MessageType: Pod + Zeroable + Clone,
-    > Send for Planet<INTER_SLOTS, LOCAL_SLOTS, CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>
+    > Send for Planet<INTER_SLOTS, CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>
 {
 }
 unsafe impl<
         const INTER_SLOTS: usize,
-        const LOCAL_SLOTS: usize,
         const CLOCK_SLOTS: usize,
         const CLOCK_HEIGHT: usize,
         MessageType: Pod + Zeroable + Clone,
-    > Sync for Planet<INTER_SLOTS, LOCAL_SLOTS, CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>
+    > Sync for Planet<INTER_SLOTS, CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>
 {
 }
 
 impl<
         const INTER_SLOTS: usize,
-        const LOCAL_SLOTS: usize,
         const CLOCK_SLOTS: usize,
         const CLOCK_HEIGHT: usize,
         MessageType: Pod + Zeroable + Clone,
-    > Planet<INTER_SLOTS, LOCAL_SLOTS, CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>
+    > Planet<INTER_SLOTS, CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>
 {
-    pub fn create(terminal: f64, timestep: f64, world_arena_size: usize, registry: RegistryOutput<INTER_SLOTS, MessageType>) -> Result<Self, SimError> {
+    pub fn create(terminal: f64, timestep: f64, throttle_horizon: u64, world_arena_size: usize, registry: RegistryOutput<INTER_SLOTS, MessageType>) -> Result<Self, SimError> {
         Ok(Self {
             agents: Vec::new(),
-            context: PlanetContext::new(world_arena_size),
+            context: PlanetContext::new(world_arena_size, registry.1, registry.2),
             time_info: TimeInfo { terminal, timestep },
             event_system: LocalEventSystem::<CLOCK_SLOTS, CLOCK_HEIGHT>::new()?,
             local_messages: LocalMailSystem::new()?,
-            interworld_messages: registry.1,
             gvt: registry.0,
-            world_id: registry.2
+            local_time: Arc::new(AtomicU64::from(0u64)),
+            throttle_horizon,
         })
     }
 
@@ -99,7 +95,7 @@ impl<
         self.event_system.local_clock.time
     }
 
-    pub fn spawn_agent(&mut self, agent: Box<dyn ThreadedAgent<LOCAL_SLOTS, Msg<MessageType>>>, state_arena_size: usize) -> usize {
+    pub fn spawn_agent(&mut self, agent: Box<dyn ThreadedAgent<INTER_SLOTS, MessageType>>, state_arena_size: usize) -> usize {
         self.agents.push(agent);
         self.context.agent_states.push(Journal::init(state_arena_size));
         self.agents.len() - 1
@@ -117,13 +113,13 @@ impl<
             .schedule
             .rollback(&mut self.local_messages.overflow, time);
         let mut anti_msgs = Vec::new();
-        for i in &mut self.local_messages.anti_messages {
+        for i in &mut self.context.anti_msgs {
             let out: Vec<(Mail<MessageType>, u64)> = i.rollback_return(time);
             anti_msgs.extend(out);
         }
         for (anti, _) in anti_msgs {
             if let Some(to) = anti.to_world {
-                if to == self.world_id {
+                if to == self.context.world_id {
                     let anti = anti.open_letter();
                     if let Transfer::AntiMsg(anti) = anti {
                         self.annihilate(anti);
@@ -131,12 +127,10 @@ impl<
                     continue;
                 }
             }
-            self.interworld_messages
-                .send(anti)
-                .map_err(SimError::MesoError)?;
+            self.context.user.send(anti)?;
         }
 
-        self.event_system.local_clock = Clock::new().map_err(SimError::MesoError)?;
+        self.event_system.local_clock = Clock::new()?;
         self.event_system.local_clock.set_time(time);
         Ok(())
     }
@@ -187,7 +181,114 @@ impl<
         self.local_messages.overflow = BinaryHeap::from_iter(vec);
     }
 
+    fn poll_interplanetary_messenger(&mut self) -> Result<(), SimError> {
+        let maybe = self.context.user.poll();
+        if maybe.is_none() {
+            return Ok(());
+        }
+        for msg in maybe.unwrap() {
+            if let Some(to) = msg.to_world {
+                if to != self.context.world_id {
+                    return Err(SimError::MismatchedDeliveryAddress)
+                }
+            }
+            let time = msg.transfer.time();
+            if time < self.now() {
+                self.rollback(time)?;
+            }
+            match msg.open_letter() {
+                Transfer::Msg(msg) => self.commit_mail(msg),
+                Transfer::AntiMsg(anti_msg) => self.annihilate(anti_msg),
+            }
+        }
+        Ok(())
+    }
+
+    /// step forward one timestamp on all local clocks
     fn step(&mut self) -> Result<(), SimError> {
+        self.check_time_validity()?;
+        self.poll_interplanetary_messenger()?;
+
+        // process messages at the next time step
+        if let Ok(msgs) = self.local_messages.schedule.tick() {
+            for msg in msgs {
+                let id = msg.to;
+                if id.is_none() {
+                    for i in 0..self.agents.len() {
+                        self.context.time = msg.recv;
+                        self.agents[i].read_message(&mut self.context, msg.clone(), i);
+                    }
+                    continue;
+                }
+                let id = id.unwrap();
+                self.agents[id].read_message(&mut self.context, msg.clone(), id);
+            }
+        }
+        // process events at the next time step
+        if let Ok(events) = self.event_system.local_clock.tick() {
+            for event in events {
+                self.context.time = event.time;
+                let event = self.agents[event.agent].step(&mut self.context, event.agent);
+                match event.yield_ {
+                    Action::Timeout(time) => {
+                        if (self.now() + time) as f64 * self.time_info.timestep
+                            > self.time_info.terminal
+                        {
+                            continue;
+                        }
+
+                        self.commit(Event::new(
+                            self.now(),
+                            self.now() + time,
+                            event.agent,
+                            Action::Wait,
+                        ));
+                    }
+                    Action::Schedule(time) => {
+                        self.commit(Event::new(self.now(), time, event.agent, Action::Wait));
+                    }
+                    Action::Trigger { time, idx } => {
+                        self.commit(Event::new(self.now(), time, idx, Action::Wait));
+                    }
+                    Action::Wait => {}
+                    Action::Break => {
+                        break;
+                    }
+                }
+            }
+        }
+        self.event_system.local_clock.increment(&mut self.event_system.overflow);
+        self.local_messages.schedule.increment(&mut self.local_messages.overflow);
+        self.local_time.store(self.now(), Ordering::Release);
+        Ok(())
+    }
+
+    fn check_time_validity(&self) -> Result<(), SimError> {
+        let load = self.local_time.load(Ordering::Acquire);
+        if self.local_messages.schedule.time != self.event_system.local_clock.time && self.local_messages.schedule.time != load {
+            return Err(SimError::ClockSyncIssue)
+        }
+        if self.time_info.terminal <= self.time_info.timestep * load as f64 {
+            return Err(SimError::PastTerminal)
+        }
+        Ok(())
+    }
+
+    pub fn run(&mut self) -> Result<(), SimError> {
+        let mut flag = false;
+        while flag == false {
+            let gvt = self.gvt.load(Ordering::Acquire);
+            if gvt + self.throttle_horizon < self.now() {
+                sleep(Duration::from_nanos(100));
+                continue;
+            }
+            let step = self.step();
+            if let Err(SimError::PastTerminal) = step {
+                flag = true;
+                continue;
+            }
+            step?;
+        }
         Ok(())
     }
 }
