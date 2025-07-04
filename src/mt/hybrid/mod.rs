@@ -217,8 +217,7 @@ mod hybrid_engine_tests {
 
         // Run the simulation
         println!(
-            "Starting hybrid simulation with {} planets and {} total agents",
-            NUM_PLANETS, TOTAL_AGENTS
+            "Starting hybrid simulation with {NUM_PLANETS} planets and {TOTAL_AGENTS} total agents"
         );
 
         let result = engine.run();
@@ -240,7 +239,7 @@ mod hybrid_engine_tests {
 
         // Verify agents are distributed (autobalancing should give roughly equal distribution)
         let mut total_agent_count = 0;
-        for (i, planet) in final_engine.planets.iter().enumerate() {
+        for planet in final_engine.planets.iter() {
             let agent_count = planet.agents.len();
             total_agent_count += agent_count;
             //println!("Planet {} has {} agents", i, agent_count);
@@ -257,8 +256,7 @@ mod hybrid_engine_tests {
         );
 
         println!(
-            "Test passed: {} agents distributed across {} planets, with {} events per agent",
-            TOTAL_AGENTS, NUM_PLANETS, EVENTS
+            "Test passed: {TOTAL_AGENTS} agents distributed across {NUM_PLANETS} planets, with {EVENTS} events per agent"
         );
     }
 }
