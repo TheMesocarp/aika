@@ -33,13 +33,19 @@ pub struct RegistryOutput<const SLOTS: usize, MessageType: Pod + Zeroable + Clon
 }
 
 impl<const SLOTS: usize, MessageType: Pod + Zeroable + Clone> RegistryOutput<SLOTS, MessageType> {
-    pub fn new(gvt: Arc<AtomicU64>, lvt: Arc<AtomicU64>, checkpoint: Arc<AtomicU64>, user: ThreadedMessengerUser<SLOTS, Mail<MessageType>>, world_id: usize) -> Self {
+    pub fn new(
+        gvt: Arc<AtomicU64>,
+        lvt: Arc<AtomicU64>,
+        checkpoint: Arc<AtomicU64>,
+        user: ThreadedMessengerUser<SLOTS, Mail<MessageType>>,
+        world_id: usize,
+    ) -> Self {
         Self {
             gvt,
             lvt,
             checkpoint,
             user,
-            world_id
+            world_id,
         }
     }
 }
@@ -90,11 +96,46 @@ impl<
         timestep: f64,
         throttle_horizon: u64,
         world_arena_size: usize,
+        anti_msg_arena_size: usize,
         registry: RegistryOutput<INTER_SLOTS, MessageType>,
     ) -> Result<Self, SimError> {
         Ok(Self {
             agents: Vec::new(),
-            context: PlanetContext::new(world_arena_size, registry.user, registry.world_id),
+            context: PlanetContext::new(
+                world_arena_size,
+                anti_msg_arena_size,
+                registry.user,
+                registry.world_id,
+            ),
+            time_info: TimeInfo { terminal, timestep },
+            event_system: LocalEventSystem::<CLOCK_SLOTS, CLOCK_HEIGHT>::new()?,
+            local_messages: LocalMailSystem::new()?,
+            gvt: registry.gvt,
+            next_checkpoint: registry.checkpoint,
+            local_time: registry.lvt,
+            throttle_horizon,
+        })
+    }
+
+    pub fn from_config(
+        world_consts: (usize, usize, &Vec<usize>),
+        terminal: f64,
+        timestep: f64,
+        throttle_horizon: u64,
+        registry: RegistryOutput<INTER_SLOTS, MessageType>,
+    ) -> Result<Self, SimError> {
+        let mut context = PlanetContext::new(
+            world_consts.0,
+            world_consts.1,
+            registry.user,
+            registry.world_id,
+        );
+        for i in world_consts.2 {
+            context.agent_states.push(Journal::init(*i));
+        }
+        Ok(Self {
+            agents: Vec::new(),
+            context,
             time_info: TimeInfo { terminal, timestep },
             event_system: LocalEventSystem::<CLOCK_SLOTS, CLOCK_HEIGHT>::new()?,
             local_messages: LocalMailSystem::new()?,
@@ -145,7 +186,14 @@ impl<
         self.context
             .agent_states
             .push(Journal::init(state_arena_size));
-        self.context.anti_msgs.push(Journal::init(state_arena_size));
+        self.agents.len() - 1
+    }
+
+    pub fn spawn_agent_preconfigured(
+        &mut self,
+        agent: Box<dyn ThreadedAgent<INTER_SLOTS, MessageType>>,
+    ) -> usize {
+        self.agents.push(agent);
         self.agents.len() - 1
     }
 
@@ -160,11 +208,7 @@ impl<
         self.local_messages
             .schedule
             .rollback(&mut self.local_messages.overflow, time);
-        let mut anti_msgs = Vec::new();
-        for i in &mut self.context.anti_msgs {
-            let out: Vec<(Mail<MessageType>, u64)> = i.rollback_return(time);
-            anti_msgs.extend(out);
-        }
+        let anti_msgs: Vec<(Mail<MessageType>, u64)> = self.context.anti_msgs.rollback_return(time);
         for (anti, _) in anti_msgs {
             if let Some(to) = anti.to_world {
                 if to == self.context.world_id {
@@ -312,6 +356,7 @@ impl<
             .schedule
             .increment(&mut self.local_messages.overflow);
         self.local_time.store(self.now(), Ordering::Release);
+        std::thread::yield_now();
         Ok(())
     }
 

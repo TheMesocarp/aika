@@ -52,7 +52,7 @@ pub struct PlanetContext<const INTER_SLOTS: usize, MessageType: Pod + Zeroable +
     pub time: u64,
     pub world_id: usize,
     pub user: ThreadedMessengerUser<INTER_SLOTS, Mail<MessageType>>,
-    pub anti_msgs: Vec<Journal>,
+    pub anti_msgs: Journal,
 }
 
 impl<const INTER_SLOTS: usize, MessageType: Pod + Zeroable + Clone>
@@ -60,6 +60,7 @@ impl<const INTER_SLOTS: usize, MessageType: Pod + Zeroable + Clone>
 {
     pub fn new(
         world_arena_size: usize,
+        anti_msg_arena_size: usize,
         user: ThreadedMessengerUser<INTER_SLOTS, Mail<MessageType>>,
         world_id: usize,
     ) -> Self {
@@ -69,28 +70,22 @@ impl<const INTER_SLOTS: usize, MessageType: Pod + Zeroable + Clone>
             time: 0,
             user,
             world_id,
-            anti_msgs: Vec::new(),
+            anti_msgs: Journal::init(anti_msg_arena_size),
         }
     }
 
-    pub fn init_agent_contexts(&mut self, state_arena_size: usize, anti_msg_arena_size: usize) {
+    pub fn init_agent_contexts(&mut self, state_arena_size: usize) {
         self.agent_states.push(Journal::init(state_arena_size));
-        self.anti_msgs.push(Journal::init(anti_msg_arena_size));
     }
 
-    pub fn send_mail(
-        &mut self,
-        msg: Msg<MessageType>,
-        to_world: usize,
-        local_sender_id: usize,
-    ) -> Result<(), SimError> {
+    pub fn send_mail(&mut self, msg: Msg<MessageType>, to_world: usize) -> Result<(), SimError> {
         let anti = AntiMsg::new(msg.sent, msg.recv, msg.from, msg.to);
         let outgoing = Mail::write_letter(Transfer::Msg(msg), self.world_id, Some(to_world));
         self.user.send(outgoing)?;
 
         let stays: Mail<MessageType> =
             Mail::write_letter(Transfer::AntiMsg(anti), self.world_id, Some(to_world));
-        self.anti_msgs[local_sender_id].write(stays, self.time, None);
+        self.anti_msgs.write(stays, self.time, None);
         Ok(())
     }
 }

@@ -1,4 +1,7 @@
-use std::sync::{atomic::{AtomicU64, Ordering}, Arc};
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc,
+};
 
 use bytemuck::{Pod, Zeroable};
 use mesocarp::comms::mailbox::ThreadedMessenger;
@@ -18,12 +21,23 @@ pub struct Galaxy<
     pub checkpoint_frequency: u64,
     pub throttle_horizon: u64,
     pub time_info: TimeInfo,
-    pub registered: usize
-
+    pub registered: usize,
 }
 
-impl<const INTER_SLOTS: usize, const CLOCK_SLOTS: usize, const CLOCK_HEIGHT: usize, MessageType: Pod + Zeroable + Clone> Galaxy<INTER_SLOTS, CLOCK_SLOTS, CLOCK_HEIGHT, MessageType> {
-    pub fn new(num_world: usize, throttle_horizon: u64, checkpoint_frequency: u64, terminal: f64, timestep: f64) -> Result<Self, SimError> {
+impl<
+        const INTER_SLOTS: usize,
+        const CLOCK_SLOTS: usize,
+        const CLOCK_HEIGHT: usize,
+        MessageType: Pod + Zeroable + Clone,
+    > Galaxy<INTER_SLOTS, CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>
+{
+    pub fn new(
+        num_world: usize,
+        throttle_horizon: u64,
+        checkpoint_frequency: u64,
+        terminal: f64,
+        timestep: f64,
+    ) -> Result<Self, SimError> {
         let gvt = Arc::new(AtomicU64::new(0));
         let mut world_ids = Vec::new();
         for i in 0..num_world {
@@ -44,18 +58,17 @@ impl<const INTER_SLOTS: usize, const CLOCK_SLOTS: usize, const CLOCK_HEIGHT: usi
 
     pub fn spawn_world(&mut self) -> Result<RegistryOutput<INTER_SLOTS, MessageType>, SimError> {
         let arc = Arc::clone(&self.gvt);
-        
+
         let lvt = Arc::new(AtomicU64::new(0));
         let out = Arc::clone(&lvt);
 
         self.lvts.push(lvt);
 
-        let user = self
-            .messenger
-            .get_user(self.registered)?;
+        let user = self.messenger.get_user(self.registered)?;
         let world_id = self.registered;
         self.registered += 1;
-        let output = RegistryOutput::new(arc, out, Arc::clone(&self.next_checkpoint), user, world_id);
+        let output =
+            RegistryOutput::new(arc, out, Arc::clone(&self.next_checkpoint), user, world_id);
         Ok(output)
     }
 
@@ -100,30 +113,27 @@ impl<const INTER_SLOTS: usize, const CLOCK_SLOTS: usize, const CLOCK_HEIGHT: usi
     pub fn gvt_daemon(&mut self) -> Result<(), SimError> {
         loop {
             self.check_mail_and_gvt()?;
-            
+
             let current_gvt = self.gvt.load(Ordering::Acquire);
-            
+
             // Check if all LPs have reached terminal
             let all_terminal = self.lvts.iter().all(|lvt| {
                 let lvt_val = lvt.load(Ordering::Acquire);
-                lvt_val as f64 * self.time_info.timestep >= self.time_info.terminal // assuming you store this somewhere
+                lvt_val as f64 * self.time_info.timestep >= self.time_info.terminal
+                // assuming you store this somewhere
             });
-            
+
             if all_terminal {
                 println!("All LPs reached terminal time, shutting down");
                 break;
             }
-            
+
             // Handle checkpointing
             if current_gvt >= self.next_checkpoint.load(Ordering::Acquire) {
-                self.next_checkpoint.store(
-                    current_gvt + self.checkpoint_frequency,
-                    Ordering::Release
-                );
+                self.next_checkpoint
+                    .store(current_gvt + self.checkpoint_frequency, Ordering::Release);
             }
-            
-            // Optional: tiny yield to be nice to hyperthreading
-            // std::thread::yield_now();
+            std::thread::yield_now();
         }
         Ok(())
     }

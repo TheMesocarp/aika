@@ -1,15 +1,14 @@
 use crate::SimError;
 
-
 pub struct HybridConfig {
-    number_of_worlds: usize,
-    world_state_asizes: Vec<usize>,
-    agent_states_asizes: Vec<Vec<usize>>,
-    anti_message_asize: usize,
-    throttle_horizon: u64, 
-    checkpoint_frequency: u64, 
-    terminal: f64, 
-    timestep: f64
+    pub number_of_worlds: usize,
+    pub world_state_asizes: Vec<usize>,
+    pub agent_states_asizes: Vec<Vec<usize>>,
+    pub anti_message_asize: usize,
+    pub throttle_horizon: u64,
+    pub checkpoint_frequency: u64,
+    pub terminal: f64,
+    pub timestep: f64,
 }
 
 impl HybridConfig {
@@ -35,7 +34,11 @@ impl HybridConfig {
     }
 
     /// Configure optimistic synchronization parameters
-    pub fn with_optimistic_sync(mut self, throttle_horizon: u64, checkpoint_frequency: u64) -> Self {
+    pub fn with_optimistic_sync(
+        mut self,
+        throttle_horizon: u64,
+        checkpoint_frequency: u64,
+    ) -> Self {
         self.throttle_horizon = throttle_horizon;
         self.checkpoint_frequency = checkpoint_frequency;
         self
@@ -43,25 +46,25 @@ impl HybridConfig {
 
     /// Configure a specific world's state and agent arena sizes
     pub fn with_world(
-        mut self, 
-        world_id: usize, 
-        world_state_size: usize, 
-        agent_state_sizes: Vec<usize>
+        mut self,
+        world_id: usize,
+        world_state_size: usize,
+        agent_state_sizes: Vec<usize>,
     ) -> Result<Self, SimError> {
         if world_id >= self.number_of_worlds {
             return Err(SimError::InvalidWorldId(world_id));
         }
-        
+
         self.world_state_asizes[world_id] = world_state_size;
         self.agent_states_asizes[world_id] = agent_state_sizes;
         Ok(self)
     }
 
     pub fn with_uniform_worlds(
-        mut self, 
-        world_state_size: usize, 
+        mut self,
+        world_state_size: usize,
         agents_per_world: usize,
-        agent_state_size: usize
+        agent_state_size: usize,
     ) -> Self {
         for i in 0..self.number_of_worlds {
             self.world_state_asizes[i] = world_state_size;
@@ -71,55 +74,73 @@ impl HybridConfig {
     }
 
     pub fn add_agent_to_world(
-        mut self, 
-        world_id: usize, 
-        agent_state_size: usize
+        mut self,
+        world_id: usize,
+        agent_state_size: usize,
     ) -> Result<Self, SimError> {
         if world_id >= self.number_of_worlds {
             return Err(SimError::InvalidWorldId(world_id));
         }
-        
+
         self.agent_states_asizes[world_id].push(agent_state_size);
         Ok(self)
     }
 
     pub fn total_agents(&self) -> usize {
-        self.agent_states_asizes.iter().map(|agents| agents.len()).sum()
+        self.agent_states_asizes
+            .iter()
+            .map(|agents| agents.len())
+            .sum()
     }
 
     /// Validate that all required fields have been configured
     pub fn validate(&self) -> Result<(), SimError> {
         if self.terminal <= 0.0 {
-            return Err(SimError::ConfigError("Terminal time must be positive".to_string()));
+            return Err(SimError::ConfigError(
+                "Terminal time must be positive".to_string(),
+            ));
         }
-        
+
         if self.timestep <= 0.0 {
-            return Err(SimError::ConfigError("Timestep must be positive".to_string()));
+            return Err(SimError::ConfigError(
+                "Timestep must be positive".to_string(),
+            ));
         }
-        
+
         if self.throttle_horizon == 0 {
-            return Err(SimError::ConfigError("Throttle horizon must be set".to_string()));
+            return Err(SimError::ConfigError(
+                "Throttle horizon must be set".to_string(),
+            ));
         }
-        
+
         if self.checkpoint_frequency == 0 {
-            return Err(SimError::ConfigError("Checkpoint frequency must be set".to_string()));
+            return Err(SimError::ConfigError(
+                "Checkpoint frequency must be set".to_string(),
+            ));
         }
-        
+
         // Check that all worlds have been configured
         for (i, world_size) in self.world_state_asizes.iter().enumerate() {
             if *world_size == 0 {
-                return Err(SimError::ConfigError(format!("World {} state size not configured", i)));
+                return Err(SimError::ConfigError(format!(
+                    "World {} state size not configured",
+                    i
+                )));
             }
         }
-        
+
         Ok(())
     }
 
     /// Get configuration for a specific world
-    pub fn world_config(&self, world_id: usize) -> Option<(usize, usize, &Vec<usize>)> {
+    pub fn world_config(&self, world_id: usize) -> Result<(usize, usize, &Vec<usize>), SimError> {
         if world_id >= self.number_of_worlds {
-            return None;
+            return Err(SimError::InvalidWorldId(world_id));
         }
-        Some((self.world_state_asizes[world_id], self.anti_message_asize, &self.agent_states_asizes[world_id]))
+        Ok((
+            self.world_state_asizes[world_id],
+            self.anti_message_asize,
+            &self.agent_states_asizes[world_id],
+        ))
     }
 }
