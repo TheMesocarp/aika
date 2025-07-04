@@ -24,12 +24,25 @@ use crate::{
     SimError,
 };
 
-pub type RegistryOutput<const SLOTS: usize, MessageType> = (
-    Arc<AtomicU64>,
-    Arc<AtomicU64>,
-    ThreadedMessengerUser<SLOTS, Mail<MessageType>>,
-    usize,
-);
+pub struct RegistryOutput<const SLOTS: usize, MessageType: Pod + Zeroable + Clone> {
+    gvt: Arc<AtomicU64>,
+    lvt: Arc<AtomicU64>,
+    checkpoint: Arc<AtomicU64>,
+    user: ThreadedMessengerUser<SLOTS, Mail<MessageType>>,
+    world_id: usize,
+}
+
+impl<const SLOTS: usize, MessageType: Pod + Zeroable + Clone> RegistryOutput<SLOTS, MessageType> {
+    pub fn new(gvt: Arc<AtomicU64>, lvt: Arc<AtomicU64>, checkpoint: Arc<AtomicU64>, user: ThreadedMessengerUser<SLOTS, Mail<MessageType>>, world_id: usize) -> Self {
+        Self {
+            gvt,
+            lvt,
+            checkpoint,
+            user,
+            world_id
+        }
+    }
+}
 
 pub struct Planet<
     const INTER_SLOTS: usize,
@@ -43,6 +56,7 @@ pub struct Planet<
     event_system: LocalEventSystem<CLOCK_SLOTS, CLOCK_HEIGHT>,
     local_messages: LocalMailSystem<CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>,
     gvt: Arc<AtomicU64>,
+    next_checkpoint: Arc<AtomicU64>,
     local_time: Arc<AtomicU64>,
     throttle_horizon: u64,
 }
@@ -80,12 +94,13 @@ impl<
     ) -> Result<Self, SimError> {
         Ok(Self {
             agents: Vec::new(),
-            context: PlanetContext::new(world_arena_size, registry.2, registry.3),
+            context: PlanetContext::new(world_arena_size, registry.user, registry.world_id),
             time_info: TimeInfo { terminal, timestep },
             event_system: LocalEventSystem::<CLOCK_SLOTS, CLOCK_HEIGHT>::new()?,
             local_messages: LocalMailSystem::new()?,
-            gvt: registry.0,
-            local_time: registry.1,
+            gvt: registry.gvt,
+            next_checkpoint: registry.checkpoint,
+            local_time: registry.lvt,
             throttle_horizon,
         })
     }
@@ -130,6 +145,7 @@ impl<
         self.context
             .agent_states
             .push(Journal::init(state_arena_size));
+        self.context.anti_msgs.push(Journal::init(state_arena_size));
         self.agents.len() - 1
     }
 
@@ -315,11 +331,17 @@ impl<
     pub fn run(&mut self) -> Result<(), SimError> {
         let mut flag = false;
         while !flag {
-            let gvt = self.gvt.load(Ordering::Acquire);
+            let checkpoint = self.next_checkpoint.load(Ordering::SeqCst);
+            if self.now() == checkpoint {
+                sleep(Duration::from_nanos(100));
+                continue;
+            }
+            let gvt = self.gvt.load(Ordering::SeqCst);
             if gvt + self.throttle_horizon < self.now() {
                 sleep(Duration::from_nanos(100));
                 continue;
             }
+
             let step = self.step();
             if let Err(SimError::PastTerminal) = step {
                 flag = true;

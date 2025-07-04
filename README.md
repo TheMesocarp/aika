@@ -5,20 +5,20 @@ A Rust-native coordination layer for multi-agent systems, with support for singl
 
 ## Roadmap
 
-In its current state, the framework supports single-threaded and multi-threaded optimistic execution, with both point-to-point and broadcast messaging support. The aim is to continue expanding into conservative and hybrid synchronization support as well. A near term list of goals can be seen below:
+In its current state, the framework supports single-threaded and multi-threaded hybrid execution, with both point-to-point and broadcast messaging support. The aim is to continue expanding into conservative synchronization support as well. A near term list of goals can be seen below:
 
-- [x] single-threaded world (found in `st::World`) execution with messaging support via lock-free shared buffers 
+- [x] single-threaded world (found in `st::World`) execution with messaging support via lock-free shared buffers. 
 - [x] bench single-threaded `st::World` on more complex and distant scheduling tasks.
-- [ ] optimistic synchronization via a modified [Time Warp](https://dl.acm.org/doi/10.1145/37499.37508) architecture for multi-threaded execution (found in `mt::optimistic`) ***(in progress)***
-- [ ] conservative synchronization via a [Chandy-Misra-Bryant](https://dl.acm.org/doi/10.1145/130611.130613) (CMB) inspired architecture
- for multi-threaded execution (soon to be found in `mt::conservative`)
-- [ ] *PHOLD* benches for both conservative and optimistic multi-threaded execution schemes
+- [x] multi-threaded support via hybrid synchronization via a modified [Clustered Time Warp](https://dl.acm.org/doi/abs/10.1145/214283.214317) architecture for multi-threaded execution (found in `mt::hybrid`).
+- [ ] scheduling overhead benchmark and *PHOLD* benchmark for `mt::hybrid::Engine` (next up).
+- [ ] conservative synchronization via a [Chandy-Misra-Bryant](https://dl.acm.org/doi/10.1145/130611.130613) (CMB) inspired architecture for multi-threaded execution (soon to be found in `mt::conservative`). 
+- [ ] *PHOLD* benches for both conservative and hybrid multi-threaded execution schemes.
 - [ ] port core synchronization logic from each multi-threaded execution type to work over IPC and containerize the LP logic.
-- [ ] (eventually) Explore hybrid synchronization schemes over an MPI-like communication interface for load-balanced, scalable coordination.
+- [ ] (eventually) shift to MPI-like communication interface over a shared memory abstraction for real direct comms support.
 
 ## Usage
 
-The API has similar ease of use to many other multi-agent simulators like `SimPy`. Create a world with a particular configuration, spawn the agents in that world, initialize the support layers (whether we want messaging or not), and schedule an initial event before running. A practical example of this looks like this: 
+The API has similar ease of use to many other multi-agent simulators like `SimPy`. Create a world with a particular configuration, spawn the agents in that world, initialize the support layers (whether we want messaging or not), and schedule an initial event before running. A practical example of this for an `st::World` looks like this: 
 
 ```rust
 let mut world = World::<8, 128, 1, u8>::init(40000000.0, 1.0)?;
@@ -28,6 +28,10 @@ world.init_support_layers(None)?;
 world.schedule(1, 0)?; 
 world.run()?;
 ```
+
+Using the parallel simulators is a bit more complicated and both need more upfront configuration. For the hybrid synchronization simulator in `mt::hybrid`, this would look like:
+
+
 
 ## Contributing
 

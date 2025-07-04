@@ -28,4 +28,8 @@ pub enum SimError {
     MesoError(#[from] MesoError),
     #[error("Local clocks on a `Planet` were out of sync.")]
     ClockSyncIssue,
+    #[error("Invalid world ID: {0}")]
+    InvalidWorldId(usize),
+    #[error("Configuration error: {0}")]
+    ConfigError(String),
 }
