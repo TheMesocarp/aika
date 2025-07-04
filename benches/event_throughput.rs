@@ -1,39 +1,37 @@
 use aika::{
-    agents::{Agent, AgentSupport},
+    agents::{Agent, WorldContext},
+    event::{Action, Event},
     messages::Msg,
-    st::{
-        event::{Action, Event},
-        World,
-    },
+    st::World,
 };
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
 // Minimal agent that just schedules timeout events
 struct ThroughputAgent {
-    id: usize,
+    _id: usize,
     remaining_steps: usize,
 }
 
 impl ThroughputAgent {
-    fn new(id: usize, total_steps: usize) -> Self {
+    fn new(_id: usize, total_steps: usize) -> Self {
         ThroughputAgent {
-            id,
+            _id,
             remaining_steps: total_steps,
         }
     }
 }
 
 impl Agent<8, Msg<()>> for ThroughputAgent {
-    fn step(&mut self, supports: &mut AgentSupport<8, Msg<()>>) -> Event {
-        let time = supports.current_time;
+    fn step(&mut self, context: &mut WorldContext<8, Msg<()>>, id: usize) -> Event {
+        let time = context.time;
 
         if self.remaining_steps > 0 {
             self.remaining_steps -= 1;
             // Just timeout for 1 step - minimal work
-            Event::new(time, time, self.id, Action::Timeout(1))
+            Event::new(time, time, id, Action::Timeout(1))
         } else {
             // Stop scheduling once we've done enough steps
-            Event::new(time, time, self.id, Action::Wait)
+            Event::new(time, time, id, Action::Wait)
         }
     }
 }
@@ -50,7 +48,7 @@ fn bench_event_throughput(c: &mut Criterion) {
                 b.iter_with_setup(
                     || {
                         // Setup: Create world and agents
-                        let mut world = World::<8, 128, 1, ()>::init(1000.0, 1.0).unwrap();
+                        let mut world = World::<8, 128, 1, ()>::init(1000.0, 1.0, 0).unwrap();
 
                         // Spawn agents
                         for i in 0..num_agents {
@@ -94,7 +92,7 @@ fn bench_event_throughput_fixed_time(c: &mut Criterion) {
             |b, &num_agents| {
                 b.iter_with_setup(
                     || {
-                        let mut world = World::<8, 128, 1, ()>::init(sim_time, 1.0).unwrap();
+                        let mut world = World::<8, 128, 1, ()>::init(sim_time, 1.0, 0).unwrap();
 
                         for i in 0..num_agents {
                             let agent = ThroughputAgent::new(i, sim_time as usize);
@@ -133,7 +131,7 @@ fn bench_single_agent_long_run(c: &mut Criterion) {
             |b, &sim_time| {
                 b.iter_with_setup(
                     || {
-                        let mut world = World::<8, 128, 1, ()>::init(sim_time, 1.0).unwrap();
+                        let mut world = World::<8, 128, 1, ()>::init(sim_time, 1.0, 0).unwrap();
                         let agent = ThroughputAgent::new(0, sim_time as usize);
                         world.spawn_agent(Box::new(agent));
                         world.init_support_layers(None).unwrap();
@@ -172,7 +170,7 @@ fn bench_events_per_second(c: &mut Criterion) {
                 b.iter_with_setup(
                     || {
                         // The setup remains the same
-                        let mut world = World::<8, 128, 1, ()>::init(sim_time, 1.0).unwrap();
+                        let mut world = World::<8, 128, 1, ()>::init(sim_time, 1.0, 0).unwrap();
                         for i in 0..num_agents {
                             let agent = ThroughputAgent::new(i, sim_time as usize);
                             world.spawn_agent(Box::new(agent));

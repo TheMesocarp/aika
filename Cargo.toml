@@ -4,13 +4,15 @@ version = "0.1.0"
 edition = "2021"
 
 [profile.release]
-debug = true
+opt-level = 3
 
 [features]
 
 [dependencies]
 bytemuck = "1.23.0"
-mesocarp = "0.5.6"
+thiserror = "2.0.12"
+
+mesocarp = "0.7.0"
 
 
 [dev-dependencies]
@@ -18,5 +20,5 @@ criterion = { version = "0.5", features = ["html_reports"] }
 aika = { path = "." }
 
 [[bench]]
-name = "event_throughput"
+name = "hybrid_throughput"
 harness = false

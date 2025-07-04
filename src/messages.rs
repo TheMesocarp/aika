@@ -1,7 +1,15 @@
-use std::cmp::Ordering;
+use std::{
+    cmp::{Ordering, Reverse},
+    collections::BinaryHeap,
+};
 
 use bytemuck::{Pod, Zeroable};
-use mesocarp::{comms::mailbox::Message, scheduling::Scheduleable};
+use mesocarp::{
+    comms::mailbox::Message,
+    scheduling::{htw::Clock, Scheduleable},
+};
+
+use crate::SimError;
 
 #[derive(Copy, Clone, Debug)]
 pub struct Msg<T: Clone> {
@@ -31,10 +39,6 @@ impl<T: Clone> Message for Msg<T> {
 
     fn from(&self) -> usize {
         self.from
-    }
-
-    fn broadcast(&self) -> bool {
-        self.to.is_none()
     }
 }
 
@@ -81,11 +85,11 @@ pub struct AntiMsg {
     pub sent: u64,
     pub received: u64,
     pub from: usize,
-    pub to: usize,
+    pub to: Option<usize>,
 }
 
 impl AntiMsg {
-    pub fn new(sent: u64, received: u64, from: usize, to: usize) -> Self {
+    pub fn new(sent: u64, received: u64, from: usize, to: Option<usize>) -> Self {
         AntiMsg {
             sent,
             received,
@@ -95,7 +99,10 @@ impl AntiMsg {
     }
 
     pub fn annihilate<T: Clone>(&self, other: &Msg<T>) -> bool {
-        self.sent == other.sent && self.received == other.recv && self.from == other.from
+        self.sent == other.sent
+            && self.received == other.recv
+            && self.from == other.from
+            && self.to == other.to
     }
 }
 
@@ -130,15 +137,11 @@ impl Scheduleable for AntiMsg {
 
 impl Message for AntiMsg {
     fn to(&self) -> Option<usize> {
-        Some(self.to)
+        self.to
     }
 
     fn from(&self) -> usize {
         self.from
-    }
-
-    fn broadcast(&self) -> bool {
-        false
     }
 }
 
@@ -153,23 +156,23 @@ impl<T: Clone> Annihilator<T> {
     pub fn conjure(
         creation_time: u64,
         from_id: usize,
-        to_id: usize,
+        to_id: Option<usize>,
         process_time: u64,
         data: T,
     ) -> Self {
-        let msg = Msg::new(data, creation_time, process_time, from_id, Some(to_id));
+        let msg = Msg::new(data, creation_time, process_time, from_id, to_id);
         let anti = AntiMsg::new(creation_time, process_time, from_id, to_id);
         Self(msg, anti)
     }
 }
 
-#[derive(Clone)]
-pub enum Transfer<T: Clone> {
+#[derive(Debug, Clone, Copy)]
+pub enum Transfer<T: Pod + Zeroable + Clone> {
     Msg(Msg<T>),
     AntiMsg(AntiMsg),
 }
 
-impl<T: Clone> Message for Transfer<T> {
+impl<T: Pod + Zeroable + Clone> Message for Transfer<T> {
     fn to(&self) -> Option<usize> {
         match self {
             Transfer::Msg(msg) => msg.to(),
@@ -183,16 +186,9 @@ impl<T: Clone> Message for Transfer<T> {
             Transfer::AntiMsg(anti_msg) => anti_msg.from(),
         }
     }
-
-    fn broadcast(&self) -> bool {
-        match self {
-            Transfer::Msg(msg) => msg.broadcast(),
-            Transfer::AntiMsg(anti_msg) => anti_msg.broadcast(),
-        }
-    }
 }
 
-impl<T: Clone> Scheduleable for Transfer<T> {
+impl<T: Pod + Zeroable + Clone> Scheduleable for Transfer<T> {
     fn time(&self) -> u64 {
         match self {
             Transfer::Msg(msg) => msg.time(),
@@ -208,13 +204,13 @@ impl<T: Clone> Scheduleable for Transfer<T> {
     }
 }
 
-impl<T: Clone> PartialOrd for Transfer<T> {
+impl<T: Pod + Zeroable + Clone> PartialOrd for Transfer<T> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl<T: Clone> PartialEq for Transfer<T> {
+impl<T: Pod + Zeroable + Clone> PartialEq for Transfer<T> {
     fn eq(&self, other: &Self) -> bool {
         self.from() == other.from()
             && self.to() == other.to()
@@ -223,13 +219,75 @@ impl<T: Clone> PartialEq for Transfer<T> {
     }
 }
 
-impl<T: Clone> Eq for Transfer<T> {}
+impl<T: Pod + Zeroable + Clone> Eq for Transfer<T> {}
 
-impl<T: Clone> Ord for Transfer<T> {
+impl<T: Pod + Zeroable + Clone> Ord for Transfer<T> {
     fn cmp(&self, other: &Self) -> Ordering {
         self.time().cmp(&other.time())
     }
 }
 
-unsafe impl<T: Clone> Send for Transfer<T> {}
-unsafe impl<T: Clone> Sync for Transfer<T> {}
+unsafe impl<T: Pod + Zeroable + Clone> Send for Transfer<T> {}
+unsafe impl<T: Pod + Zeroable + Clone> Sync for Transfer<T> {}
+
+unsafe impl<T: Pod + Zeroable + Clone> Pod for Transfer<T> {}
+unsafe impl<T: Pod + Zeroable + Clone> Zeroable for Transfer<T> {}
+
+#[derive(Debug, Clone, Copy)]
+pub struct Mail<T: Pod + Zeroable + Clone> {
+    pub transfer: Transfer<T>,
+    pub to_world: Option<usize>,
+    pub from_world: usize,
+}
+
+impl<T: Pod + Zeroable + Clone> Mail<T> {
+    pub fn write_letter(transfer: Transfer<T>, from_world: usize, to_world: Option<usize>) -> Self {
+        Self {
+            transfer,
+            to_world,
+            from_world,
+        }
+    }
+
+    pub fn open_letter(self) -> Transfer<T> {
+        self.transfer
+    }
+}
+
+impl<T: Pod + Zeroable + Clone> Message for Mail<T> {
+    fn to(&self) -> Option<usize> {
+        self.to_world
+    }
+
+    fn from(&self) -> usize {
+        self.from_world
+    }
+}
+
+unsafe impl<T: Pod + Zeroable + Clone> Pod for Mail<T> {}
+unsafe impl<T: Pod + Zeroable + Clone> Zeroable for Mail<T> {}
+
+pub struct LocalMailSystem<const CLOCK_SLOTS: usize, const CLOCK_HEIGHT: usize, MessageType: Clone>
+{
+    pub overflow: BinaryHeap<Reverse<Msg<MessageType>>>,
+    pub schedule: Clock<Msg<MessageType>, CLOCK_SLOTS, CLOCK_HEIGHT>,
+}
+
+impl<const CLOCK_SLOTS: usize, const CLOCK_HEIGHT: usize, MessageType: Clone>
+    LocalMailSystem<CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>
+{
+    pub fn new() -> Result<Self, SimError> {
+        let overflow = BinaryHeap::new();
+        let schedule = Clock::new()?;
+        Ok(Self { overflow, schedule })
+    }
+}
+
+unsafe impl<const CLOCK_SLOTS: usize, const CLOCK_HEIGHT: usize, MessageType: Clone> Send
+    for LocalMailSystem<CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>
+{
+}
+unsafe impl<const CLOCK_SLOTS: usize, const CLOCK_HEIGHT: usize, MessageType: Clone> Sync
+    for LocalMailSystem<CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>
+{
+}
