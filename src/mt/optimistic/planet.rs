@@ -26,6 +26,7 @@ use crate::{
 
 pub type RegistryOutput<const SLOTS: usize, MessageType> = (
     Arc<AtomicU64>,
+    Arc<AtomicU64>,
     ThreadedMessengerUser<SLOTS, Mail<MessageType>>,
     usize,
 );
@@ -79,12 +80,12 @@ impl<
     ) -> Result<Self, SimError> {
         Ok(Self {
             agents: Vec::new(),
-            context: PlanetContext::new(world_arena_size, registry.1, registry.2),
+            context: PlanetContext::new(world_arena_size, registry.2, registry.3),
             time_info: TimeInfo { terminal, timestep },
             event_system: LocalEventSystem::<CLOCK_SLOTS, CLOCK_HEIGHT>::new()?,
             local_messages: LocalMailSystem::new()?,
             gvt: registry.0,
-            local_time: Arc::new(AtomicU64::from(0u64)),
+            local_time: registry.1,
             throttle_horizon,
         })
     }
