@@ -61,10 +61,7 @@ fn hybrid_engine_benchmark(c: &mut Criterion) {
     group.sample_size(10); // Adjust sample size as needed for stable results
 
     group.bench_function(
-        format!(
-            "run_simulation_planets_{}_agents_{}_events_{}",
-            NUM_PLANETS, TOTAL_AGENTS, EVENTS
-        ),
+        format!("run_simulation_planets_{NUM_PLANETS}_agents_{TOTAL_AGENTS}_events_{EVENTS}"),
         |b| {
             // The setup code that should run once per benchmark iteration,
             // but outside the timed loop.
