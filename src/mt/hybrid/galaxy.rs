@@ -84,12 +84,14 @@ impl<
                 }
                 self.messenger.deliver(msgs)?;
                 Ok(lowest)
-            },
-            Err(err) => if let MesoError::NoDirectCommsToShare = err {
-                Ok(u64::MAX)
-            } else {
-                return Err(SimError::MesoError(err))
-            },
+            }
+            Err(err) => {
+                if let MesoError::NoDirectCommsToShare = err {
+                    Ok(u64::MAX)
+                } else {
+                    Err(SimError::MesoError(err))
+                }
+            }
         }
     }
 
@@ -135,7 +137,7 @@ impl<
             });
 
             if all_terminal {
-                println!("All LPs reached terminal time, shutting down");
+                //println!("All LPs reached terminal time, shutting down");
                 break;
             }
 
@@ -146,7 +148,6 @@ impl<
             }
             std::thread::yield_now();
         }
-        println!("ended galaxy thread");
         Ok(())
     }
 }

@@ -1,5 +1,6 @@
 use crate::SimError;
 
+#[derive(Debug, Clone)]
 pub struct HybridConfig {
     pub number_of_worlds: usize,
     pub world_state_asizes: Vec<usize>,

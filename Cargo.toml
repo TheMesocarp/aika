@@ -20,5 +20,5 @@ criterion = { version = "0.5", features = ["html_reports"] }
 aika = { path = "." }
 
 [[bench]]
-name = "event_throughput"
+name = "hybrid_throughput"
 harness = false

@@ -115,15 +115,12 @@ impl<
             });
             planet_handles.push(handle);
         }
-        println!("awaiting threads...");
         let mut final_planets = Vec::new();
         for handle in planet_handles {
             let planet = handle.join().map_err(|_| SimError::ThreadPanic)??;
             final_planets.push(planet);
         }
-        println!("closed planets");
         let final_galaxy = galaxy_handle.join().map_err(|_| SimError::ThreadPanic)??;
-        println!("closed galaxy");
         Ok(Self {
             galaxy: final_galaxy,
             planets: final_planets,
@@ -168,7 +165,12 @@ mod hybrid_engine_tests {
             Event::new(time, time, agent_id, Action::Timeout(1))
         }
 
-        fn read_message(&mut self, _context: &mut PlanetContext<128, TestData>, _msg: Msg<TestData>, _agent_id: usize) {
+        fn read_message(
+            &mut self,
+            _context: &mut PlanetContext<128, TestData>,
+            _msg: Msg<TestData>,
+            _agent_id: usize,
+        ) {
             // Simple agent doesn't process messages
         }
     }
@@ -181,13 +183,13 @@ mod hybrid_engine_tests {
         const TOTAL_AGENTS: usize = NUM_PLANETS * AGENTS_PER_PLANET;
         const EVENTS: u64 = 100000;
         // Create configuration
-        let config = HybridConfig::new(NUM_PLANETS, 16)  // 512 bytes for anti-message arena
-            .with_time_bounds(EVENTS as f64, 1.0)  // terminal=1000, timestep=1.0
-            .with_optimistic_sync(50, 100)   // throttle_horizon=50, checkpoint_frequency=100
+        let config = HybridConfig::new(NUM_PLANETS, 16) // 512 bytes for anti-message arena
+            .with_time_bounds(EVENTS as f64, 1.0) // terminal=1000, timestep=1.0
+            .with_optimistic_sync(50, 100) // throttle_horizon=50, checkpoint_frequency=100
             .with_uniform_worlds(
-                16,  // world state arena size
+                16, // world state arena size
                 AGENTS_PER_PLANET,
-                16    // agent state arena size
+                16, // agent state arena size
             );
 
         // Validate config
@@ -207,42 +209,56 @@ mod hybrid_engine_tests {
         // Each planet should have approximately AGENTS_PER_PLANET agents due to autobalancing
         for planet_id in 0..NUM_PLANETS {
             // Schedule first few agents in each planet to start at time 1
-            for agent_id in 0..10 {  // Just schedule first 5 agents per planet
+            for agent_id in 0..10 {
+                // Just schedule first 5 agents per planet
                 let _ = engine.schedule(planet_id, agent_id, 1);
             }
         }
 
         // Run the simulation
-        println!("Starting hybrid simulation with {} planets and {} total agents", NUM_PLANETS, TOTAL_AGENTS);
-        
+        println!(
+            "Starting hybrid simulation with {} planets and {} total agents",
+            NUM_PLANETS, TOTAL_AGENTS
+        );
+
         let result = engine.run();
-        
+
         // Verify the simulation ran successfully
-        assert!(result.is_ok(), "Hybrid engine run failed: {:?}", result.err());
-        
+        assert!(
+            result.is_ok(),
+            "Hybrid engine run failed: {:?}",
+            result.err()
+        );
+
         let final_engine = result.unwrap();
-        
+
         // Basic verification that the simulation progressed
         println!("Simulation completed successfully");
-        
+
         // Verify we still have all our planets
         assert_eq!(final_engine.planets.len(), NUM_PLANETS);
-        
+
         // Verify agents are distributed (autobalancing should give roughly equal distribution)
         let mut total_agent_count = 0;
         for (i, planet) in final_engine.planets.iter().enumerate() {
             let agent_count = planet.agents.len();
             total_agent_count += agent_count;
             //println!("Planet {} has {} agents", i, agent_count);
-            
+
             // With perfect autobalancing, each should have AGENTS_PER_PLANET
             // Allow some variance due to integer division
             assert!(agent_count >= AGENTS_PER_PLANET - 1);
             assert!(agent_count <= AGENTS_PER_PLANET + 1);
         }
-        
-        assert_eq!(total_agent_count, TOTAL_AGENTS, "Total agent count mismatch");
-        
-        println!("Test passed: {} agents distributed across {} planets, with {} events per agent", TOTAL_AGENTS, NUM_PLANETS, EVENTS);
+
+        assert_eq!(
+            total_agent_count, TOTAL_AGENTS,
+            "Total agent count mismatch"
+        );
+
+        println!(
+            "Test passed: {} agents distributed across {} planets, with {} events per agent",
+            TOTAL_AGENTS, NUM_PLANETS, EVENTS
+        );
     }
 }

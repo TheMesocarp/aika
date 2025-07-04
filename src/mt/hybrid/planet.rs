@@ -378,11 +378,12 @@ impl<
     }
 
     pub fn run(&mut self) -> Result<(), SimError> {
-        let id = self.context.world_id;
         loop {
             let checkpoint = self.next_checkpoint.load(Ordering::SeqCst);
             let now = self.now();
-            if now == checkpoint && now != (self.time_info.terminal / self.time_info.timestep) as u64 {
+            if now == checkpoint
+                && now != (self.time_info.terminal / self.time_info.timestep) as u64
+            {
                 //println!("world {id} found sleeping");
                 sleep(Duration::from_nanos(100));
                 continue;
@@ -397,7 +398,7 @@ impl<
 
             let step = self.step();
             if let Err(SimError::PastTerminal) = step {
-                break
+                break;
             }
             step?;
         }
@@ -440,10 +441,14 @@ mod planet_tests {
     }
 
     impl ThreadedAgent<16, TestMessage> for BasicTestAgent {
-        fn step(&mut self, _context: &mut PlanetContext<16, TestMessage>, agent_id: usize) -> Event {
+        fn step(
+            &mut self,
+            _context: &mut PlanetContext<16, TestMessage>,
+            agent_id: usize,
+        ) -> Event {
             let time = _context.time;
             self.timeout_count += 1;
-            
+
             if self.timeout_count < self.max_timeouts {
                 Event::new(time, time, agent_id, Action::Timeout(10))
             } else {
@@ -451,7 +456,12 @@ mod planet_tests {
             }
         }
 
-        fn read_message(&mut self, _context: &mut PlanetContext<16, TestMessage>, _msg: Msg<TestMessage>, _agent_id: usize) {
+        fn read_message(
+            &mut self,
+            _context: &mut PlanetContext<16, TestMessage>,
+            _msg: Msg<TestMessage>,
+            _agent_id: usize,
+        ) {
             // Basic agent doesn't process messages
         }
     }
@@ -467,7 +477,7 @@ mod planet_tests {
     impl ThreadedAgent<16, TestMessage> for MessageSenderAgent {
         fn step(&mut self, context: &mut PlanetContext<16, TestMessage>, agent_id: usize) -> Event {
             let time = context.time;
-            
+
             if self.messages_sent < self.max_messages {
                 // Send a local message
                 let msg = Msg::new(
@@ -480,11 +490,11 @@ mod planet_tests {
                     self.id,
                     Some(self.target),
                 );
-                
+
                 // For local messages, we'd need to use the planet's commit_mail
                 // but we don't have direct access here, so we'll use inter-world messaging
                 // In a real scenario, you'd have a method to send local messages
-                
+
                 self.messages_sent += 1;
                 Event::new(time, time, agent_id, Action::Timeout(10))
             } else {
@@ -492,7 +502,12 @@ mod planet_tests {
             }
         }
 
-        fn read_message(&mut self, _context: &mut PlanetContext<16, TestMessage>, _msg: Msg<TestMessage>, _agent_id: usize) {
+        fn read_message(
+            &mut self,
+            _context: &mut PlanetContext<16, TestMessage>,
+            _msg: Msg<TestMessage>,
+            _agent_id: usize,
+        ) {
             // Sender doesn't process messages
         }
     }
@@ -509,7 +524,12 @@ mod planet_tests {
             Event::new(time, time, agent_id, Action::Timeout(1))
         }
 
-        fn read_message(&mut self, _context: &mut PlanetContext<16, TestMessage>, msg: Msg<TestMessage>, _agent_id: usize) {
+        fn read_message(
+            &mut self,
+            _context: &mut PlanetContext<16, TestMessage>,
+            msg: Msg<TestMessage>,
+            _agent_id: usize,
+        ) {
             self.received_messages.push(msg.data);
         }
     }
@@ -524,19 +544,29 @@ mod planet_tests {
     impl ThreadedAgent<16, TestMessage> for TriggerAgent {
         fn step(&mut self, context: &mut PlanetContext<16, TestMessage>, agent_id: usize) -> Event {
             let time = context.time;
-            
+
             if !self.triggered && time >= 10 {
                 self.triggered = true;
-                Event::new(time, time, agent_id, Action::Trigger {
-                    time: self.trigger_time,
-                    idx: self.target,
-                })
+                Event::new(
+                    time,
+                    time,
+                    agent_id,
+                    Action::Trigger {
+                        time: self.trigger_time,
+                        idx: self.target,
+                    },
+                )
             } else {
                 Event::new(time, time, agent_id, Action::Timeout(5))
             }
         }
 
-        fn read_message(&mut self, _context: &mut PlanetContext<16, TestMessage>, _msg: Msg<TestMessage>, _agent_id: usize) {
+        fn read_message(
+            &mut self,
+            _context: &mut PlanetContext<16, TestMessage>,
+            _msg: Msg<TestMessage>,
+            _agent_id: usize,
+        ) {
             // Doesn't process messages
         }
     }
@@ -546,27 +576,27 @@ mod planet_tests {
         let gvt = Arc::new(AtomicU64::new(0));
         let lvt = Arc::new(AtomicU64::new(0));
         let checkpoint = Arc::new(AtomicU64::new(100));
-        
+
         // Create a simple messenger for testing
         let messenger = ThreadedMessenger::<16, Mail<TestMessage>>::new(vec![world_id])?;
         let user = messenger.get_user(world_id)?;
-        
+
         Ok(RegistryOutput::new(gvt, lvt, checkpoint, user, world_id))
     }
 
     #[test]
     fn test_planet_creation() {
         let registry = create_mock_registry(0).unwrap();
-        
+
         let planet = Planet::<16, 128, 2, TestMessage>::create(
-            1000.0,  // terminal
-            1.0,     // timestep
-            50,      // throttle_horizon
-            1024,    // world_arena_size
-            512,     // anti_msg_arena_size
+            1000.0, // terminal
+            1.0,    // timestep
+            50,     // throttle_horizon
+            1024,   // world_arena_size
+            512,    // anti_msg_arena_size
             registry,
         );
-        
+
         assert!(planet.is_ok());
         let planet = planet.unwrap();
         assert_eq!(planet.agents.len(), 0);
@@ -578,15 +608,14 @@ mod planet_tests {
         let registry = create_mock_registry(0).unwrap();
         let agent_state_sizes = vec![256, 256, 256];
         let config = (1024, 512, &agent_state_sizes);
-        
+
         let planet = Planet::<16, 128, 2, TestMessage>::from_config(
-            config,
-            1000.0,  // terminal
-            1.0,     // timestep
-            50,      // throttle_horizon
+            config, 1000.0, // terminal
+            1.0,    // timestep
+            50,     // throttle_horizon
             registry,
         );
-        
+
         assert!(planet.is_ok());
         let planet = planet.unwrap();
         assert_eq!(planet.context.agent_states.len(), 3);
@@ -595,15 +624,15 @@ mod planet_tests {
     #[test]
     fn test_spawn_agent() {
         let registry = create_mock_registry(0).unwrap();
-        let mut planet = Planet::<16, 128, 2, TestMessage>::create(
-            1000.0, 1.0, 50, 1024, 512, registry
-        ).unwrap();
-        
+        let mut planet =
+            Planet::<16, 128, 2, TestMessage>::create(1000.0, 1.0, 50, 1024, 512, registry)
+                .unwrap();
+
         let agent = BasicTestAgent {
             timeout_count: 0,
             max_timeouts: 5,
         };
-        
+
         let agent_id = planet.spawn_agent(Box::new(agent), 256);
         assert_eq!(agent_id, 0);
         assert_eq!(planet.agents.len(), 1);
@@ -615,16 +644,16 @@ mod planet_tests {
         let registry = create_mock_registry(0).unwrap();
         let agent_state_sizes = vec![256];
         let config = (1024, 512, &agent_state_sizes);
-        
-        let mut planet = Planet::<16, 128, 2, TestMessage>::from_config(
-            config, 1000.0, 1.0, 50, registry
-        ).unwrap();
-        
+
+        let mut planet =
+            Planet::<16, 128, 2, TestMessage>::from_config(config, 1000.0, 1.0, 50, registry)
+                .unwrap();
+
         let agent = BasicTestAgent {
             timeout_count: 0,
             max_timeouts: 5,
         };
-        
+
         let agent_id = planet.spawn_agent_preconfigured(Box::new(agent));
         assert_eq!(agent_id, 0);
         assert_eq!(planet.agents.len(), 1);
@@ -633,26 +662,26 @@ mod planet_tests {
     #[test]
     fn test_schedule_event() {
         let registry = create_mock_registry(0).unwrap();
-        let mut planet = Planet::<16, 128, 2, TestMessage>::create(
-            1000.0, 1.0, 50, 1024, 512, registry
-        ).unwrap();
-        
+        let mut planet =
+            Planet::<16, 128, 2, TestMessage>::create(1000.0, 1.0, 50, 1024, 512, registry)
+                .unwrap();
+
         let agent = BasicTestAgent {
             timeout_count: 0,
             max_timeouts: 5,
         };
-        
+
         planet.spawn_agent(Box::new(agent), 256);
-        
+
         // Schedule event at time 10
         let result = planet.schedule(10, 0);
         assert!(result.is_ok());
-        
+
         // Try to schedule in the past (should fail)
         planet.event_system.local_clock.time = 20;
         let result = planet.schedule(5, 0);
         assert!(matches!(result, Err(SimError::TimeTravel)));
-        
+
         // Try to schedule past terminal (should fail)
         let result = planet.schedule(2000, 0);
         assert!(matches!(result, Err(SimError::PastTerminal)));
@@ -661,18 +690,18 @@ mod planet_tests {
     #[test]
     fn test_time_advancement() {
         let registry = create_mock_registry(0).unwrap();
-        let mut planet = Planet::<16, 128, 2, TestMessage>::create(
-            1000.0, 1.0, 50, 1024, 512, registry
-        ).unwrap();
-        
+        let mut planet =
+            Planet::<16, 128, 2, TestMessage>::create(1000.0, 1.0, 50, 1024, 512, registry)
+                .unwrap();
+
         let agent = BasicTestAgent {
             timeout_count: 0,
             max_timeouts: 1,
         };
-        
+
         planet.spawn_agent(Box::new(agent), 256);
         planet.schedule(1, 0).unwrap();
-        
+
         // Step forward
         let initial_time = planet.now();
         let result = planet.step();
@@ -683,20 +712,20 @@ mod planet_tests {
     #[test]
     fn test_rollback() {
         let registry = create_mock_registry(0).unwrap();
-        let mut planet = Planet::<16, 128, 2, TestMessage>::create(
-            1000.0, 1.0, 50, 1024, 512, registry
-        ).unwrap();
-        
+        let mut planet =
+            Planet::<16, 128, 2, TestMessage>::create(1000.0, 1.0, 50, 1024, 512, registry)
+                .unwrap();
+
         // Advance time
         planet.event_system.local_clock.time = 50;
         planet.local_messages.schedule.time = 50;
         planet.context.time = 50;
-        
+
         // Rollback to time 25
         let result = planet.rollback(25);
         assert!(result.is_ok());
         assert_eq!(planet.event_system.local_clock.time, 25);
-        
+
         // Try to rollback to future (should fail)
         let result = planet.rollback(100);
         assert!(matches!(result, Err(SimError::TimeTravel)));
@@ -705,36 +734,36 @@ mod planet_tests {
     #[test]
     fn test_agent_triggering() {
         let registry = create_mock_registry(0).unwrap();
-        let mut planet = Planet::<16, 128, 2, TestMessage>::create(
-            1000.0, 1.0, 50, 1024, 512, registry
-        ).unwrap();
-        
+        let mut planet =
+            Planet::<16, 128, 2, TestMessage>::create(1000.0, 1.0, 50, 1024, 512, registry)
+                .unwrap();
+
         // Create trigger agent
         let trigger_agent = TriggerAgent {
             target: 1,
             trigger_time: 30,
             triggered: false,
         };
-        
+
         // Create target agent
         let target_agent = BasicTestAgent {
             timeout_count: 0,
             max_timeouts: 3,
         };
-        
+
         planet.spawn_agent(Box::new(trigger_agent), 256);
         planet.spawn_agent(Box::new(target_agent), 256);
-        
+
         // Schedule trigger agent
         planet.schedule(1, 0).unwrap();
-        
+
         // Run for a few steps
         for _ in 0..15 {
             if planet.step().is_err() {
                 break;
             }
         }
-        
+
         // The trigger should have fired and scheduled the target
         assert!(planet.now() >= 15);
     }
@@ -743,27 +772,28 @@ mod planet_tests {
     fn test_gvt_throttling() {
         let registry = create_mock_registry(0).unwrap();
         let mut planet = Planet::<16, 128, 2, TestMessage>::create(
-            1000.0, 1.0, 10, 1024, 512, registry  // throttle_horizon = 10
-        ).unwrap();
-        
+            1000.0, 1.0, 10, 1024, 512, registry, // throttle_horizon = 10
+        )
+        .unwrap();
+
         let agent = BasicTestAgent {
             timeout_count: 0,
             max_timeouts: 20,
         };
-        
+
         planet.spawn_agent(Box::new(agent), 256);
         planet.schedule(1, 0).unwrap();
-        
+
         // Set GVT to 0
         planet.gvt.store(0, Ordering::SeqCst);
-        
+
         // Try to advance past throttle horizon
         let mut steps = 0;
         while steps < 15 && planet.now() < 11 {
             let _ = planet.step();
             steps += 1;
         }
-        
+
         // Should be throttled around time 10
         assert!(planet.now() <= 11);
     }
@@ -771,22 +801,22 @@ mod planet_tests {
     #[test]
     fn test_checkpoint_blocking() {
         let registry = create_mock_registry(0).unwrap();
-        let mut planet = Planet::<16, 128, 2, TestMessage>::create(
-            1000.0, 1.0, 50, 1024, 512, registry
-        ).unwrap();
-        
+        let mut planet =
+            Planet::<16, 128, 2, TestMessage>::create(1000.0, 1.0, 50, 1024, 512, registry)
+                .unwrap();
+
         let agent = BasicTestAgent {
             timeout_count: 0,
             max_timeouts: 10,
         };
-        
+
         planet.spawn_agent(Box::new(agent), 256);
         planet.schedule(1, 0).unwrap();
-        
+
         // Set next checkpoint to current time
         planet.next_checkpoint.store(5, Ordering::SeqCst);
         planet.event_system.local_clock.time = 5;
-        
+
         // Step should succeed but simulation would pause at checkpoint in run()
         let result = planet.step();
         // In actual run(), it would sleep at checkpoint
