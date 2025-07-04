@@ -123,8 +123,7 @@ impl HybridConfig {
         for (i, world_size) in self.world_state_asizes.iter().enumerate() {
             if *world_size == 0 {
                 return Err(SimError::ConfigError(format!(
-                    "World {} state size not configured",
-                    i
+                    "World {i} state size not configured"
                 )));
             }
         }
