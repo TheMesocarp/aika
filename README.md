@@ -31,10 +31,6 @@ world.schedule(1, 0)?;
 world.run()?;
 ```
 
-Using the parallel simulators is a bit more complicated and both need more upfront configuration. For the hybrid synchronization simulator in `mt::hybrid`, this would look like:
-
-
-
 ## Contributing
 
 Contributors are welcome and greatly appreciated! Please feel free to submit a Pull Request or claim an issue youd like to work on. For major changes, please open an issue first to discuss what you would like to change. If you would like to work more closely with Mesocarp on other projects as well, please email me at `sushi@fibered.cat`, would love to chat!
