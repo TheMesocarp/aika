@@ -115,15 +115,15 @@ impl<
             });
             planet_handles.push(handle);
         }
-
+        println!("awaiting threads...");
         let mut final_planets = Vec::new();
         for handle in planet_handles {
             let planet = handle.join().map_err(|_| SimError::ThreadPanic)??;
             final_planets.push(planet);
         }
-
+        println!("closed planets");
         let final_galaxy = galaxy_handle.join().map_err(|_| SimError::ThreadPanic)??;
-
+        println!("closed galaxy");
         Ok(Self {
             galaxy: final_galaxy,
             planets: final_planets,
@@ -134,7 +134,6 @@ impl<
 
 #[cfg(test)]
 mod hybrid_engine_tests {
-    use super::*;
     use crate::{
         agents::{PlanetContext, ThreadedAgent},
         event::{Action, Event},
@@ -154,13 +153,11 @@ mod hybrid_engine_tests {
     unsafe impl Zeroable for TestData {}
 
     // Simple agent that just schedules timeouts (similar to st::World TestAgent)
-    struct SimpleSchedulingAgent {
-        pub id: usize,
-    }
+    struct SimpleSchedulingAgent {}
 
     impl SimpleSchedulingAgent {
-        pub fn new(id: usize) -> Self {
-            SimpleSchedulingAgent { id }
+        pub fn new() -> Self {
+            SimpleSchedulingAgent {}
         }
     }
 
@@ -179,18 +176,18 @@ mod hybrid_engine_tests {
     #[test]
     fn test_hybrid_engine_basic_run() {
         // Configuration
-        const NUM_PLANETS: usize = 15;
+        const NUM_PLANETS: usize = 14;
         const AGENTS_PER_PLANET: usize = 100;
         const TOTAL_AGENTS: usize = NUM_PLANETS * AGENTS_PER_PLANET;
-        
+        const EVENTS: u64 = 100000;
         // Create configuration
-        let config = HybridConfig::new(NUM_PLANETS, 128)  // 512 bytes for anti-message arena
-            .with_time_bounds(1000.0, 1.0)  // terminal=1000, timestep=1.0
+        let config = HybridConfig::new(NUM_PLANETS, 16)  // 512 bytes for anti-message arena
+            .with_time_bounds(EVENTS as f64, 1.0)  // terminal=1000, timestep=1.0
             .with_optimistic_sync(50, 100)   // throttle_horizon=50, checkpoint_frequency=100
             .with_uniform_worlds(
-                256,  // world state arena size
+                16,  // world state arena size
                 AGENTS_PER_PLANET,
-                256    // agent state arena size
+                16    // agent state arena size
             );
 
         // Validate config
@@ -198,11 +195,11 @@ mod hybrid_engine_tests {
         assert_eq!(config.total_agents(), TOTAL_AGENTS);
 
         // Create the hybrid engine
-        let mut engine = HybridEngine::<128, 128, 2, TestData>::create(config).unwrap();
+        let mut engine = HybridEngine::<128, 128, 1, TestData>::create(config).unwrap();
 
         // Spawn agents using autobalancing
-        for i in 0..TOTAL_AGENTS {
-            let agent = SimpleSchedulingAgent::new(i);
+        for _i in 0..TOTAL_AGENTS {
+            let agent = SimpleSchedulingAgent::new();
             engine.spawn_agent_autobalance(Box::new(agent)).unwrap();
         }
 
@@ -210,7 +207,7 @@ mod hybrid_engine_tests {
         // Each planet should have approximately AGENTS_PER_PLANET agents due to autobalancing
         for planet_id in 0..NUM_PLANETS {
             // Schedule first few agents in each planet to start at time 1
-            for agent_id in 0..5 {  // Just schedule first 5 agents per planet
+            for agent_id in 0..10 {  // Just schedule first 5 agents per planet
                 let _ = engine.schedule(planet_id, agent_id, 1);
             }
         }
@@ -236,7 +233,7 @@ mod hybrid_engine_tests {
         for (i, planet) in final_engine.planets.iter().enumerate() {
             let agent_count = planet.agents.len();
             total_agent_count += agent_count;
-            println!("Planet {} has {} agents", i, agent_count);
+            //println!("Planet {} has {} agents", i, agent_count);
             
             // With perfect autobalancing, each should have AGENTS_PER_PLANET
             // Allow some variance due to integer division
@@ -246,6 +243,6 @@ mod hybrid_engine_tests {
         
         assert_eq!(total_agent_count, TOTAL_AGENTS, "Total agent count mismatch");
         
-        println!("Test passed: {} agents distributed across {} planets", TOTAL_AGENTS, NUM_PLANETS);
+        println!("Test passed: {} agents distributed across {} planets, with {} events per agent", TOTAL_AGENTS, NUM_PLANETS, EVENTS);
     }
 }

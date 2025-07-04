@@ -370,30 +370,38 @@ impl<
         if self.time_info.terminal <= self.time_info.timestep * load as f64 {
             return Err(SimError::PastTerminal);
         }
+        let gvt = self.gvt.load(Ordering::Acquire);
+        if gvt as f64 * self.time_info.timestep >= self.time_info.terminal {
+            return Err(SimError::PastTerminal);
+        }
         Ok(())
     }
 
     pub fn run(&mut self) -> Result<(), SimError> {
-        let mut flag = false;
-        while !flag {
+        let id = self.context.world_id;
+        loop {
             let checkpoint = self.next_checkpoint.load(Ordering::SeqCst);
-            if self.now() == checkpoint {
+            let now = self.now();
+            if now == checkpoint && now != (self.time_info.terminal / self.time_info.timestep) as u64 {
+                //println!("world {id} found sleeping");
                 sleep(Duration::from_nanos(100));
                 continue;
             }
             let gvt = self.gvt.load(Ordering::SeqCst);
+            //println!("world {id} found gvt {gvt}, has local time {now}");
             if gvt + self.throttle_horizon < self.now() {
+                //println!("world {id} found sleeping");
                 sleep(Duration::from_nanos(100));
                 continue;
             }
 
             let step = self.step();
             if let Err(SimError::PastTerminal) = step {
-                flag = true;
-                continue;
+                break
             }
             step?;
         }
+        //println!("made it here for planet {id}, almost done");
         Ok(())
     }
 }
@@ -427,7 +435,6 @@ mod planet_tests {
 
     // Basic test agent that just schedules timeouts
     struct BasicTestAgent {
-        id: usize,
         timeout_count: usize,
         max_timeouts: usize,
     }
@@ -509,7 +516,6 @@ mod planet_tests {
 
     // Agent that triggers other agents
     struct TriggerAgent {
-        id: usize,
         target: usize,
         trigger_time: u64,
         triggered: bool,
@@ -594,7 +600,6 @@ mod planet_tests {
         ).unwrap();
         
         let agent = BasicTestAgent {
-            id: 0,
             timeout_count: 0,
             max_timeouts: 5,
         };
@@ -616,7 +621,6 @@ mod planet_tests {
         ).unwrap();
         
         let agent = BasicTestAgent {
-            id: 0,
             timeout_count: 0,
             max_timeouts: 5,
         };
@@ -634,7 +638,6 @@ mod planet_tests {
         ).unwrap();
         
         let agent = BasicTestAgent {
-            id: 0,
             timeout_count: 0,
             max_timeouts: 5,
         };
@@ -663,7 +666,6 @@ mod planet_tests {
         ).unwrap();
         
         let agent = BasicTestAgent {
-            id: 0,
             timeout_count: 0,
             max_timeouts: 1,
         };
@@ -709,7 +711,6 @@ mod planet_tests {
         
         // Create trigger agent
         let trigger_agent = TriggerAgent {
-            id: 0,
             target: 1,
             trigger_time: 30,
             triggered: false,
@@ -717,7 +718,6 @@ mod planet_tests {
         
         // Create target agent
         let target_agent = BasicTestAgent {
-            id: 1,
             timeout_count: 0,
             max_timeouts: 3,
         };
@@ -747,7 +747,6 @@ mod planet_tests {
         ).unwrap();
         
         let agent = BasicTestAgent {
-            id: 0,
             timeout_count: 0,
             max_timeouts: 20,
         };
@@ -777,7 +776,6 @@ mod planet_tests {
         ).unwrap();
         
         let agent = BasicTestAgent {
-            id: 0,
             timeout_count: 0,
             max_timeouts: 10,
         };

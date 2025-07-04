@@ -4,7 +4,7 @@ use std::sync::{
 };
 
 use bytemuck::{Pod, Zeroable};
-use mesocarp::comms::mailbox::ThreadedMessenger;
+use mesocarp::{comms::mailbox::ThreadedMessenger, scheduling::Scheduleable, MesoError};
 
 use crate::{messages::Mail, mt::hybrid::planet::RegistryOutput, st::TimeInfo, SimError};
 
@@ -73,20 +73,30 @@ impl<
     }
 
     fn deliver_the_mail(&mut self) -> Result<u64, SimError> {
-        let maybe = self.messenger.poll()?;
-        let mut lowest = usize::MAX;
-        for (time, _) in &maybe {
-            if *time < lowest {
-                lowest = *time;
-            }
+        match self.messenger.poll() {
+            Ok(msgs) => {
+                let mut lowest = u64::MAX;
+                for (_, mail) in &msgs {
+                    let time = mail.transfer.commit_time();
+                    if time < lowest {
+                        lowest = time;
+                    }
+                }
+                self.messenger.deliver(msgs)?;
+                Ok(lowest)
+            },
+            Err(err) => if let MesoError::NoDirectCommsToShare = err {
+                Ok(u64::MAX)
+            } else {
+                return Err(SimError::MesoError(err))
+            },
         }
-        self.messenger.deliver(maybe)?;
-        Ok(lowest as u64)
     }
 
     fn recalc_gvt(&mut self, in_transit_floor: u64) -> Result<(), SimError> {
         // Samadi's is nice but i need something compatible with checkpointing
         let new_time = self.gvt.load(Ordering::Acquire);
+        //println!("current gvt: {new_time}");
         let mut lowest = u64::MAX;
         for local in &self.lvts {
             let load = local.load(Ordering::Acquire);
@@ -100,6 +110,7 @@ impl<
         if new_time > lowest {
             return Err(SimError::TimeTravel);
         }
+        //println!("new_gvt: {lowest}");
         self.gvt.store(lowest, Ordering::Release);
         Ok(())
     }
@@ -135,6 +146,7 @@ impl<
             }
             std::thread::yield_now();
         }
+        println!("ended galaxy thread");
         Ok(())
     }
 }
