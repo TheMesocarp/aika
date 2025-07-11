@@ -1,10 +1,10 @@
 //! Central coordinator managing global virtual time (GVT) and checkpointing across planets.
 //! The `Galaxy` handles inter-planetary message delivery, GVT calculation, and throttling to
 //! maintain causality constraints in the optimistic parallel simulation.
-use std::sync::{
+use std::{sync::{
     atomic::{AtomicU64, Ordering},
     Arc,
-};
+}, time::Duration};
 
 use bytemuck::{Pod, Zeroable};
 use mesocarp::{comms::mailbox::ThreadedMessenger, scheduling::Scheduleable, MesoError};
@@ -104,19 +104,26 @@ impl<
         let new_time = self.gvt.load(Ordering::Acquire);
         //println!("current gvt: {new_time}");
         let mut lowest = u64::MAX;
+        let mut all = Vec::new();
         for local in &self.lvts {
             let load = local.load(Ordering::Acquire);
-            if load < lowest {
-                lowest = load;
-            }
+            all.push(load);
+        }
+        let check = self.next_checkpoint.load(Ordering::Acquire);
+        if all.iter().all(|x| *x == check ) {
+            lowest = check;
         }
         if in_transit_floor < lowest {
             lowest = in_transit_floor;
         }
+        //println!("new_gvt: {lowest}");
         if new_time > lowest {
+            println!("local clocks: {:?}, gvt: {new_time}, lowest: {lowest}", all);
             return Err(AikaError::TimeTravel);
         }
-        //println!("new_gvt: {lowest}");
+        if lowest == u64::MAX {
+            return Ok(());
+        }
         self.gvt.store(lowest, Ordering::Release);
         Ok(())
     }
@@ -129,6 +136,7 @@ impl<
 
     pub fn gvt_daemon(&mut self) -> Result<(), AikaError> {
         loop {
+            std::thread::sleep(Duration::from_nanos(30));
             self.check_mail_and_gvt()?;
 
             let current_gvt = self.gvt.load(Ordering::Acquire);

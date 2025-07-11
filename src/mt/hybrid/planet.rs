@@ -236,7 +236,9 @@ impl<
 
         self.event_system.local_clock = Clock::new()?;
         self.event_system.local_clock.set_time(time);
-        println!("rolling back! {:?}", self.context.world_id);
+
+        self.local_time.store(time, Ordering::Release);
+        //println!("ROLLBACK!!!!! rolling back! {:?}", self.context.world_id);
         Ok(())
     }
 
@@ -392,6 +394,7 @@ impl<
 
     /// Run the `Planet` optimistically.
     pub fn run(&mut self) -> Result<(), AikaError> {
+        //let id = self.context.world_id;
         loop {
             let checkpoint = self.next_checkpoint.load(Ordering::SeqCst);
             let now = self.now();

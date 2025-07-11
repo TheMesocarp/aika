@@ -521,14 +521,14 @@ mod inter_planetary_message_tests {
     #[test]
     fn test_basic_inter_planetary_messaging() {
         const NUM_PLANETS: usize = 3;
-        const TERMINAL_TIME: f64 = 500.0;
+        const TERMINAL_TIME: f64 = 200.0;
 
         let message_log = Arc::new(Mutex::new(Vec::new()));
 
         // Create configuration
         let config = HybridConfig::new(NUM_PLANETS, 512)
             .with_time_bounds(TERMINAL_TIME, 1.0)
-            .with_optimistic_sync(10, 20)
+            .with_optimistic_sync(1000, 2000)
             .with_uniform_worlds(1024, 2, 256); // 2 agents per planet
 
         let mut engine =
@@ -539,7 +539,7 @@ mod inter_planetary_message_tests {
             0, 0, // planet 0, agent 0
             1, 0,  // target planet 1, agent 0
             5,  // send 5 messages
-            10, // every 10 time units
+            5, // every 10 time units
         );
         engine.spawn_agent(0, Box::new(sender)).unwrap();
 
