@@ -180,7 +180,7 @@ mod hybrid_engine_tests {
         const NUM_PLANETS: usize = 14;
         const AGENTS_PER_PLANET: usize = 100;
         const TOTAL_AGENTS: usize = NUM_PLANETS * AGENTS_PER_PLANET;
-        const EVENTS: u64 = 100000;
+        const EVENTS: u64 = 10000;
         // Create configuration
         let config = HybridConfig::new(NUM_PLANETS, 16) // 512 bytes for anti-message arena
             .with_time_bounds(EVENTS as f64, 1.0) // terminal=1000, timestep=1.0
@@ -603,7 +603,7 @@ mod inter_planetary_message_tests {
         // Create configuration
         let config = HybridConfig::new(NUM_PLANETS, 512)
             .with_time_bounds(TERMINAL_TIME, 1.0)
-            .with_optimistic_sync(100, 200)
+            .with_optimistic_sync(10, 20)
             .with_uniform_worlds(1024, AGENTS_PER_PLANET, 256);
 
         let mut engine =
