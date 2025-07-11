@@ -14,7 +14,6 @@ use mesocarp::{
 
 use crate::AikaError;
 
-
 /// A `Msg` is a direct message between two entities that shares a piece of data of type T
 #[derive(Copy, Clone, Debug)]
 pub struct Msg<T: Clone> {

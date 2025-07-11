@@ -31,7 +31,7 @@ impl<
         const CLOCK_HEIGHT: usize,
         MessageType: Pod + Zeroable + Clone,
     > HybridEngine<INTER_SLOTS, CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>
-{   
+{
     /// Create a new synchronization engine from the provided config.
     pub fn create(config: HybridConfig) -> Result<Self, AikaError> {
         let mut galaxy = Galaxy::new(

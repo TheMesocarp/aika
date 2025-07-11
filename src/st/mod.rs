@@ -51,7 +51,7 @@ impl<
         const CLOCK_HEIGHT: usize,
         MessageType: Clone,
     > World<MESSAGE_SLOTS, CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>
-{   
+{
     /// Initialize a new world with the provided time information and world state arena allocation size
     pub fn init(terminal: f64, timestep: f64, world_arena_size: usize) -> Result<Self, AikaError> {
         let event_system = LocalEventSystem::<CLOCK_SLOTS, CLOCK_HEIGHT>::new()?;

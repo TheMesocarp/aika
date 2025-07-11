@@ -106,7 +106,7 @@ pub trait Agent<const SLOTS: usize, T: Message> {
     fn step(&mut self, context: &mut WorldContext<SLOTS, T>, agent_id: usize) -> Event;
 }
 
-/// A `ThreadedAgent` is an independent logical process that belongs to a `Planet` and can schedule events, 
+/// A `ThreadedAgent` is an independent logical process that belongs to a `Planet` and can schedule events,
 /// send messages, and interact with that `Planet`'s `PlanetContext`.
 pub trait ThreadedAgent<const SLOTS: usize, MessageType: Pod + Zeroable + Clone> {
     fn step(&mut self, context: &mut PlanetContext<SLOTS, MessageType>, agent_id: usize) -> Event;

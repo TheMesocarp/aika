@@ -1,5 +1,5 @@
 //! # Aika
-//! 
+//!
 //! A Rust-native coordination layer for multi-agent systems supporting single-threaded and
 //! multi-threaded execution. Built on discrete event simulation principles from the 1980s-90s.
 //!
@@ -9,7 +9,7 @@
 //! ```rust,no_run
 //! use aika::st::World;
 //! use aika::agents::Agent;
-//! 
+//!
 //! let mut world = World::<8, 128, 1, u8>::init(1000.0, 1.0, 0)?;
 //! let agent = MyAgent::new();
 //! world.spawn_agent(Box::new(agent));
@@ -22,7 +22,7 @@
 //! ### Multi-threaded hybrid simulation
 //! ```rust,no_run
 //! use aika::mt::hybrid::{HybridEngine, config::HybridConfig};
-//! 
+//!
 //! let config = HybridConfig::new(4, 512)
 //!     .with_time_bounds(1000.0, 1.0)
 //!     .with_optimistic_sync(50, 100)
@@ -36,7 +36,7 @@
 //! ## Architecture
 //!
 //! - [`st`] - Single-threaded discrete event simulation
-//! - [`mt::hybrid`] - Multi-threaded optimistic synchronization 
+//! - [`mt::hybrid`] - Multi-threaded optimistic synchronization
 //! - [`agents`] - Agent traits and execution contexts
 //! - [`objects`] - Core simulation data structures
 
@@ -49,9 +49,9 @@ pub mod objects;
 pub mod st;
 
 pub mod prelude {
+    pub use crate::agents::{Agent, AgentSupport, PlanetContext, ThreadedAgent, WorldContext};
+    pub use crate::objects::{Action, AntiMsg, Event, Msg};
     pub use crate::AikaError;
-    pub use crate::agents::{Agent, ThreadedAgent, WorldContext, PlanetContext, AgentSupport};
-    pub use crate::objects::{Action, Event, Msg, AntiMsg};
     pub use bytemuck::{Pod, Zeroable};
 }
 
