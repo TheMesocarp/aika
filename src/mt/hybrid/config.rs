@@ -1,4 +1,7 @@
-use crate::SimError;
+//! Configuration management for hybrid multi-threaded simulations.
+//! Provides `HybridConfig` for specifying world counts, memory arena sizes, synchronization
+//! parameters, and agent distribution across planets with validation and helper methods.
+use crate::AikaError;
 
 #[derive(Debug, Clone)]
 pub struct HybridConfig {
@@ -51,9 +54,9 @@ impl HybridConfig {
         world_id: usize,
         world_state_size: usize,
         agent_state_sizes: Vec<usize>,
-    ) -> Result<Self, SimError> {
+    ) -> Result<Self, AikaError> {
         if world_id >= self.number_of_worlds {
-            return Err(SimError::InvalidWorldId(world_id));
+            return Err(AikaError::InvalidWorldId(world_id));
         }
 
         self.world_state_asizes[world_id] = world_state_size;
@@ -78,9 +81,9 @@ impl HybridConfig {
         mut self,
         world_id: usize,
         agent_state_size: usize,
-    ) -> Result<Self, SimError> {
+    ) -> Result<Self, AikaError> {
         if world_id >= self.number_of_worlds {
-            return Err(SimError::InvalidWorldId(world_id));
+            return Err(AikaError::InvalidWorldId(world_id));
         }
 
         self.agent_states_asizes[world_id].push(agent_state_size);
@@ -95,27 +98,27 @@ impl HybridConfig {
     }
 
     /// Validate that all required fields have been configured
-    pub fn validate(&self) -> Result<(), SimError> {
+    pub fn validate(&self) -> Result<(), AikaError> {
         if self.terminal <= 0.0 {
-            return Err(SimError::ConfigError(
+            return Err(AikaError::ConfigError(
                 "Terminal time must be positive".to_string(),
             ));
         }
 
         if self.timestep <= 0.0 {
-            return Err(SimError::ConfigError(
+            return Err(AikaError::ConfigError(
                 "Timestep must be positive".to_string(),
             ));
         }
 
         if self.throttle_horizon == 0 {
-            return Err(SimError::ConfigError(
+            return Err(AikaError::ConfigError(
                 "Throttle horizon must be set".to_string(),
             ));
         }
 
         if self.checkpoint_frequency == 0 {
-            return Err(SimError::ConfigError(
+            return Err(AikaError::ConfigError(
                 "Checkpoint frequency must be set".to_string(),
             ));
         }
@@ -123,7 +126,7 @@ impl HybridConfig {
         // Check that all worlds have been configured
         for (i, world_size) in self.world_state_asizes.iter().enumerate() {
             if *world_size == 0 {
-                return Err(SimError::ConfigError(format!(
+                return Err(AikaError::ConfigError(format!(
                     "World {i} state size not configured"
                 )));
             }
@@ -133,9 +136,9 @@ impl HybridConfig {
     }
 
     /// Get configuration for a specific world
-    pub fn world_config(&self, world_id: usize) -> Result<(usize, usize, &Vec<usize>), SimError> {
+    pub fn world_config(&self, world_id: usize) -> Result<(usize, usize, &Vec<usize>), AikaError> {
         if world_id >= self.number_of_worlds {
-            return Err(SimError::InvalidWorldId(world_id));
+            return Err(AikaError::InvalidWorldId(world_id));
         }
         Ok((
             self.world_state_asizes[world_id],

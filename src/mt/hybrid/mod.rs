@@ -1,17 +1,19 @@
-//! `aika::mt::hybrid` contains the infrastructure for running hybrid synchronization
-
+//! Hybrid synchronization engine for multi-threaded discrete event simulation.
+//! Implements a modified Clustered Time Warp protocol with `HybridEngine` coordinating multiple
+//! `Planet` instances, supporting inter-planetary messaging with optimistic execution and rollback.
 use bytemuck::{Pod, Zeroable};
 
 use crate::{
     agents::ThreadedAgent,
     mt::hybrid::{config::HybridConfig, galaxy::Galaxy, planet::Planet},
-    SimError,
+    AikaError,
 };
 
 pub mod config;
 pub mod galaxy;
 pub mod planet;
 
+/// Hybrid synchronization engine for multi-threaded execution environments.
 pub struct HybridEngine<
     const INTER_SLOTS: usize,
     const CLOCK_SLOTS: usize,
@@ -30,7 +32,8 @@ impl<
         MessageType: Pod + Zeroable + Clone,
     > HybridEngine<INTER_SLOTS, CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>
 {
-    pub fn create(config: HybridConfig) -> Result<Self, SimError> {
+    /// Create a new synchronization engine from the provided config.
+    pub fn create(config: HybridConfig) -> Result<Self, AikaError> {
         let mut galaxy = Galaxy::new(
             config.number_of_worlds,
             config.throttle_horizon,
@@ -57,22 +60,24 @@ impl<
         })
     }
 
+    /// Spawn a `ThreadedAgent` on a specific `Planet`.
     pub fn spawn_agent(
         &mut self,
         planet_id: usize,
         agent: Box<dyn ThreadedAgent<INTER_SLOTS, MessageType>>,
-    ) -> Result<(), SimError> {
+    ) -> Result<(), AikaError> {
         if planet_id >= self.planets.len() {
-            return Err(SimError::InvalidWorldId(planet_id));
+            return Err(AikaError::InvalidWorldId(planet_id));
         }
         self.planets[planet_id].spawn_agent_preconfigured(agent);
         Ok(())
     }
 
+    /// Spawn a `ThreadedAgent` on any `Planet`
     pub fn spawn_agent_autobalance(
         &mut self,
         agent: Box<dyn ThreadedAgent<INTER_SLOTS, MessageType>>,
-    ) -> Result<(), SimError> {
+    ) -> Result<(), AikaError> {
         let mut lowest = (usize::MAX, usize::MAX);
         for (i, planet) in self.planets.iter().enumerate() {
             let count = planet.agents.len();
@@ -84,19 +89,21 @@ impl<
         Ok(())
     }
 
+    /// Schedule a step() event for a particular `ThreadedAgent` on a given `Planet`.
     pub fn schedule(
         &mut self,
         planet_id: usize,
         agent_id: usize,
         time: u64,
-    ) -> Result<(), SimError> {
+    ) -> Result<(), AikaError> {
         if planet_id >= self.planets.len() {
-            return Err(SimError::InvalidWorldId(planet_id));
+            return Err(AikaError::InvalidWorldId(planet_id));
         }
         self.planets[planet_id].schedule(time, agent_id)
     }
 
-    pub fn run(self) -> Result<Self, SimError> {
+    /// Run synchronization engine.
+    pub fn run(self) -> Result<Self, AikaError> {
         let HybridEngine {
             galaxy,
             planets,
@@ -117,10 +124,10 @@ impl<
         }
         let mut final_planets = Vec::new();
         for handle in planet_handles {
-            let planet = handle.join().map_err(|_| SimError::ThreadPanic)??;
+            let planet = handle.join().map_err(|_| AikaError::ThreadPanic)??;
             final_planets.push(planet);
         }
-        let final_galaxy = galaxy_handle.join().map_err(|_| SimError::ThreadPanic)??;
+        let final_galaxy = galaxy_handle.join().map_err(|_| AikaError::ThreadPanic)??;
         Ok(Self {
             galaxy: final_galaxy,
             planets: final_planets,
@@ -340,7 +347,7 @@ mod inter_planetary_message_tests {
                 let msg = Msg::new(
                     message_data,
                     time,                    // sent time
-                    time + 20,               // receive time (delayed)
+                    time - 1,                // receive time (delayed)
                     agent_id,                // from agent
                     Some(self.target_agent), // to specific agent
                 );
@@ -353,7 +360,7 @@ mod inter_planetary_message_tests {
                         "Planet {} Agent {} sent message {} to Planet {} Agent {}",
                         self.planet_id,
                         self.agent_id,
-                        self.messages_sent - 1,
+                        self.messages_sent,
                         self.target_planet,
                         self.target_agent
                     );
@@ -514,14 +521,14 @@ mod inter_planetary_message_tests {
     #[test]
     fn test_basic_inter_planetary_messaging() {
         const NUM_PLANETS: usize = 3;
-        const TERMINAL_TIME: f64 = 500.0;
+        const TERMINAL_TIME: f64 = 200.0;
 
         let message_log = Arc::new(Mutex::new(Vec::new()));
 
         // Create configuration
         let config = HybridConfig::new(NUM_PLANETS, 512)
             .with_time_bounds(TERMINAL_TIME, 1.0)
-            .with_optimistic_sync(100, 200)
+            .with_optimistic_sync(1000, 2000)
             .with_uniform_worlds(1024, 2, 256); // 2 agents per planet
 
         let mut engine =
@@ -530,9 +537,9 @@ mod inter_planetary_message_tests {
         // Planet 0: Sender agent
         let sender = InterPlanetarySender::new(
             0, 0, // planet 0, agent 0
-            1, 0,  // target planet 1, agent 0
-            5,  // send 5 messages
-            10, // every 10 time units
+            1, 0, // target planet 1, agent 0
+            5, // send 5 messages
+            1, // every 10 time units
         );
         engine.spawn_agent(0, Box::new(sender)).unwrap();
 
@@ -603,7 +610,7 @@ mod inter_planetary_message_tests {
         // Create configuration
         let config = HybridConfig::new(NUM_PLANETS, 512)
             .with_time_bounds(TERMINAL_TIME, 1.0)
-            .with_optimistic_sync(10, 20)
+            .with_optimistic_sync(100, 200)
             .with_uniform_worlds(1024, AGENTS_PER_PLANET, 256);
 
         let mut engine =
