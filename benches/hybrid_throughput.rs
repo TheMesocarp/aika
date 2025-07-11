@@ -6,8 +6,8 @@ use criterion::{criterion_group, criterion_main, Criterion};
 // Ensure these paths are correct relative to your project structure
 use aika::{
     agents::{PlanetContext, ThreadedAgent},
-    objects::{Msg, Action, Event},
     mt::hybrid::{config::HybridConfig, HybridEngine},
+    objects::{Action, Event, Msg},
 };
 use bytemuck::{Pod, Zeroable};
 

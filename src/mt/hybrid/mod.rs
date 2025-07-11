@@ -133,8 +133,8 @@ impl<
 mod hybrid_engine_tests {
     use crate::{
         agents::{PlanetContext, ThreadedAgent},
-        objects::{Msg, Action, Event},
         mt::hybrid::{config::HybridConfig, HybridEngine},
+        objects::{Action, Event, Msg},
     };
     use bytemuck::{Pod, Zeroable};
 
@@ -264,8 +264,8 @@ mod hybrid_engine_tests {
 mod inter_planetary_message_tests {
     use crate::{
         agents::{PlanetContext, ThreadedAgent},
-        objects::{Action, Event, Msg},
         mt::hybrid::{config::HybridConfig, HybridEngine},
+        objects::{Action, Event, Msg},
     };
     use bytemuck::{Pod, Zeroable};
     use std::sync::{Arc, Mutex};
@@ -670,8 +670,7 @@ mod inter_planetary_message_tests {
             assert_eq!(
                 planet_broadcasts.len(),
                 9,
-                "Planet {} should have received 9 broadcast messages (3 broadcasts * 3 agents)",
-                planet
+                "Planet {planet} should have received 9 broadcast messages (3 broadcasts * 3 agents)"
             );
         }
     }
@@ -938,7 +937,7 @@ mod inter_planetary_message_tests {
         let log = message_log.lock().unwrap();
         let received_values: Vec<u32> = log.iter().map(|(_, _, msg)| msg.value).collect();
 
-        println!("Received values: {:?}", received_values);
+        println!("Received values: {received_values:?}");
 
         // Messages should be received in order despite being sent in batches
         for i in 1..received_values.len() {
@@ -984,8 +983,7 @@ mod inter_planetary_message_tests {
                     let result = context.send_mail(msg, 99);
                     if result.is_err() {
                         println!(
-                            "Expected error when sending to non-existent planet: {:?}",
-                            result
+                            "Expected error when sending to non-existent planet: {result:?}"
                         );
                     }
 

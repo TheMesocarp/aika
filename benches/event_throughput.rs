@@ -1,6 +1,6 @@
 use aika::{
     agents::{Agent, WorldContext},
-    objects::{Msg, Action, Event},
+    objects::{Action, Event, Msg},
     st::World,
 };
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};

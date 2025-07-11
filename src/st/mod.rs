@@ -2,7 +2,7 @@ use mesocarp::comms::mailbox::ThreadedMessenger;
 
 use crate::{
     agents::{Agent, AgentSupport, WorldContext},
-    objects::{Msg, Action, Event, LocalEventSystem},
+    objects::{Action, Event, LocalEventSystem, Msg},
     SimError,
 };
 

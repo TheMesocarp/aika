@@ -6,7 +6,7 @@ use std::sync::{
 use bytemuck::{Pod, Zeroable};
 use mesocarp::{comms::mailbox::ThreadedMessenger, scheduling::Scheduleable, MesoError};
 
-use crate::{objects::Mail, mt::hybrid::planet::RegistryOutput, st::TimeInfo, SimError};
+use crate::{mt::hybrid::planet::RegistryOutput, objects::Mail, st::TimeInfo, SimError};
 
 pub struct Galaxy<
     const INTER_SLOTS: usize,

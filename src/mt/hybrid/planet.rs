@@ -18,7 +18,7 @@ use mesocarp::{
 
 use crate::{
     agents::{PlanetContext, ThreadedAgent},
-    objects::{AntiMsg, LocalMailSystem, Mail, Msg, Transfer, Action, Event, LocalEventSystem},
+    objects::{Action, AntiMsg, Event, LocalEventSystem, LocalMailSystem, Mail, Msg, Transfer},
     st::TimeInfo,
     SimError,
 };
@@ -416,8 +416,8 @@ mod planet_tests {
     use super::*;
     use crate::{
         agents::{PlanetContext, ThreadedAgent},
-        objects::{Mail, Msg, Action, Event},
         mt::hybrid::planet::{Planet, RegistryOutput},
+        objects::{Action, Event, Mail, Msg},
     };
     use bytemuck::{Pod, Zeroable};
     use mesocarp::comms::mailbox::ThreadedMessenger;
