@@ -685,7 +685,7 @@ mod inter_planetary_message_tests {
         // Create configuration
         let config = HybridConfig::new(NUM_PLANETS, 512)
             .with_time_bounds(TERMINAL_TIME, 1.0)
-            .with_optimistic_sync(100, 200)
+            .with_optimistic_sync(15, 20)
             .with_uniform_worlds(1024, 2, 256);
 
         let mut engine =
