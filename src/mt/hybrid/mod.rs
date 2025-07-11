@@ -982,9 +982,7 @@ mod inter_planetary_message_tests {
                     // This should fail gracefully
                     let result = context.send_mail(msg, 99);
                     if result.is_err() {
-                        println!(
-                            "Expected error when sending to non-existent planet: {result:?}"
-                        );
+                        println!("Expected error when sending to non-existent planet: {result:?}");
                     }
 
                     self.attempts += 1;
