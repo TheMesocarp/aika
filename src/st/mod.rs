@@ -2,12 +2,11 @@ use mesocarp::comms::mailbox::ThreadedMessenger;
 
 use crate::{
     agents::{Agent, AgentSupport, WorldContext},
-    event::{Action, Event, LocalEventSystem},
-    messages::Msg,
+    objects::{Action, Event, LocalEventSystem, Msg},
     SimError,
 };
 
-pub struct TimeInfo {
+pub(crate) struct TimeInfo {
     pub timestep: f64,
     pub terminal: f64,
 }
@@ -23,7 +22,7 @@ pub struct World<
     pub world_context: WorldContext<MESSAGE_SLOTS, Msg<MessageType>>,
     mailbox: Option<ThreadedMessenger<MESSAGE_SLOTS, Msg<MessageType>>>,
     event_system: LocalEventSystem<CLOCK_SLOTS, CLOCK_HEIGHT>,
-    pub time_info: TimeInfo,
+    time_info: TimeInfo,
 }
 
 unsafe impl<
@@ -94,6 +93,10 @@ impl<
     #[inline(always)]
     pub fn now(&self) -> u64 {
         self.event_system.local_clock.time
+    }
+
+    pub fn time_info(&self) -> (f64, f64) {
+        (self.time_info.timestep, self.time_info.terminal)
     }
 
     /// Schedule an event for an agent at a given time.

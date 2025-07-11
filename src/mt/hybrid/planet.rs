@@ -18,8 +18,7 @@ use mesocarp::{
 
 use crate::{
     agents::{PlanetContext, ThreadedAgent},
-    event::{Action, Event, LocalEventSystem},
-    messages::{AntiMsg, LocalMailSystem, Mail, Msg, Transfer},
+    objects::{Action, AntiMsg, Event, LocalEventSystem, LocalMailSystem, Mail, Msg, Transfer},
     st::TimeInfo,
     SimError,
 };
@@ -58,7 +57,7 @@ pub struct Planet<
 > {
     pub agents: Vec<Box<dyn ThreadedAgent<INTER_SLOTS, MessageType>>>,
     pub context: PlanetContext<INTER_SLOTS, MessageType>,
-    pub time_info: TimeInfo,
+    time_info: TimeInfo,
     event_system: LocalEventSystem<CLOCK_SLOTS, CLOCK_HEIGHT>,
     local_messages: LocalMailSystem<CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>,
     gvt: Arc<AtomicU64>,
@@ -177,6 +176,10 @@ impl<
         self.event_system.local_clock.time
     }
 
+    pub fn time_info(&self) -> (f64, f64) {
+        (self.time_info.timestep, self.time_info.terminal)
+    }
+
     pub fn spawn_agent(
         &mut self,
         agent: Box<dyn ThreadedAgent<INTER_SLOTS, MessageType>>,
@@ -224,6 +227,7 @@ impl<
 
         self.event_system.local_clock = Clock::new()?;
         self.event_system.local_clock.set_time(time);
+        println!("rolling back! {:?}", self.context.world_id);
         Ok(())
     }
 
@@ -412,9 +416,8 @@ mod planet_tests {
     use super::*;
     use crate::{
         agents::{PlanetContext, ThreadedAgent},
-        event::{Action, Event},
-        messages::{Mail, Msg},
         mt::hybrid::planet::{Planet, RegistryOutput},
+        objects::{Action, Event, Mail, Msg},
     };
     use bytemuck::{Pod, Zeroable};
     use mesocarp::comms::mailbox::ThreadedMessenger;

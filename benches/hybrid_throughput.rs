@@ -6,9 +6,8 @@ use criterion::{criterion_group, criterion_main, Criterion};
 // Ensure these paths are correct relative to your project structure
 use aika::{
     agents::{PlanetContext, ThreadedAgent},
-    event::{Action, Event},
-    messages::Msg,
     mt::hybrid::{config::HybridConfig, HybridEngine},
+    objects::{Action, Event, Msg},
 };
 use bytemuck::{Pod, Zeroable};
 
@@ -51,10 +50,10 @@ impl ThreadedAgent<16, TestData> for SimpleSchedulingAgent {
 // Define the benchmark function
 fn hybrid_engine_benchmark(c: &mut Criterion) {
     // Configuration constants
-    const NUM_PLANETS: usize = 15;
+    const NUM_PLANETS: usize = 7;
     const AGENTS_PER_PLANET: usize = 100;
     const TOTAL_AGENTS: usize = NUM_PLANETS * AGENTS_PER_PLANET;
-    const EVENTS: u64 = 100000; // Total simulation time
+    const EVENTS: u64 = 1000000; // Total simulation time
 
     let mut group = c.benchmark_group("HybridEngineRun");
 

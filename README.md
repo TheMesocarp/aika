@@ -12,9 +12,9 @@ In its current state, the framework supports single-threaded and multi-threaded 
 - [x] single-threaded world (found in `st::World`) execution with messaging support via lock-free shared buffers. 
 - [x] bench single-threaded `st::World` on more complex and distant scheduling tasks.
 - [x] multi-threaded support via hybrid synchronization via a modified [Clustered Time Warp](https://dl.acm.org/doi/abs/10.1145/214283.214317) architecture for multi-threaded execution (found in `mt::hybrid`).
-- [ ] scheduling overhead benchmark and *PHOLD* benchmark for `mt::hybrid::Engine` (next up).
+- [ ] scheduling overhead benchmark and *PHOLD* benchmark for `mt::hybrid::Engine` (**in progress**).
 - [ ] conservative synchronization via a [Chandy-Misra-Bryant](https://dl.acm.org/doi/10.1145/130611.130613) (CMB) inspired architecture for multi-threaded execution (soon to be found in `mt::conservative`). 
-- [ ] *PHOLD* benches for both conservative and hybrid multi-threaded execution schemes.
+- [ ] *PHOLD* benches for both conservative multi-threaded execution schemes.
 - [ ] port core synchronization logic from each multi-threaded execution type to work over IPC and containerize the LP logic.
 - [ ] (eventually) shift to MPI-like communication interface over a shared memory abstraction for real direct comms support.
 

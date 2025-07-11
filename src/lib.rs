@@ -2,9 +2,8 @@ use mesocarp::MesoError;
 use thiserror::Error;
 
 pub mod agents;
-pub mod event;
-pub mod messages;
 pub mod mt;
+pub mod objects;
 pub mod st;
 
 /// Error enum for provide feedback on simulation errors
