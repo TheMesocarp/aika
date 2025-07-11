@@ -537,8 +537,8 @@ mod inter_planetary_message_tests {
         // Planet 0: Sender agent
         let sender = InterPlanetarySender::new(
             0, 0, // planet 0, agent 0
-            1, 0,  // target planet 1, agent 0
-            5,  // send 5 messages
+            1, 0, // target planet 1, agent 0
+            5, // send 5 messages
             5, // every 10 time units
         );
         engine.spawn_agent(0, Box::new(sender)).unwrap();

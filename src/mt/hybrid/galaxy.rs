@@ -1,10 +1,13 @@
 //! Central coordinator managing global virtual time (GVT) and checkpointing across planets.
 //! The `Galaxy` handles inter-planetary message delivery, GVT calculation, and throttling to
 //! maintain causality constraints in the optimistic parallel simulation.
-use std::{sync::{
-    atomic::{AtomicU64, Ordering},
-    Arc,
-}, time::Duration};
+use std::{
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
 
 use bytemuck::{Pod, Zeroable};
 use mesocarp::{comms::mailbox::ThreadedMessenger, scheduling::Scheduleable, MesoError};
@@ -110,7 +113,7 @@ impl<
             all.push(load);
         }
         let check = self.next_checkpoint.load(Ordering::Acquire);
-        if all.iter().all(|x| *x == check ) {
+        if all.iter().all(|x| *x == check) {
             lowest = check;
         }
         if in_transit_floor < lowest {
@@ -118,7 +121,7 @@ impl<
         }
         //println!("new_gvt: {lowest}");
         if new_time > lowest {
-            println!("local clocks: {:?}, gvt: {new_time}, lowest: {lowest}", all);
+            println!("local clocks: {all:?}, gvt: {new_time}, lowest: {lowest}");
             return Err(AikaError::TimeTravel);
         }
         if lowest == u64::MAX {
