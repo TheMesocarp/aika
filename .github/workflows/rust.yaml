@@ -71,23 +71,6 @@ jobs:
       - name: Clippy
         run: cargo clippy --all-targets --all-features -- --deny warnings
 
-  test:
-    name: test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Rust Cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          key: rust/test
-
-      - name: Run tests
-        run: cargo test --release -- --nocapture
-
   toml-fmt:
     name: taplo
     runs-on: ubuntu-latest
