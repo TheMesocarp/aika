@@ -1,15 +1,21 @@
 [package]
 
-authors     = ["Mesocarp"]
+authors = ["Mesocarp"]
 description = "Multi-agent coordination framework in Rust with single and multi-threaded execution engines."
-edition     = "2021"
-homepage    = "https://github.com/TheMesocarp/aika"
-keywords    = ["multi-agent", "simulation", "coordination", "synchronization", "time-warp"]
-license     = "LGPL-2.1"
-name        = "aika"
-readme      = "README.md"
-repository  = "https://github.com/TheMesocarp/aika"
-version     = "0.1.0"
+edition = "2021"
+homepage = "https://github.com/TheMesocarp/aika"
+keywords = [
+  "multi-agent",
+  "simulation",
+  "coordination",
+  "synchronization",
+  "time-warp",
+]
+license = "LGPL-2.1"
+name = "aika"
+readme = "README.md"
+repository = "https://github.com/TheMesocarp/aika"
+version = "0.1.0"
 
 
 [profile.release]

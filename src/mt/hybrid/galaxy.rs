@@ -1,12 +1,9 @@
 //! Central coordinator managing global virtual time (GVT) and checkpointing across planets.
 //! The `Galaxy` handles inter-planetary message delivery, GVT calculation, and throttling to
 //! maintain causality constraints in the optimistic parallel simulation.
-use std::{
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc,
-    },
-    time::Duration,
+use std::sync::{
+    atomic::{fence, AtomicU64, AtomicUsize, Ordering},
+    Arc,
 };
 
 use bytemuck::{Pod, Zeroable};
@@ -24,6 +21,7 @@ pub struct Galaxy<
     pub messenger: ThreadedMessenger<INTER_SLOTS, Mail<MessageType>>,
     pub lvts: Vec<Arc<AtomicU64>>,
     pub gvt: Arc<AtomicU64>,
+    pub counter: Arc<AtomicUsize>,
     pub next_checkpoint: Arc<AtomicU64>,
     pub checkpoint_frequency: u64,
     pub throttle_horizon: u64,
@@ -55,6 +53,7 @@ impl<
             messenger,
             lvts: Vec::new(),
             gvt,
+            counter: Arc::new(AtomicUsize::new(0)),
             next_checkpoint: Arc::new(AtomicU64::new(checkpoint_frequency)),
             checkpoint_frequency,
             throttle_horizon,
@@ -74,12 +73,19 @@ impl<
         let user = self.messenger.get_user(self.registered)?;
         let world_id = self.registered;
         self.registered += 1;
-        let output =
-            RegistryOutput::new(arc, out, Arc::clone(&self.next_checkpoint), user, world_id);
+        let output = RegistryOutput::new(
+            arc,
+            out,
+            Arc::clone(&self.counter),
+            Arc::clone(&self.next_checkpoint),
+            user,
+            world_id,
+        );
         Ok(output)
     }
 
     fn deliver_the_mail(&mut self) -> Result<u64, AikaError> {
+        fence(Ordering::SeqCst);
         match self.messenger.poll() {
             Ok(msgs) => {
                 let mut lowest = u64::MAX;
@@ -103,22 +109,28 @@ impl<
     }
 
     fn recalc_gvt(&mut self, in_transit_floor: u64) -> Result<(), AikaError> {
-        // Samadi's is nice but i need something compatible with checkpointing
+        let in_flight = self.counter.load(Ordering::Acquire);
+        if in_flight > 0 {
+            // Don't advance GVT while messages are in flight
+            return Ok(());
+        }
         let new_time = self.gvt.load(Ordering::Acquire);
-        //println!("current gvt: {new_time}");
+
         let mut lowest = u64::MAX;
         let mut all = Vec::new();
         for local in &self.lvts {
             let load = local.load(Ordering::Acquire);
+            if load < lowest {
+                lowest = load;
+            }
             all.push(load);
         }
-        let check = self.next_checkpoint.load(Ordering::Acquire);
-        if all.iter().all(|x| *x == check) {
-            lowest = check;
-        }
+
         if in_transit_floor < lowest {
+            println!("in transit");
             lowest = in_transit_floor;
         }
+        println!("local clocks: {all:?}, gvt: {new_time}, lowest: {lowest}");
         //println!("new_gvt: {lowest}");
         if new_time > lowest {
             println!("local clocks: {all:?}, gvt: {new_time}, lowest: {lowest}");
@@ -133,13 +145,15 @@ impl<
 
     fn check_mail_and_gvt(&mut self) -> Result<(), AikaError> {
         let transit_time = self.deliver_the_mail()?;
+        //std::thread::sleep(Duration::from_nanos(30));
         self.recalc_gvt(transit_time)?;
         Ok(())
     }
 
     pub fn gvt_daemon(&mut self) -> Result<(), AikaError> {
         loop {
-            std::thread::sleep(Duration::from_nanos(30));
+            //std::thread::sleep(Duration::from_nanos(30));
+
             self.check_mail_and_gvt()?;
 
             let current_gvt = self.gvt.load(Ordering::Acquire);

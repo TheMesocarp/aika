@@ -5,7 +5,7 @@ use std::{
     cmp::Reverse,
     collections::{BTreeSet, BinaryHeap},
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicU64, AtomicUsize, Ordering},
         Arc,
     },
     thread::sleep,
@@ -29,6 +29,7 @@ use crate::{
 /// The registry information required to spawn a new `Planet` in a `Galaxy`
 pub struct RegistryOutput<const SLOTS: usize, MessageType: Pod + Zeroable + Clone> {
     gvt: Arc<AtomicU64>,
+    counter: Arc<AtomicUsize>,
     lvt: Arc<AtomicU64>,
     checkpoint: Arc<AtomicU64>,
     user: ThreadedMessengerUser<SLOTS, Mail<MessageType>>,
@@ -39,6 +40,7 @@ impl<const SLOTS: usize, MessageType: Pod + Zeroable + Clone> RegistryOutput<SLO
     pub fn new(
         gvt: Arc<AtomicU64>,
         lvt: Arc<AtomicU64>,
+        counter: Arc<AtomicUsize>,
         checkpoint: Arc<AtomicU64>,
         user: ThreadedMessengerUser<SLOTS, Mail<MessageType>>,
         world_id: usize,
@@ -46,6 +48,7 @@ impl<const SLOTS: usize, MessageType: Pod + Zeroable + Clone> RegistryOutput<SLO
         Self {
             gvt,
             lvt,
+            counter,
             checkpoint,
             user,
             world_id,
@@ -111,6 +114,7 @@ impl<
                 anti_msg_arena_size,
                 registry.user,
                 registry.world_id,
+                registry.counter,
             ),
             time_info: TimeInfo { terminal, timestep },
             event_system: LocalEventSystem::<CLOCK_SLOTS, CLOCK_HEIGHT>::new()?,
@@ -134,6 +138,7 @@ impl<
             world_consts.1,
             registry.user,
             registry.world_id,
+            registry.counter,
         );
         for i in world_consts.2 {
             context.agent_states.push(Journal::init(*i));
@@ -238,7 +243,7 @@ impl<
         self.event_system.local_clock.set_time(time);
 
         self.local_time.store(time, Ordering::Release);
-        //println!("ROLLBACK!!!!! rolling back! {:?}", self.context.world_id);
+        println!("ROLLBACK!!!!! rolling back! {:?}", self.context.world_id);
         Ok(())
     }
 
@@ -289,6 +294,7 @@ impl<
     }
 
     fn poll_interplanetary_messenger(&mut self) -> Result<(), AikaError> {
+        let mut counter = 0;
         let maybe = self.context.user.poll();
         if maybe.is_none() {
             return Ok(());
@@ -307,14 +313,15 @@ impl<
                 Transfer::Msg(msg) => self.commit_mail(msg),
                 Transfer::AntiMsg(anti_msg) => self.annihilate(anti_msg),
             }
+            counter += 1;
         }
+        self.context.counter.fetch_sub(counter, Ordering::SeqCst);
         Ok(())
     }
 
     /// step forward one timestamp on all local clocks
     fn step(&mut self) -> Result<(), AikaError> {
         self.check_time_validity()?;
-        self.poll_interplanetary_messenger()?;
 
         // process messages at the next time step
         if let Ok(msgs) = self.local_messages.schedule.tick() {
@@ -398,6 +405,7 @@ impl<
         loop {
             let checkpoint = self.next_checkpoint.load(Ordering::SeqCst);
             let now = self.now();
+            self.poll_interplanetary_messenger()?;
             if now == checkpoint
                 && now != (self.time_info.terminal / self.time_info.timestep) as u64
             {
@@ -412,7 +420,6 @@ impl<
                 sleep(Duration::from_nanos(100));
                 continue;
             }
-
             let step = self.step();
             if let Err(AikaError::PastTerminal) = step {
                 break;
@@ -524,12 +531,14 @@ mod planet_tests {
         let gvt = Arc::new(AtomicU64::new(0));
         let lvt = Arc::new(AtomicU64::new(0));
         let checkpoint = Arc::new(AtomicU64::new(100));
-
+        let counter = Arc::new(AtomicUsize::new(0));
         // Create a simple messenger for testing
         let messenger = ThreadedMessenger::<16, Mail<TestMessage>>::new(vec![world_id])?;
         let user = messenger.get_user(world_id)?;
 
-        Ok(RegistryOutput::new(gvt, lvt, checkpoint, user, world_id))
+        Ok(RegistryOutput::new(
+            gvt, lvt, counter, checkpoint, user, world_id,
+        ))
     }
 
     #[test]

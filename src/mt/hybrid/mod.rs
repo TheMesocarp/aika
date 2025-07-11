@@ -347,7 +347,7 @@ mod inter_planetary_message_tests {
                 let msg = Msg::new(
                     message_data,
                     time,                    // sent time
-                    time + 20,               // receive time (delayed)
+                    time - 1,                // receive time (delayed)
                     agent_id,                // from agent
                     Some(self.target_agent), // to specific agent
                 );
@@ -360,7 +360,7 @@ mod inter_planetary_message_tests {
                         "Planet {} Agent {} sent message {} to Planet {} Agent {}",
                         self.planet_id,
                         self.agent_id,
-                        self.messages_sent - 1,
+                        self.messages_sent,
                         self.target_planet,
                         self.target_agent
                     );
@@ -539,7 +539,7 @@ mod inter_planetary_message_tests {
             0, 0, // planet 0, agent 0
             1, 0, // target planet 1, agent 0
             5, // send 5 messages
-            5, // every 10 time units
+            1, // every 10 time units
         );
         engine.spawn_agent(0, Box::new(sender)).unwrap();
 
@@ -610,7 +610,7 @@ mod inter_planetary_message_tests {
         // Create configuration
         let config = HybridConfig::new(NUM_PLANETS, 512)
             .with_time_bounds(TERMINAL_TIME, 1.0)
-            .with_optimistic_sync(10, 20)
+            .with_optimistic_sync(100, 200)
             .with_uniform_worlds(1024, AGENTS_PER_PLANET, 256);
 
         let mut engine =
