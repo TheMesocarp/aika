@@ -1,3 +1,6 @@
+//! Central coordinator managing global virtual time (GVT) and checkpointing across planets.
+//! The `Galaxy` handles inter-planetary message delivery, GVT calculation, and throttling to
+//! maintain causality constraints in the optimistic parallel simulation.
 use std::sync::{
     atomic::{AtomicU64, Ordering},
     Arc,
@@ -6,8 +9,9 @@ use std::sync::{
 use bytemuck::{Pod, Zeroable};
 use mesocarp::{comms::mailbox::ThreadedMessenger, scheduling::Scheduleable, MesoError};
 
-use crate::{mt::hybrid::planet::RegistryOutput, objects::Mail, st::TimeInfo, SimError};
+use crate::{mt::hybrid::planet::RegistryOutput, objects::Mail, st::TimeInfo, AikaError};
 
+/// A `Galaxy` updates the global synchronization checkpoint and handles interplanetary message passing.
 pub struct Galaxy<
     const INTER_SLOTS: usize,
     const CLOCK_SLOTS: usize,
@@ -37,7 +41,7 @@ impl<
         checkpoint_frequency: u64,
         terminal: f64,
         timestep: f64,
-    ) -> Result<Self, SimError> {
+    ) -> Result<Self, AikaError> {
         let gvt = Arc::new(AtomicU64::new(0));
         let mut world_ids = Vec::new();
         for i in 0..num_world {
@@ -56,7 +60,7 @@ impl<
         })
     }
 
-    pub fn spawn_world(&mut self) -> Result<RegistryOutput<INTER_SLOTS, MessageType>, SimError> {
+    pub fn spawn_world(&mut self) -> Result<RegistryOutput<INTER_SLOTS, MessageType>, AikaError> {
         let arc = Arc::clone(&self.gvt);
 
         let lvt = Arc::new(AtomicU64::new(0));
@@ -72,7 +76,7 @@ impl<
         Ok(output)
     }
 
-    fn deliver_the_mail(&mut self) -> Result<u64, SimError> {
+    fn deliver_the_mail(&mut self) -> Result<u64, AikaError> {
         match self.messenger.poll() {
             Ok(msgs) => {
                 let mut lowest = u64::MAX;
@@ -89,13 +93,13 @@ impl<
                 if let MesoError::NoDirectCommsToShare = err {
                     Ok(u64::MAX)
                 } else {
-                    Err(SimError::MesoError(err))
+                    Err(AikaError::MesoError(err))
                 }
             }
         }
     }
 
-    fn recalc_gvt(&mut self, in_transit_floor: u64) -> Result<(), SimError> {
+    fn recalc_gvt(&mut self, in_transit_floor: u64) -> Result<(), AikaError> {
         // Samadi's is nice but i need something compatible with checkpointing
         let new_time = self.gvt.load(Ordering::Acquire);
         //println!("current gvt: {new_time}");
@@ -110,20 +114,20 @@ impl<
             lowest = in_transit_floor;
         }
         if new_time > lowest {
-            return Err(SimError::TimeTravel);
+            return Err(AikaError::TimeTravel);
         }
         //println!("new_gvt: {lowest}");
         self.gvt.store(lowest, Ordering::Release);
         Ok(())
     }
 
-    fn check_mail_and_gvt(&mut self) -> Result<(), SimError> {
+    fn check_mail_and_gvt(&mut self) -> Result<(), AikaError> {
         let transit_time = self.deliver_the_mail()?;
         self.recalc_gvt(transit_time)?;
         Ok(())
     }
 
-    pub fn gvt_daemon(&mut self) -> Result<(), SimError> {
+    pub fn gvt_daemon(&mut self) -> Result<(), AikaError> {
         loop {
             self.check_mail_and_gvt()?;
 

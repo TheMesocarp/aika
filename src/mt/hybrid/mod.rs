@@ -1,17 +1,19 @@
-//! `aika::mt::hybrid` contains the infrastructure for running hybrid synchronization
-
+//! Hybrid synchronization engine for multi-threaded discrete event simulation.
+//! Implements a modified Clustered Time Warp protocol with `HybridEngine` coordinating multiple
+//! `Planet` instances, supporting inter-planetary messaging with optimistic execution and rollback.
 use bytemuck::{Pod, Zeroable};
 
 use crate::{
     agents::ThreadedAgent,
     mt::hybrid::{config::HybridConfig, galaxy::Galaxy, planet::Planet},
-    SimError,
+    AikaError,
 };
 
 pub mod config;
 pub mod galaxy;
 pub mod planet;
 
+/// Hybrid synchronization engine for multi-threaded execution environments.
 pub struct HybridEngine<
     const INTER_SLOTS: usize,
     const CLOCK_SLOTS: usize,
@@ -29,8 +31,9 @@ impl<
         const CLOCK_HEIGHT: usize,
         MessageType: Pod + Zeroable + Clone,
     > HybridEngine<INTER_SLOTS, CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>
-{
-    pub fn create(config: HybridConfig) -> Result<Self, SimError> {
+{   
+    /// Create a new synchronization engine from the provided config.
+    pub fn create(config: HybridConfig) -> Result<Self, AikaError> {
         let mut galaxy = Galaxy::new(
             config.number_of_worlds,
             config.throttle_horizon,
@@ -57,22 +60,24 @@ impl<
         })
     }
 
+    /// Spawn a `ThreadedAgent` on a specific `Planet`.
     pub fn spawn_agent(
         &mut self,
         planet_id: usize,
         agent: Box<dyn ThreadedAgent<INTER_SLOTS, MessageType>>,
-    ) -> Result<(), SimError> {
+    ) -> Result<(), AikaError> {
         if planet_id >= self.planets.len() {
-            return Err(SimError::InvalidWorldId(planet_id));
+            return Err(AikaError::InvalidWorldId(planet_id));
         }
         self.planets[planet_id].spawn_agent_preconfigured(agent);
         Ok(())
     }
 
+    /// Spawn a `ThreadedAgent` on any `Planet`
     pub fn spawn_agent_autobalance(
         &mut self,
         agent: Box<dyn ThreadedAgent<INTER_SLOTS, MessageType>>,
-    ) -> Result<(), SimError> {
+    ) -> Result<(), AikaError> {
         let mut lowest = (usize::MAX, usize::MAX);
         for (i, planet) in self.planets.iter().enumerate() {
             let count = planet.agents.len();
@@ -84,19 +89,21 @@ impl<
         Ok(())
     }
 
+    /// Schedule a step() event for a particular `ThreadedAgent` on a given `Planet`.
     pub fn schedule(
         &mut self,
         planet_id: usize,
         agent_id: usize,
         time: u64,
-    ) -> Result<(), SimError> {
+    ) -> Result<(), AikaError> {
         if planet_id >= self.planets.len() {
-            return Err(SimError::InvalidWorldId(planet_id));
+            return Err(AikaError::InvalidWorldId(planet_id));
         }
         self.planets[planet_id].schedule(time, agent_id)
     }
 
-    pub fn run(self) -> Result<Self, SimError> {
+    /// Run synchronization engine.
+    pub fn run(self) -> Result<Self, AikaError> {
         let HybridEngine {
             galaxy,
             planets,
@@ -117,10 +124,10 @@ impl<
         }
         let mut final_planets = Vec::new();
         for handle in planet_handles {
-            let planet = handle.join().map_err(|_| SimError::ThreadPanic)??;
+            let planet = handle.join().map_err(|_| AikaError::ThreadPanic)??;
             final_planets.push(planet);
         }
-        let final_galaxy = galaxy_handle.join().map_err(|_| SimError::ThreadPanic)??;
+        let final_galaxy = galaxy_handle.join().map_err(|_| AikaError::ThreadPanic)??;
         Ok(Self {
             galaxy: final_galaxy,
             planets: final_planets,

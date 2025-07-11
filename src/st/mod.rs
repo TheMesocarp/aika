@@ -1,9 +1,12 @@
+//! Single-threaded simulation world supporting multiple agents with message passing capabilities.
+//! Provides a `World` struct that manages agent execution, event scheduling, and local message
+//! delivery in a deterministic single-threaded environment with configurable time bounds.
 use mesocarp::comms::mailbox::ThreadedMessenger;
 
 use crate::{
     agents::{Agent, AgentSupport, WorldContext},
     objects::{Action, Event, LocalEventSystem, Msg},
-    SimError,
+    AikaError,
 };
 
 pub(crate) struct TimeInfo {
@@ -48,8 +51,9 @@ impl<
         const CLOCK_HEIGHT: usize,
         MessageType: Clone,
     > World<MESSAGE_SLOTS, CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>
-{
-    pub fn init(terminal: f64, timestep: f64, world_arena_size: usize) -> Result<Self, SimError> {
+{   
+    /// Initialize a new world with the provided time information and world state arena allocation size
+    pub fn init(terminal: f64, timestep: f64, world_arena_size: usize) -> Result<Self, AikaError> {
         let event_system = LocalEventSystem::<CLOCK_SLOTS, CLOCK_HEIGHT>::new()?;
         Ok(Self {
             agents: Vec::new(),
@@ -59,13 +63,14 @@ impl<
             time_info: TimeInfo { timestep, terminal },
         })
     }
-
+    /// Spawn a new `Agent` to the `World`.
     pub fn spawn_agent(&mut self, agent: Box<dyn Agent<MESSAGE_SLOTS, Msg<MessageType>>>) -> usize {
         self.agents.push(agent);
         self.agents.len() - 1
     }
 
-    pub fn init_support_layers(&mut self, arena_size: Option<usize>) -> Result<(), SimError> {
+    /// Initialize support layers for each agent. if `arena_size: Option<usize>` is set to `None`, no agent state arenas will be allocated.
+    pub fn init_support_layers(&mut self, arena_size: Option<usize>) -> Result<(), AikaError> {
         let agent_ids = self
             .agents
             .iter()
@@ -95,16 +100,17 @@ impl<
         self.event_system.local_clock.time
     }
 
+    /// Get the time information of the simulation.
     pub fn time_info(&self) -> (f64, f64) {
         (self.time_info.timestep, self.time_info.terminal)
     }
 
     /// Schedule an event for an agent at a given time.
-    pub fn schedule(&mut self, time: u64, agent: usize) -> Result<(), SimError> {
+    pub fn schedule(&mut self, time: u64, agent: usize) -> Result<(), AikaError> {
         if time < self.now() {
-            return Err(SimError::TimeTravel);
+            return Err(AikaError::TimeTravel);
         } else if time as f64 * self.time_info.timestep > self.time_info.terminal {
-            return Err(SimError::PastTerminal);
+            return Err(AikaError::PastTerminal);
         }
         let now = self.now();
         self.commit(Event::new(now, time, agent, Action::Wait));
@@ -112,7 +118,7 @@ impl<
     }
 
     /// Run the simulation.
-    pub fn run(&mut self) -> Result<(), SimError> {
+    pub fn run(&mut self) -> Result<(), AikaError> {
         loop {
             if (self.now() + 1) as f64 * self.time_info.timestep > self.time_info.terminal {
                 break;

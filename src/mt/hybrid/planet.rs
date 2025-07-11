@@ -1,3 +1,6 @@
+//! Individual threaded simulation world containing agents and local event processing.
+//! Each `Planet` runs independently with its own local time, handling agent execution, local
+//! messaging, and rollback operations when causality violations are detected.
 use std::{
     cmp::Reverse,
     collections::{BTreeSet, BinaryHeap},
@@ -20,9 +23,10 @@ use crate::{
     agents::{PlanetContext, ThreadedAgent},
     objects::{Action, AntiMsg, Event, LocalEventSystem, LocalMailSystem, Mail, Msg, Transfer},
     st::TimeInfo,
-    SimError,
+    AikaError,
 };
 
+/// The registry information required to spawn a new `Planet` in a `Galaxy`
 pub struct RegistryOutput<const SLOTS: usize, MessageType: Pod + Zeroable + Clone> {
     gvt: Arc<AtomicU64>,
     lvt: Arc<AtomicU64>,
@@ -49,6 +53,7 @@ impl<const SLOTS: usize, MessageType: Pod + Zeroable + Clone> RegistryOutput<SLO
     }
 }
 
+/// A `Planet` is much like `World`, except is equipped with "inter-planetary" messaging and rollback functionality.
 pub struct Planet<
     const INTER_SLOTS: usize,
     const CLOCK_SLOTS: usize,
@@ -90,6 +95,7 @@ impl<
         MessageType: Pod + Zeroable + Clone,
     > Planet<INTER_SLOTS, CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>
 {
+    /// Create a new `Planet` given the provided time information, `Galaxy` registry output, and arena allocation sizes.
     pub fn create(
         terminal: f64,
         timestep: f64,
@@ -97,7 +103,7 @@ impl<
         world_arena_size: usize,
         anti_msg_arena_size: usize,
         registry: RegistryOutput<INTER_SLOTS, MessageType>,
-    ) -> Result<Self, SimError> {
+    ) -> Result<Self, AikaError> {
         Ok(Self {
             agents: Vec::new(),
             context: PlanetContext::new(
@@ -115,14 +121,14 @@ impl<
             throttle_horizon,
         })
     }
-
+    /// Creates a new `Planet` from registry, time, and HybridConfig information.
     pub fn from_config(
         world_consts: (usize, usize, &Vec<usize>),
         terminal: f64,
         timestep: f64,
         throttle_horizon: u64,
         registry: RegistryOutput<INTER_SLOTS, MessageType>,
-    ) -> Result<Self, SimError> {
+    ) -> Result<Self, AikaError> {
         let mut context = PlanetContext::new(
             world_consts.0,
             world_consts.1,
@@ -159,11 +165,11 @@ impl<
     }
 
     /// Schedule an event for an agent at a given time.
-    pub fn schedule(&mut self, time: u64, agent: usize) -> Result<(), SimError> {
+    pub fn schedule(&mut self, time: u64, agent: usize) -> Result<(), AikaError> {
         if time < self.now() {
-            return Err(SimError::TimeTravel);
+            return Err(AikaError::TimeTravel);
         } else if time as f64 * self.time_info.timestep > self.time_info.terminal {
-            return Err(SimError::PastTerminal);
+            return Err(AikaError::PastTerminal);
         }
         let now = self.now();
         self.commit(Event::new(now, time, agent, Action::Wait));
@@ -176,10 +182,12 @@ impl<
         self.event_system.local_clock.time
     }
 
+    /// Get the time information of the simulation.
     pub fn time_info(&self) -> (f64, f64) {
         (self.time_info.timestep, self.time_info.terminal)
     }
 
+    /// Spawn a new `ThreadedAgent` on the `Planet` with the provided agent state arena allocation size.
     pub fn spawn_agent(
         &mut self,
         agent: Box<dyn ThreadedAgent<INTER_SLOTS, MessageType>>,
@@ -192,6 +200,7 @@ impl<
         self.agents.len() - 1
     }
 
+    /// Spawn a preconfigured `ThreadedAgent`.
     pub fn spawn_agent_preconfigured(
         &mut self,
         agent: Box<dyn ThreadedAgent<INTER_SLOTS, MessageType>>,
@@ -200,9 +209,9 @@ impl<
         self.agents.len() - 1
     }
 
-    fn rollback(&mut self, time: u64) -> Result<(), SimError> {
+    fn rollback(&mut self, time: u64) -> Result<(), AikaError> {
         if time > self.event_system.local_clock.time {
-            return Err(SimError::TimeTravel);
+            return Err(AikaError::TimeTravel);
         }
         self.context.world_state.rollback(time);
         for i in &mut self.context.agent_states {
@@ -277,7 +286,7 @@ impl<
         self.local_messages.overflow = BinaryHeap::from_iter(vec);
     }
 
-    fn poll_interplanetary_messenger(&mut self) -> Result<(), SimError> {
+    fn poll_interplanetary_messenger(&mut self) -> Result<(), AikaError> {
         let maybe = self.context.user.poll();
         if maybe.is_none() {
             return Ok(());
@@ -285,7 +294,7 @@ impl<
         for msg in maybe.unwrap() {
             if let Some(to) = msg.to_world {
                 if to != self.context.world_id {
-                    return Err(SimError::MismatchedDeliveryAddress);
+                    return Err(AikaError::MismatchedDeliveryAddress);
                 }
             }
             let time = msg.transfer.time();
@@ -301,7 +310,7 @@ impl<
     }
 
     /// step forward one timestamp on all local clocks
-    fn step(&mut self) -> Result<(), SimError> {
+    fn step(&mut self) -> Result<(), AikaError> {
         self.check_time_validity()?;
         self.poll_interplanetary_messenger()?;
 
@@ -364,24 +373,25 @@ impl<
         Ok(())
     }
 
-    fn check_time_validity(&self) -> Result<(), SimError> {
+    fn check_time_validity(&self) -> Result<(), AikaError> {
         let load = self.local_time.load(Ordering::Acquire);
         if self.local_messages.schedule.time != self.event_system.local_clock.time
             && self.local_messages.schedule.time != load
         {
-            return Err(SimError::ClockSyncIssue);
+            return Err(AikaError::ClockSyncIssue);
         }
         if self.time_info.terminal <= self.time_info.timestep * load as f64 {
-            return Err(SimError::PastTerminal);
+            return Err(AikaError::PastTerminal);
         }
         let gvt = self.gvt.load(Ordering::Acquire);
         if gvt as f64 * self.time_info.timestep >= self.time_info.terminal {
-            return Err(SimError::PastTerminal);
+            return Err(AikaError::PastTerminal);
         }
         Ok(())
     }
 
-    pub fn run(&mut self) -> Result<(), SimError> {
+    /// Run the `Planet` optimistically.
+    pub fn run(&mut self) -> Result<(), AikaError> {
         loop {
             let checkpoint = self.next_checkpoint.load(Ordering::SeqCst);
             let now = self.now();
@@ -401,7 +411,7 @@ impl<
             }
 
             let step = self.step();
-            if let Err(SimError::PastTerminal) = step {
+            if let Err(AikaError::PastTerminal) = step {
                 break;
             }
             step?;
@@ -507,7 +517,7 @@ mod planet_tests {
     }
 
     // Helper function to create a mock RegistryOutput
-    fn create_mock_registry(world_id: usize) -> Result<RegistryOutput<16, TestMessage>, SimError> {
+    fn create_mock_registry(world_id: usize) -> Result<RegistryOutput<16, TestMessage>, AikaError> {
         let gvt = Arc::new(AtomicU64::new(0));
         let lvt = Arc::new(AtomicU64::new(0));
         let checkpoint = Arc::new(AtomicU64::new(100));
@@ -615,11 +625,11 @@ mod planet_tests {
         // Try to schedule in the past (should fail)
         planet.event_system.local_clock.time = 20;
         let result = planet.schedule(5, 0);
-        assert!(matches!(result, Err(SimError::TimeTravel)));
+        assert!(matches!(result, Err(AikaError::TimeTravel)));
 
         // Try to schedule past terminal (should fail)
         let result = planet.schedule(2000, 0);
-        assert!(matches!(result, Err(SimError::PastTerminal)));
+        assert!(matches!(result, Err(AikaError::PastTerminal)));
     }
 
     #[test]
@@ -663,7 +673,7 @@ mod planet_tests {
 
         // Try to rollback to future (should fail)
         let result = planet.rollback(100);
-        assert!(matches!(result, Err(SimError::TimeTravel)));
+        assert!(matches!(result, Err(AikaError::TimeTravel)));
     }
 
     #[test]

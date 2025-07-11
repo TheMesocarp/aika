@@ -1,3 +1,6 @@
+//! Core data structures for simulation including messages, events, and scheduling primitives.
+//! Contains `Msg` for inter-agent communication, `Event` for agent scheduling, `AntiMsg` for
+//! optimistic rollback, and local event/mail systems for efficient time-based scheduling.
 use std::{
     cmp::{Ordering, Reverse},
     collections::BinaryHeap,
@@ -9,8 +12,10 @@ use mesocarp::{
     scheduling::{htw::Clock, Scheduleable},
 };
 
-use crate::SimError;
+use crate::AikaError;
 
+
+/// A `Msg` is a direct message between two entities that shares a piece of data of type T
 #[derive(Copy, Clone, Debug)]
 pub struct Msg<T: Clone> {
     pub from: usize,
@@ -21,6 +26,7 @@ pub struct Msg<T: Clone> {
 }
 
 impl<T: Clone> Msg<T> {
+    /// Create a new `Msg`. If `to: Option<usize>` is set to None, the `Msg` will be broadcasted to all entities.
     pub fn new(data: T, sent: u64, recv: u64, from: usize, to: Option<usize>) -> Self {
         Self {
             from,
@@ -80,7 +86,7 @@ impl<T: Clone> Ord for Msg<T> {
 }
 
 #[derive(Debug, Copy, Clone)]
-/// A message that can be sent between agents.
+/// An `AntiMsg` allows you to directly cancel messages with the same metadata in an optimistic execution environment
 pub struct AntiMsg {
     pub sent: u64,
     pub received: u64,
@@ -89,6 +95,7 @@ pub struct AntiMsg {
 }
 
 impl AntiMsg {
+    /// Create a new `AntiMsg`. Note that you won't need to manual call this to maintain synchronization, this is just for flexibility.
     pub fn new(sent: u64, received: u64, from: usize, to: Option<usize>) -> Self {
         AntiMsg {
             sent,
@@ -98,6 +105,7 @@ impl AntiMsg {
         }
     }
 
+    /// Annihilate a `Msg<T>` and `AntiMsg` pair.
     pub fn annihilate<T: Clone>(&self, other: &Msg<T>) -> bool {
         self.sent == other.sent
             && self.received == other.recv
@@ -166,6 +174,7 @@ impl<T: Clone> Annihilator<T> {
     }
 }
 
+/// An object that can be transfered between `Planet` threads during optimistic execution
 #[derive(Debug, Clone, Copy)]
 pub enum Transfer<T: Pod + Zeroable + Clone> {
     Msg(Msg<T>),
@@ -233,6 +242,7 @@ unsafe impl<T: Pod + Zeroable + Clone> Sync for Transfer<T> {}
 unsafe impl<T: Pod + Zeroable + Clone> Pod for Transfer<T> {}
 unsafe impl<T: Pod + Zeroable + Clone> Zeroable for Transfer<T> {}
 
+/// Inter-planetary `Mail` carry data of type `T` for optimistic execution environments
 #[derive(Debug, Clone, Copy)]
 pub struct Mail<T: Pod + Zeroable + Clone> {
     pub transfer: Transfer<T>,
@@ -241,6 +251,7 @@ pub struct Mail<T: Pod + Zeroable + Clone> {
 }
 
 impl<T: Pod + Zeroable + Clone> Mail<T> {
+    /// Create a new peice of `Mail`. if `to_world: Option<usize>` is set to `None`, the `Mail` broadcasts
     pub fn write_letter(transfer: Transfer<T>, from_world: usize, to_world: Option<usize>) -> Self {
         Self {
             transfer,
@@ -248,7 +259,7 @@ impl<T: Pod + Zeroable + Clone> Mail<T> {
             from_world,
         }
     }
-
+    /// Consume to receive a `Transfer`
     pub fn open_letter(self) -> Transfer<T> {
         self.transfer
     }
@@ -279,7 +290,7 @@ pub(crate) struct LocalMailSystem<
 impl<const CLOCK_SLOTS: usize, const CLOCK_HEIGHT: usize, MessageType: Clone>
     LocalMailSystem<CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>
 {
-    pub(crate) fn new() -> Result<Self, SimError> {
+    pub(crate) fn new() -> Result<Self, AikaError> {
         let overflow = BinaryHeap::new();
         let schedule = Clock::new()?;
         Ok(Self { overflow, schedule })
@@ -295,7 +306,7 @@ unsafe impl<const CLOCK_SLOTS: usize, const CLOCK_HEIGHT: usize, MessageType: Cl
 {
 }
 
-/// A scheduling action that an agent can take.
+/// A scheduling action that an `Agent` or `ThreadedAgent` can take.
 #[derive(Copy, Clone, Debug)]
 pub enum Action {
     Timeout(u64),
@@ -371,7 +382,7 @@ pub(crate) struct LocalEventSystem<const CLOCK_SLOTS: usize, const CLOCK_HEIGHT:
 impl<const CLOCK_SLOTS: usize, const CLOCK_HEIGHT: usize>
     LocalEventSystem<CLOCK_SLOTS, CLOCK_HEIGHT>
 {
-    pub(crate) fn new() -> Result<Self, SimError> {
+    pub(crate) fn new() -> Result<Self, AikaError> {
         let overflow = BinaryHeap::new();
         let local_clock = Clock::new()?;
         Ok(Self {
