@@ -5,8 +5,7 @@ use mesocarp::{
 };
 
 use crate::{
-    event::Event,
-    messages::{AntiMsg, Mail, Msg, Transfer},
+    objects::{AntiMsg, Mail, Msg, Transfer, Event},
     SimError,
 };
 

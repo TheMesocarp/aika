@@ -6,7 +6,7 @@ use std::sync::{
 use bytemuck::{Pod, Zeroable};
 use mesocarp::{comms::mailbox::ThreadedMessenger, scheduling::Scheduleable, MesoError};
 
-use crate::{messages::Mail, mt::hybrid::planet::RegistryOutput, st::TimeInfo, SimError};
+use crate::{objects::Mail, mt::hybrid::planet::RegistryOutput, st::TimeInfo, SimError};
 
 pub struct Galaxy<
     const INTER_SLOTS: usize,
@@ -20,8 +20,8 @@ pub struct Galaxy<
     pub next_checkpoint: Arc<AtomicU64>,
     pub checkpoint_frequency: u64,
     pub throttle_horizon: u64,
-    pub time_info: TimeInfo,
     pub registered: usize,
+    time_info: TimeInfo,
 }
 
 impl<
@@ -149,5 +149,9 @@ impl<
             std::thread::yield_now();
         }
         Ok(())
+    }
+
+    pub fn time_info(&self) -> (f64, f64) {
+        (self.time_info.timestep, self.time_info.terminal)
     }
 }
