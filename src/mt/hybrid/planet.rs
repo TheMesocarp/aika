@@ -16,7 +16,7 @@ use bytemuck::{Pod, Zeroable};
 use mesocarp::{
     comms::mailbox::ThreadedMessengerUser,
     logging::journal::Journal,
-    scheduling::{htw::Clock, Scheduleable},
+    scheduling::Scheduleable,
 };
 
 use crate::{
@@ -29,7 +29,8 @@ use crate::{
 /// The registry information required to spawn a new `Planet` in a `Galaxy`
 pub struct RegistryOutput<const SLOTS: usize, MessageType: Pod + Zeroable + Clone> {
     gvt: Arc<AtomicU64>,
-    counter: Arc<AtomicUsize>,
+    send_counter: Arc<AtomicUsize>,
+    recv_counter: Arc<AtomicUsize>,
     lvt: Arc<AtomicU64>,
     checkpoint: Arc<AtomicU64>,
     user: ThreadedMessengerUser<SLOTS, Mail<MessageType>>,
@@ -40,7 +41,8 @@ impl<const SLOTS: usize, MessageType: Pod + Zeroable + Clone> RegistryOutput<SLO
     pub fn new(
         gvt: Arc<AtomicU64>,
         lvt: Arc<AtomicU64>,
-        counter: Arc<AtomicUsize>,
+        send_counter: Arc<AtomicUsize>,
+        recv_counter: Arc<AtomicUsize>,
         checkpoint: Arc<AtomicU64>,
         user: ThreadedMessengerUser<SLOTS, Mail<MessageType>>,
         world_id: usize,
@@ -48,7 +50,8 @@ impl<const SLOTS: usize, MessageType: Pod + Zeroable + Clone> RegistryOutput<SLO
         Self {
             gvt,
             lvt,
-            counter,
+            send_counter,
+            recv_counter,
             checkpoint,
             user,
             world_id,
@@ -72,6 +75,7 @@ pub struct Planet<
     next_checkpoint: Arc<AtomicU64>,
     local_time: Arc<AtomicU64>,
     throttle_horizon: u64,
+    recv_counter: Arc<AtomicUsize>
 }
 
 unsafe impl<
@@ -114,7 +118,7 @@ impl<
                 anti_msg_arena_size,
                 registry.user,
                 registry.world_id,
-                registry.counter,
+                registry.send_counter,
             ),
             time_info: TimeInfo { terminal, timestep },
             event_system: LocalEventSystem::<CLOCK_SLOTS, CLOCK_HEIGHT>::new()?,
@@ -123,6 +127,7 @@ impl<
             next_checkpoint: registry.checkpoint,
             local_time: registry.lvt,
             throttle_horizon,
+            recv_counter: registry.recv_counter
         })
     }
     /// Creates a new `Planet` from registry, time, and HybridConfig information.
@@ -138,7 +143,7 @@ impl<
             world_consts.1,
             registry.user,
             registry.world_id,
-            registry.counter,
+            registry.send_counter,
         );
         for i in world_consts.2 {
             context.agent_states.push(Journal::init(*i));
@@ -153,6 +158,7 @@ impl<
             next_checkpoint: registry.checkpoint,
             local_time: registry.lvt,
             throttle_horizon,
+            recv_counter: registry.recv_counter
         })
     }
 
@@ -215,7 +221,8 @@ impl<
     }
 
     fn rollback(&mut self, time: u64) -> Result<(), AikaError> {
-        if time > self.event_system.local_clock.time {
+        let now = self.event_system.local_clock.time;
+        if time > now {
             return Err(AikaError::TimeTravel);
         }
         self.context.world_state.rollback(time);
@@ -239,11 +246,10 @@ impl<
             self.context.user.send(anti)?;
         }
 
-        self.event_system.local_clock = Clock::new()?;
-        self.event_system.local_clock.set_time(time);
-
+        self.event_system.local_clock.rollback(&mut self.event_system.overflow, time);
         self.local_time.store(time, Ordering::Release);
-        println!("ROLLBACK!!!!! rolling back! {:?}", self.context.world_id);
+
+        println!("ROLLBACK!!!!! rolling back! world {:?}, rollback time {time}, prior {now}", self.context.world_id);
         Ok(())
     }
 
@@ -306,7 +312,9 @@ impl<
                 }
             }
             let time = msg.transfer.time();
+            println!("opening mail on planet {:?}, with recieve time {time}", self.context.world_id);
             if time < self.now() {
+                println!("found message in poll with recieve time {time}, local clock is {:?}, world {:?}", self.now(), self.context.world_id);
                 self.rollback(time)?;
             }
             match msg.open_letter() {
@@ -315,7 +323,11 @@ impl<
             }
             counter += 1;
         }
-        self.context.counter.fetch_sub(counter, Ordering::SeqCst);
+        if counter == 0 {
+            return Ok(())
+        }
+        let current = self.recv_counter.fetch_add(counter, Ordering::AcqRel);
+        println!("planet {:?} polled, receive counter {current} with {counter} messages more", self.context.world_id);
         Ok(())
     }
 
@@ -326,10 +338,10 @@ impl<
         // process messages at the next time step
         if let Ok(msgs) = self.local_messages.schedule.tick() {
             for msg in msgs {
+                self.context.time = msg.time();
                 let id = msg.to;
                 if id.is_none() {
                     for i in 0..self.agents.len() {
-                        self.context.time = msg.recv;
                         self.agents[i].read_message(&mut self.context, msg, i);
                     }
                     continue;
@@ -371,15 +383,20 @@ impl<
                 }
             }
         }
+        self.increment();
+        std::thread::yield_now();
+        Ok(())
+    }
+
+    fn increment(&mut self) {
         self.event_system
             .local_clock
             .increment(&mut self.event_system.overflow);
         self.local_messages
             .schedule
             .increment(&mut self.local_messages.overflow);
+        self.context.time += 1;
         self.local_time.store(self.now(), Ordering::Release);
-        std::thread::yield_now();
-        Ok(())
     }
 
     fn check_time_validity(&self) -> Result<(), AikaError> {
@@ -396,12 +413,13 @@ impl<
         if gvt as f64 * self.time_info.timestep >= self.time_info.terminal {
             return Err(AikaError::PastTerminal);
         }
+        println!("valid time: gvt {gvt}, local {load}, world {:?}", self.context.world_id);
         Ok(())
     }
 
     /// Run the `Planet` optimistically.
     pub fn run(&mut self) -> Result<(), AikaError> {
-        //let id = self.context.world_id;
+        let id = self.context.world_id;
         loop {
             let checkpoint = self.next_checkpoint.load(Ordering::SeqCst);
             let now = self.now();
@@ -409,14 +427,14 @@ impl<
             if now == checkpoint
                 && now != (self.time_info.terminal / self.time_info.timestep) as u64
             {
-                //println!("world {id} found sleeping");
+                //println!("world {id} found sleeping, checkpoint");
                 sleep(Duration::from_nanos(100));
                 continue;
             }
             let gvt = self.gvt.load(Ordering::SeqCst);
             //println!("world {id} found gvt {gvt}, has local time {now}");
             if gvt + self.throttle_horizon < self.now() {
-                //println!("world {id} found sleeping");
+                //println!("world {id} found sleeping, throttle");
                 sleep(Duration::from_nanos(100));
                 continue;
             }
@@ -426,7 +444,7 @@ impl<
             }
             step?;
         }
-        //println!("made it here for planet {id}, almost done");
+        println!("made it here for planet {id}, almost done");
         Ok(())
     }
 }
@@ -531,13 +549,14 @@ mod planet_tests {
         let gvt = Arc::new(AtomicU64::new(0));
         let lvt = Arc::new(AtomicU64::new(0));
         let checkpoint = Arc::new(AtomicU64::new(100));
-        let counter = Arc::new(AtomicUsize::new(0));
+        let send_counter = Arc::new(AtomicUsize::new(0));
+        let recv_counter = Arc::new(AtomicUsize::new(0));
         // Create a simple messenger for testing
         let messenger = ThreadedMessenger::<16, Mail<TestMessage>>::new(vec![world_id])?;
         let user = messenger.get_user(world_id)?;
 
         Ok(RegistryOutput::new(
-            gvt, lvt, counter, checkpoint, user, world_id,
+            gvt, lvt, send_counter, recv_counter, checkpoint, user, world_id,
         ))
     }
 

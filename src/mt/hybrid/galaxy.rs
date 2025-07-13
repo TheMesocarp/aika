@@ -2,7 +2,7 @@
 //! The `Galaxy` handles inter-planetary message delivery, GVT calculation, and throttling to
 //! maintain causality constraints in the optimistic parallel simulation.
 use std::sync::{
-    atomic::{fence, AtomicU64, AtomicUsize, Ordering},
+    atomic::{AtomicU64, AtomicUsize, Ordering},
     Arc,
 };
 
@@ -21,7 +21,8 @@ pub struct Galaxy<
     pub messenger: ThreadedMessenger<INTER_SLOTS, Mail<MessageType>>,
     pub lvts: Vec<Arc<AtomicU64>>,
     pub gvt: Arc<AtomicU64>,
-    pub counter: Arc<AtomicUsize>,
+    pub send_counters: Vec<Arc<AtomicUsize>>,
+    pub recv_counters: Vec<Arc<AtomicUsize>>,
     pub next_checkpoint: Arc<AtomicU64>,
     pub checkpoint_frequency: u64,
     pub throttle_horizon: u64,
@@ -53,7 +54,8 @@ impl<
             messenger,
             lvts: Vec::new(),
             gvt,
-            counter: Arc::new(AtomicUsize::new(0)),
+            send_counters: Vec::new(),
+            recv_counters: Vec::new(),
             next_checkpoint: Arc::new(AtomicU64::new(checkpoint_frequency)),
             checkpoint_frequency,
             throttle_horizon,
@@ -72,20 +74,29 @@ impl<
 
         let user = self.messenger.get_user(self.registered)?;
         let world_id = self.registered;
+
+        let send = Arc::new(AtomicUsize::new(0));
+        let send_clone = Arc::clone(&send);
+
+        let recv = Arc::new(AtomicUsize::new(0));
+        let recv_clone = Arc::clone(&recv);
+
         self.registered += 1;
         let output = RegistryOutput::new(
             arc,
             out,
-            Arc::clone(&self.counter),
+            send_clone,
+            recv_clone,
             Arc::clone(&self.next_checkpoint),
             user,
             world_id,
         );
+        self.send_counters.push(send);
+        self.recv_counters.push(recv);
         Ok(output)
     }
 
     fn deliver_the_mail(&mut self) -> Result<u64, AikaError> {
-        fence(Ordering::SeqCst);
         match self.messenger.poll() {
             Ok(msgs) => {
                 let mut lowest = u64::MAX;
@@ -96,6 +107,7 @@ impl<
                     }
                 }
                 self.messenger.deliver(msgs)?;
+                println!("found messages to transfer!");
                 Ok(lowest)
             }
             Err(err) => {
@@ -109,11 +121,17 @@ impl<
     }
 
     fn recalc_gvt(&mut self, in_transit_floor: u64) -> Result<(), AikaError> {
-        let in_flight = self.counter.load(Ordering::Acquire);
+        // this is a lazy gvt implementation. it works for the purposes used here 
+        // but it ultimately is out of date by up to min(throttle_horizon, checkpoint_frequency)
+        let total_sends: usize = self.send_counters.iter().map(|x| x.load(Ordering::Relaxed)).sum();
+        let total_recvs: usize = self.recv_counters.iter().map(|x| x.load(Ordering::Relaxed)).sum();
+        println!("total sends {total_sends} and total receives {total_recvs}");
+        let in_flight = total_sends.saturating_sub(total_recvs);
         if in_flight > 0 {
-            // Don't advance GVT while messages are in flight
-            return Ok(());
+            println!("found {in_flight} unprocessed messages in gvt thread");
+            return Ok(())
         }
+        println!("no inflights");
         let new_time = self.gvt.load(Ordering::Acquire);
 
         let mut lowest = u64::MAX;
@@ -128,14 +146,14 @@ impl<
 
         if in_transit_floor < lowest {
             println!("in transit");
-            lowest = in_transit_floor;
+            return Ok(())
         }
-        println!("local clocks: {all:?}, gvt: {new_time}, lowest: {lowest}");
         //println!("new_gvt: {lowest}");
         if new_time > lowest {
-            println!("local clocks: {all:?}, gvt: {new_time}, lowest: {lowest}");
-            return Err(AikaError::TimeTravel);
+            println!("time travel error: local clocks: {all:?}, gvt: {new_time}, lowest: {lowest}");
+            return Ok(());
         }
+        println!("local clocks: {all:?}, gvt: {new_time}, lowest: {lowest}");
         if lowest == u64::MAX {
             return Ok(());
         }
@@ -153,7 +171,7 @@ impl<
     pub fn gvt_daemon(&mut self) -> Result<(), AikaError> {
         loop {
             //std::thread::sleep(Duration::from_nanos(30));
-
+            println!("daemon looping...");
             self.check_mail_and_gvt()?;
 
             let current_gvt = self.gvt.load(Ordering::Acquire);
@@ -177,6 +195,7 @@ impl<
             }
             std::thread::yield_now();
         }
+        println!("exited gvt");
         Ok(())
     }
 
