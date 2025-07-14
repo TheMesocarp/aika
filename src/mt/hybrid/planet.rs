@@ -309,7 +309,6 @@ impl<
                     return Err(AikaError::MismatchedDeliveryAddress);
                 }
             }
-            self.block.recv(msg.transfer.commit_time())?;
             let time = msg.transfer.time();
             println!(
                 "Planet {:?}: opening mail with recieve time {time}",
@@ -325,7 +324,10 @@ impl<
             }
 
             match msg.open_letter() {
-                Transfer::Msg(msg) => self.commit_mail(msg),
+                Transfer::Msg(msg) => {
+                    self.block.recv(msg.commit_time())?;
+                    self.commit_mail(msg)
+                }
                 Transfer::AntiMsg(anti_msg) => self.annihilate(anti_msg),
             }
         }
@@ -398,14 +400,21 @@ impl<
         // check-process block now
         self.context.time += 1;
         if self.context.time > self.block.end {
-            println!("Planet {:?}, Time {:?}: submitting local block #{:?} with end time {:?}", self.context.world_id, self.context.time, self.block_nmb, self.block.end);
-            self.block_submitter.write(std::mem::take(&mut self.block))?;
+            println!(
+                "Planet {:?}, Time {:?}: submitting local block #{:?} with end time {:?}",
+                self.context.world_id, self.context.time, self.block_nmb, self.block.end
+            );
+            self.block_submitter
+                .write(std::mem::take(&mut self.block))?;
 
             self.block_nmb += 1;
 
             self.block.block_id = (self.context.world_id, self.block_nmb);
             self.block.start = self.context.time;
-            self.block.end = min(self.context.time + self.block_size - 1, (self.terminal / self.timestep) as u64);
+            self.block.end = min(
+                self.context.time + self.block_size - 1,
+                (self.terminal / self.timestep) as u64,
+            );
         }
         Ok(())
     }
@@ -417,11 +426,17 @@ impl<
             return Err(AikaError::ClockSyncIssue);
         }
         if self.terminal < self.timestep * self.context.time as f64 {
-            println!("Planet {:?}: local time past terminal {:?}", self.context.world_id, self.context.time);
+            println!(
+                "Planet {:?}: local time past terminal {:?}",
+                self.context.world_id, self.context.time
+            );
             return Err(AikaError::PastTerminal);
         }
         if self.current_gvt as f64 * self.timestep > self.terminal {
-            println!("Planet {:?}: gvt time past terminal {:?}", self.context.world_id, self.current_gvt);
+            println!(
+                "Planet {:?}: gvt time past terminal {:?}",
+                self.context.world_id, self.current_gvt
+            );
             return Err(AikaError::PastTerminal);
         }
         Ok(())
@@ -440,29 +455,31 @@ impl<
             }
 
             // if at a checkpoint or the throttle limit, busy-wait the thread
-            if self.checkpoint_hz != u64::MAX {
-                if now == (self.checkpoint_hz * self.block_size * self.block_nmb as u64)
-                    && now != (self.terminal / self.timestep) as u64
-                    && self.current_gvt != now
-                {
-                    println!("Planet {:?}: checkpoint sleeping", self.context.world_id);
-                    sleep(Duration::from_nanos(100));
-                    std::thread::yield_now();
-                    continue;
-                }
+            if self.checkpoint_hz != u64::MAX
+                && now == (self.checkpoint_hz * self.block_size * self.block_nmb as u64)
+                && now != (self.terminal / self.timestep) as u64
+                && self.current_gvt != now
+            {
+                println!("Planet {:?}: checkpoint sleeping", self.context.world_id);
+                sleep(Duration::from_nanos(100));
+                std::thread::yield_now();
+                continue;
             }
-            if self.throttle != u64::MAX {
-                if self.current_gvt + (self.throttle * self.block_size) < self.now() {
-                    println!("Planet {:?}: throttle sleeping", self.context.world_id);
-                    sleep(Duration::from_nanos(100));
-                    std::thread::yield_now();
-                    continue;
-                }
+            if self.throttle != u64::MAX
+                && self.current_gvt + (self.throttle * self.block_size) < self.now()
+            {
+                println!("Planet {:?}: throttle sleeping", self.context.world_id);
+                sleep(Duration::from_nanos(100));
+                std::thread::yield_now();
+                continue;
             }
             // step the sim forward one time step
             let step = self.step();
             if let Err(AikaError::PastTerminal) = step {
-                println!("Planet {:?}: past terminal time detected", self.context.world_id);
+                println!(
+                    "Planet {:?}: past terminal time detected",
+                    self.context.world_id
+                );
                 break;
             }
             step?;
@@ -577,7 +594,17 @@ mod planet_tests {
         let gvt = Broadcast::new()?;
         let gvt_subscriber = Arc::new(gvt).register_subscriber();
 
-        Ok(PlanetaryRegister { planet_id: 0, messenger_account: user, block_channel, gvt_subscriber, terminal: 300.0, timestep: 1.0, throttle: 5, checkpoint_hz: 10, block_size: 16 })
+        Ok(PlanetaryRegister {
+            planet_id: 0,
+            messenger_account: user,
+            block_channel,
+            gvt_subscriber,
+            terminal: 300.0,
+            timestep: 1.0,
+            throttle: 5,
+            checkpoint_hz: 10,
+            block_size: 16,
+        })
     }
 
     #[test]

@@ -155,14 +155,17 @@ impl<
         for (i, planet_blocks) in blocks.into_iter().enumerate() {
             if let Some(pblocks) = planet_blocks {
                 for block in pblocks {
-                    println!("GVT Master: received block from planet #{i}, with start time {:?}", block.start);
+                    println!(
+                        "GVT Master: received block from planet #{i}, with start time {:?}",
+                        block.start
+                    );
                     let diff = ((block.start - self.gvt) / self.block_size) as usize;
                     if diff == 0 {
                         println!("GVT Master: placing block in next slot");
                         self.next[i] = Some(block);
                         continue;
                     }
-                    if diff - 1 >= BLOCK_SLOTS {
+                    if diff > BLOCK_SLOTS {
                         return Err(AikaError::DistantBlocks(diff));
                     }
                     println!("GVT Master: placing block in pending slot number {diff}");
@@ -178,15 +181,13 @@ impl<
     ) -> Result<Vec<Option<Block<BLOCK_SLOTS>>>, AikaError> {
         let mut latests = Vec::new();
         for i in &self.next {
-            latests.push(i.clone());
+            latests.push(*i);
         }
 
         for (idx, row) in self.pending.iter().enumerate() {
-            for i in row {
-                if let Some(block) = i {
-                    let cloned = Some(block.clone());
-                    latests[idx] = cloned;
-                }
+            for block in row.iter().flatten() {
+                let cloned = Some(*block);
+                latests[idx] = cloned;
             }
         }
         Ok(latests)
@@ -202,26 +203,31 @@ impl<
             let mut recvs_from_previous = [0usize; BLOCK_SLOTS];
 
             // fetch next block stats
-            for i in &mut self.next {
-                if let Some(block) = i {
-                    sends += block.sends;
-                    recvs += block.recvs;
-                    if start == end && end == 0 {
-                        end = block.end;
-                        start = block.start;
-                    }
-                    if end != block.end && start != block.start {
-                        return Err(AikaError::MismatchBlockTimeStamps(self.block_counter, block.start, block.end));
-                    }
-                    recvs_from_previous
-                        .iter_mut()
-                        .zip(block.recvs_from_previous.iter())
-                        .for_each(|(x, y)| *x += *y);
+            for block in &mut self.next.iter_mut().flatten() {
+                sends += block.sends;
+                recvs += block.recvs;
+                if start == end && end == 0 {
+                    end = block.end;
+                    start = block.start;
                 }
+                if end != block.end && start != block.start {
+                    return Err(AikaError::MismatchBlockTimeStamps(
+                        self.block_counter,
+                        block.start,
+                        block.end,
+                    ));
+                }
+                recvs_from_previous
+                    .iter_mut()
+                    .zip(block.recvs_from_previous.iter())
+                    .for_each(|(x, y)| *x += *y);
             }
 
             let unmatched = sends - recvs;
-            println!("GVT Master: block number {:?}, found with {unmatched} unmatched messages.", self.block_counter);
+            println!(
+                "GVT Master: block number {:?}, found with {unmatched} unmatched messages.",
+                self.block_counter
+            );
             self.unmatched_sends = unmatched;
             // if all messages are accounted for locally, and we are indeed looking at the next block, commit and move on
             if unmatched == 0 {
@@ -247,11 +253,17 @@ impl<
                 return Ok(Some(end));
             }
         }
-        let missing_planets: Vec<usize> = self.next.iter().enumerate()
+        let missing_planets: Vec<usize> = self
+            .next
+            .iter()
+            .enumerate()
             .filter_map(|(i, block)| if block.is_none() { Some(i) } else { None })
             .collect();
         if !missing_planets.is_empty() {
-            println!("GVT Master: waiting for planets {:?} to submit next block", missing_planets);
+            println!(
+                "GVT Master: waiting for planets {:?} to submit next block",
+                missing_planets
+            );
         }
         Ok(None)
     }
@@ -264,7 +276,10 @@ impl<
         recvs: usize,
         recvs_from_previous: [usize; BLOCK_SLOTS],
     ) -> Result<(), AikaError> {
-        println!("GVT Master: committing block #{:?} with new gvt {end}", self.block_counter + 1);
+        println!(
+            "GVT Master: committing block #{:?} with new gvt {end}",
+            self.block_counter + 1
+        );
         self.block_counter += 1;
         let mut new = Block::<BLOCK_SLOTS>::new(start, end, usize::MAX, self.block_counter)?;
         new.recvs = recvs;
@@ -318,7 +333,10 @@ impl<
 
     fn check_terminate(&mut self) -> bool {
         if self.unmatched_sends != 0 {
-            println!("GVT Master: unmatched sends aren't zero yet! {:?}", self.unmatched_sends);
+            println!(
+                "GVT Master: unmatched sends aren't zero yet! {:?}",
+                self.unmatched_sends
+            );
             return false;
         }
         if !self.next.iter().all(|x| x.is_none()) {

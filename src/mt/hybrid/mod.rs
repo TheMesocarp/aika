@@ -11,8 +11,8 @@ use crate::{
 
 pub mod blocks;
 pub mod config;
-pub mod planet;
 pub mod galaxy;
+pub mod planet;
 
 /// Hybrid synchronization engine for multi-threaded execution environments.
 pub struct HybridEngine<
@@ -24,7 +24,8 @@ pub struct HybridEngine<
     MessageType: Pod + Zeroable + Clone,
 > {
     pub galaxy: Galaxy<MSG_SLOTS, BLOCK_SLOTS, GVT_SLOTS, MessageType>,
-    pub planets: Vec<Planet<MSG_SLOTS, BLOCK_SLOTS, GVT_SLOTS, CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>>,
+    pub planets:
+        Vec<Planet<MSG_SLOTS, BLOCK_SLOTS, GVT_SLOTS, CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>>,
     pub config: HybridConfig,
 }
 
@@ -39,18 +40,13 @@ impl<
 {
     /// Create a new synchronization engine from the provided config.
     pub fn create(config: HybridConfig, block_size: u64) -> Result<Self, AikaError> {
-        let mut galaxy = Galaxy::create(
-            config.number_of_worlds,
-        )?;
+        let mut galaxy = Galaxy::create(config.number_of_worlds)?;
         galaxy.set_time_scale(config.timestep, config.terminal);
         galaxy.block_size = block_size;
         let mut planets = Vec::new();
         for i in 0..config.number_of_worlds {
             let registry = galaxy.spawn_planet()?;
-            let planet = Planet::from_config(
-                config.world_config(i)?,
-                registry,
-            )?;
+            let planet = Planet::from_config(config.world_config(i)?, registry)?;
             planets.push(planet);
         }
         Ok(Self {
@@ -203,7 +199,7 @@ mod hybrid_engine_tests {
         assert_eq!(config.total_agents(), TOTAL_AGENTS);
 
         // Create the hybrid engine
-        let mut engine = HybridEngine::<32, 128, 16, 128, 1, TestData>::create(config, 2).unwrap();
+        let mut engine = HybridEngine::<32, 64, 16, 128, 1, TestData>::create(config, 2).unwrap();
         // Spawn agents using autobalancing
         for _i in 0..TOTAL_AGENTS {
             let agent = SimpleSchedulingAgent::new();
@@ -266,1105 +262,1108 @@ mod hybrid_engine_tests {
     }
 }
 
-// #[cfg(test)]
-// mod inter_planetary_message_tests {
-//     use crate::{
-//         agents::{PlanetContext, ThreadedAgent},
-//         mt::hybrid::{config::HybridConfig, HybridEngine},
-//         objects::{Action, Event, Msg},
-//     };
-//     use bytemuck::{Pod, Zeroable};
-//     use std::sync::{Arc, Mutex};
-
-//     // Test message type with more data
-//     #[derive(Copy, Clone, Debug, PartialEq)]
-//     #[repr(C)]
-//     struct InterPlanetaryMessage {
-//         value: u32,
-//         sender_planet: u32,
-//         sender_agent: u32,
-//         target_planet: u32,
-//         target_agent: u32,
-//     }
-
-//     unsafe impl Pod for InterPlanetaryMessage {}
-//     unsafe impl Zeroable for InterPlanetaryMessage {}
-
-//     // Shared state for tracking received messages
-//     type MessageLog = Arc<Mutex<Vec<(usize, usize, InterPlanetaryMessage)>>>; // (planet_id, agent_id, message)
-
-//     // Agent that sends messages to agents on other planets
-//     struct InterPlanetarySender {
-//         planet_id: usize,
-//         agent_id: usize,
-//         target_planet: usize,
-//         target_agent: usize,
-//         messages_to_send: usize,
-//         messages_sent: usize,
-//         send_interval: u64,
-//     }
-
-//     impl InterPlanetarySender {
-//         fn new(
-//             planet_id: usize,
-//             agent_id: usize,
-//             target_planet: usize,
-//             target_agent: usize,
-//             messages_to_send: usize,
-//             send_interval: u64,
-//         ) -> Self {
-//             Self {
-//                 planet_id,
-//                 agent_id,
-//                 target_planet,
-//                 target_agent,
-//                 messages_to_send,
-//                 messages_sent: 0,
-//                 send_interval,
-//             }
-//         }
-//     }
-
-//     impl ThreadedAgent<128, InterPlanetaryMessage> for InterPlanetarySender {
-//         fn step(
-//             &mut self,
-//             context: &mut PlanetContext<128, InterPlanetaryMessage>,
-//             agent_id: usize,
-//         ) -> Event {
-//             let time = context.time;
-
-//             // Send message if we haven't sent all yet
-//             if self.messages_sent < self.messages_to_send {
-//                 let message_data = InterPlanetaryMessage {
-//                     value: self.messages_sent as u32,
-//                     sender_planet: self.planet_id as u32,
-//                     sender_agent: self.agent_id as u32,
-//                     target_planet: self.target_planet as u32,
-//                     target_agent: self.target_agent as u32,
-//                 };
-
-//                 let msg = Msg::new(
-//                     message_data,
-//                     time,                    // sent time
-//                     time + 1,                // receive time (delayed)
-//                     agent_id,                // from agent
-//                     Some(self.target_agent), // to specific agent
-//                 );
-
-//                 // Send to another planet
-//                 let result = context.send_mail(msg, self.target_planet);
-//                 if result.is_ok() {
-//                     self.messages_sent += 1;
-//                     println!(
-//                         "Planet {} Agent {} sent message {} to Planet {} Agent {}",
-//                         self.planet_id,
-//                         self.agent_id,
-//                         self.messages_sent,
-//                         self.target_planet,
-//                         self.target_agent
-//                     );
-//                 }
-//             }
-
-//             // Continue sending at intervals
-//             if self.messages_sent < self.messages_to_send {
-//                 Event::new(time, time, agent_id, Action::Timeout(self.send_interval))
-//             } else {
-//                 Event::new(time, time, agent_id, Action::Timeout(100)) // Keep alive
-//             }
-//         }
-
-//         fn read_message(
-//             &mut self,
-//             _context: &mut PlanetContext<128, InterPlanetaryMessage>,
-//             _msg: Msg<InterPlanetaryMessage>,
-//             _agent_id: usize,
-//         ) {
-//             // Sender doesn't process incoming messages
-//         }
-//     }
-
-//     // Agent that receives and logs messages
-//     struct InterPlanetaryReceiver {
-//         planet_id: usize,
-//         agent_id: usize,
-//         message_log: MessageLog,
-//     }
-
-//     impl InterPlanetaryReceiver {
-//         fn new(planet_id: usize, agent_id: usize, message_log: MessageLog) -> Self {
-//             Self {
-//                 planet_id,
-//                 agent_id,
-//                 message_log,
-//             }
-//         }
-//     }
-
-//     impl ThreadedAgent<128, InterPlanetaryMessage> for InterPlanetaryReceiver {
-//         fn step(
-//             &mut self,
-//             _context: &mut PlanetContext<128, InterPlanetaryMessage>,
-//             agent_id: usize,
-//         ) -> Event {
-//             let time = _context.time;
-//             // Keep checking for messages
-//             Event::new(time, time, agent_id, Action::Timeout(1))
-//         }
-
-//         fn read_message(
-//             &mut self,
-//             _context: &mut PlanetContext<128, InterPlanetaryMessage>,
-//             msg: Msg<InterPlanetaryMessage>,
-//             _agent_id: usize,
-//         ) {
-//             println!(
-//                 "Planet {} Agent {} received message with value {} from Planet {} Agent {}",
-//                 self.planet_id,
-//                 self.agent_id,
-//                 msg.data.value,
-//                 msg.data.sender_planet,
-//                 msg.data.sender_agent
-//             );
-
-//             // Log the received message
-//             if let Ok(mut log) = self.message_log.lock() {
-//                 log.push((self.planet_id, self.agent_id, msg.data));
-//             }
-//         }
-//     }
-
-//     // Agent that broadcasts to all agents on other planets
-//     struct InterPlanetaryBroadcaster {
-//         planet_id: usize,
-//         agent_id: usize,
-//         target_planets: Vec<usize>,
-//         broadcasts_to_send: usize,
-//         broadcasts_sent: usize,
-//     }
-
-//     impl InterPlanetaryBroadcaster {
-//         fn new(
-//             planet_id: usize,
-//             agent_id: usize,
-//             target_planets: Vec<usize>,
-//             broadcasts_to_send: usize,
-//         ) -> Self {
-//             Self {
-//                 planet_id,
-//                 agent_id,
-//                 target_planets,
-//                 broadcasts_to_send,
-//                 broadcasts_sent: 0,
-//             }
-//         }
-//     }
-
-//     impl ThreadedAgent<128, InterPlanetaryMessage> for InterPlanetaryBroadcaster {
-//         fn step(
-//             &mut self,
-//             context: &mut PlanetContext<128, InterPlanetaryMessage>,
-//             agent_id: usize,
-//         ) -> Event {
-//             let time = context.time;
-
-//             if self.broadcasts_sent < self.broadcasts_to_send {
-//                 let message_data = InterPlanetaryMessage {
-//                     value: (100 + self.broadcasts_sent) as u32,
-//                     sender_planet: self.planet_id as u32,
-//                     sender_agent: self.agent_id as u32,
-//                     target_planet: u32::MAX, // Broadcast indicator
-//                     target_agent: u32::MAX,  // Broadcast indicator
-//                 };
-
-//                 // Send broadcast to each target planet
-//                 for &target_planet in &self.target_planets {
-//                     let msg = Msg::new(
-//                         message_data,
-//                         time,
-//                         time + 15,
-//                         agent_id,
-//                         None, // None means broadcast
-//                     );
-
-//                     let _ = context.send_mail(msg, target_planet);
-//                 }
-
-//                 self.broadcasts_sent += 1;
-//                 println!(
-//                     "Planet {} Agent {} broadcasted message {} to planets {:?}",
-//                     self.planet_id,
-//                     self.agent_id,
-//                     self.broadcasts_sent - 1,
-//                     self.target_planets
-//                 );
-//             }
-
-//             if self.broadcasts_sent < self.broadcasts_to_send {
-//                 Event::new(time, time, agent_id, Action::Timeout(30))
-//             } else {
-//                 Event::new(time, time, agent_id, Action::Timeout(100))
-//             }
-//         }
-
-//         fn read_message(
-//             &mut self,
-//             _context: &mut PlanetContext<128, InterPlanetaryMessage>,
-//             _msg: Msg<InterPlanetaryMessage>,
-//             _agent_id: usize,
-//         ) {
-//             // Broadcaster doesn't process messages
-//         }
-//     }
-
-//     #[test]
-//     fn test_basic_inter_planetary_messaging() {
-//         const NUM_PLANETS: usize = 3;
-//         const TERMINAL_TIME: f64 = 200.0;
-
-//         let message_log = Arc::new(Mutex::new(Vec::new()));
-
-//         // Create configuration
-//         let config = HybridConfig::new(NUM_PLANETS, 512)
-//             .with_time_bounds(TERMINAL_TIME, 1.0)
-//             .with_optimistic_sync(1000, 2000)
-//             .with_uniform_worlds(1024, 2, 256); // 2 agents per planet
-
-//         let mut engine =
-//             HybridEngine::<128, 128, 2, InterPlanetaryMessage>::create(config).unwrap();
-
-//         // Planet 0: Sender agent
-//         let sender = InterPlanetarySender::new(
-//             0, 0, // planet 0, agent 0
-//             1, 0, // target planet 1, agent 0
-//             5, // send 5 messages
-//             1, // every 10 time units
-//         );
-//         engine.spawn_agent(0, Box::new(sender)).unwrap();
-
-//         // Planet 0: Receiver agent (for any messages sent to it)
-//         let receiver0 = InterPlanetaryReceiver::new(0, 1, message_log.clone());
-//         engine.spawn_agent(0, Box::new(receiver0)).unwrap();
-
-//         // Planet 1: Receiver agent
-//         let receiver1 = InterPlanetaryReceiver::new(1, 0, message_log.clone());
-//         engine.spawn_agent(1, Box::new(receiver1)).unwrap();
-
-//         // Planet 1: Another agent
-//         let receiver1_2 = InterPlanetaryReceiver::new(1, 1, message_log.clone());
-//         engine.spawn_agent(1, Box::new(receiver1_2)).unwrap();
-
-//         // Planet 2: Just receivers
-//         let receiver2_1 = InterPlanetaryReceiver::new(2, 0, message_log.clone());
-//         let receiver2_2 = InterPlanetaryReceiver::new(2, 1, message_log.clone());
-//         engine.spawn_agent(2, Box::new(receiver2_1)).unwrap();
-//         engine.spawn_agent(2, Box::new(receiver2_2)).unwrap();
-
-//         // Schedule initial events
-//         engine.schedule(0, 0, 1).unwrap(); // Start sender
-//         for planet in 0..NUM_PLANETS {
-//             for agent in 0..2 {
-//                 engine.schedule(planet, agent, 1).unwrap();
-//             }
-//         }
-
-//         // Run simulation
-//         let result = engine.run();
-//         assert!(result.is_ok(), "Engine run failed: {:?}", result.err());
-
-//         // Verify messages were received
-//         let log = message_log.lock().unwrap();
-//         println!("Total messages received: {}", log.len());
-
-//         // Should have received 5 messages on planet 1, agent 0
-//         let planet1_agent0_messages: Vec<_> = log
-//             .iter()
-//             .filter(|(planet, agent, _)| *planet == 1 && *agent == 0)
-//             .collect();
-
-//         assert_eq!(
-//             planet1_agent0_messages.len(),
-//             5,
-//             "Planet 1 Agent 0 should have received 5 messages"
-//         );
-
-//         // Verify message content
-//         for (i, (_, _, msg)) in planet1_agent0_messages.iter().enumerate() {
-//             assert_eq!(msg.value, i as u32);
-//             assert_eq!(msg.sender_planet, 0);
-//             assert_eq!(msg.sender_agent, 0);
-//             assert_eq!(msg.target_planet, 1);
-//             assert_eq!(msg.target_agent, 0);
-//         }
-//     }
-
-//     #[test]
-//     fn test_inter_planetary_broadcast() {
-//         const NUM_PLANETS: usize = 4;
-//         const AGENTS_PER_PLANET: usize = 3;
-//         const TERMINAL_TIME: f64 = 300.0;
-
-//         let message_log = Arc::new(Mutex::new(Vec::new()));
-
-//         // Create configuration
-//         let config = HybridConfig::new(NUM_PLANETS, 512)
-//             .with_time_bounds(TERMINAL_TIME, 1.0)
-//             .with_optimistic_sync(100, 200)
-//             .with_uniform_worlds(1024, AGENTS_PER_PLANET, 256);
-
-//         let mut engine =
-//             HybridEngine::<128, 128, 2, InterPlanetaryMessage>::create(config).unwrap();
-
-//         // Planet 0: Broadcaster
-//         let broadcaster = InterPlanetaryBroadcaster::new(
-//             0,
-//             0,             // planet 0, agent 0
-//             vec![1, 2, 3], // broadcast to planets 1, 2, 3
-//             3,             // send 3 broadcasts
-//         );
-//         engine.spawn_agent(0, Box::new(broadcaster)).unwrap();
-
-//         // Add receivers to planet 0
-//         for agent_id in 1..AGENTS_PER_PLANET {
-//             let receiver = InterPlanetaryReceiver::new(0, agent_id, message_log.clone());
-//             engine.spawn_agent(0, Box::new(receiver)).unwrap();
-//         }
-
-//         // Add receivers to other planets
-//         for planet in 1..NUM_PLANETS {
-//             for agent_id in 0..AGENTS_PER_PLANET {
-//                 let receiver = InterPlanetaryReceiver::new(planet, agent_id, message_log.clone());
-//                 engine.spawn_agent(planet, Box::new(receiver)).unwrap();
-//             }
-//         }
-
-//         // Schedule all agents
-//         for planet in 0..NUM_PLANETS {
-//             for agent in 0..AGENTS_PER_PLANET {
-//                 engine.schedule(planet, agent, 1).unwrap();
-//             }
-//         }
-
-//         // Run simulation
-//         let result = engine.run();
-//         assert!(result.is_ok(), "Engine run failed: {:?}", result.err());
-
-//         // Verify broadcasts were received
-//         let log = message_log.lock().unwrap();
-//         println!("Total broadcast messages received: {}", log.len());
-
-//         // Each broadcast should be received by all agents on planets 1, 2, 3
-//         // That's 3 planets * 3 agents per planet * 3 broadcasts = 27 messages
-//         let broadcast_messages: Vec<_> = log
-//             .iter()
-//             .filter(|(planet, _, msg)| *planet > 0 && msg.value >= 100)
-//             .collect();
-
-//         assert_eq!(
-//             broadcast_messages.len(),
-//             27,
-//             "Should have received 27 broadcast messages (3 broadcasts * 3 planets * 3 agents)"
-//         );
-
-//         // Verify each planet received all broadcasts
-//         for planet in 1..NUM_PLANETS {
-//             let planet_broadcasts: Vec<_> = log
-//                 .iter()
-//                 .filter(|(p, _, msg)| *p == planet && msg.value >= 100)
-//                 .collect();
-
-//             assert_eq!(
-//                 planet_broadcasts.len(),
-//                 9,
-//                 "Planet {planet} should have received 9 broadcast messages (3 broadcasts * 3 agents)"
-//             );
-//         }
-//     }
-
-//     #[test]
-//     fn test_bidirectional_inter_planetary_communication() {
-//         const NUM_PLANETS: usize = 2;
-//         const TERMINAL_TIME: f64 = 400.0;
-
-//         let message_log = Arc::new(Mutex::new(Vec::new()));
-
-//         // Create configuration
-//         let config = HybridConfig::new(NUM_PLANETS, 512)
-//             .with_time_bounds(TERMINAL_TIME, 1.0)
-//             .with_optimistic_sync(15, 20)
-//             .with_uniform_worlds(1024, 2, 256);
-
-//         let mut engine =
-//             HybridEngine::<128, 128, 2, InterPlanetaryMessage>::create(config).unwrap();
-
-//         // Create an agent that can both send and receive
-//         struct BidirectionalAgent {
-//             planet_id: usize,
-//             agent_id: usize,
-//             target_planet: usize,
-//             target_agent: usize,
-//             messages_to_send: usize,
-//             messages_sent: usize,
-//             send_interval: u64,
-//             message_log: MessageLog,
-//         }
-
-//         impl BidirectionalAgent {
-//             fn new(
-//                 planet_id: usize,
-//                 agent_id: usize,
-//                 target_planet: usize,
-//                 target_agent: usize,
-//                 messages_to_send: usize,
-//                 send_interval: u64,
-//                 message_log: MessageLog,
-//             ) -> Self {
-//                 Self {
-//                     planet_id,
-//                     agent_id,
-//                     target_planet,
-//                     target_agent,
-//                     messages_to_send,
-//                     messages_sent: 0,
-//                     send_interval,
-//                     message_log,
-//                 }
-//             }
-//         }
-
-//         impl ThreadedAgent<128, InterPlanetaryMessage> for BidirectionalAgent {
-//             fn step(
-//                 &mut self,
-//                 context: &mut PlanetContext<128, InterPlanetaryMessage>,
-//                 agent_id: usize,
-//             ) -> Event {
-//                 let time = context.time;
-
-//                 // Send message if we haven't sent all yet
-//                 if self.messages_sent < self.messages_to_send {
-//                     let message_data = InterPlanetaryMessage {
-//                         value: self.messages_sent as u32,
-//                         sender_planet: self.planet_id as u32,
-//                         sender_agent: self.agent_id as u32,
-//                         target_planet: self.target_planet as u32,
-//                         target_agent: self.target_agent as u32,
-//                     };
-
-//                     let msg = Msg::new(
-//                         message_data,
-//                         time,
-//                         time + 20,
-//                         agent_id,
-//                         Some(self.target_agent),
-//                     );
-
-//                     let result = context.send_mail(msg, self.target_planet);
-//                     if result.is_ok() {
-//                         self.messages_sent += 1;
-//                         println!(
-//                             "Planet {} Agent {} sent message {} to Planet {} Agent {}",
-//                             self.planet_id,
-//                             self.agent_id,
-//                             self.messages_sent - 1,
-//                             self.target_planet,
-//                             self.target_agent
-//                         );
-//                     }
-//                 }
-
-//                 if self.messages_sent < self.messages_to_send {
-//                     Event::new(time, time, agent_id, Action::Timeout(self.send_interval))
-//                 } else {
-//                     Event::new(time, time, agent_id, Action::Timeout(100))
-//                 }
-//             }
-
-//             fn read_message(
-//                 &mut self,
-//                 _context: &mut PlanetContext<128, InterPlanetaryMessage>,
-//                 msg: Msg<InterPlanetaryMessage>,
-//                 _agent_id: usize,
-//             ) {
-//                 println!(
-//                     "Planet {} Agent {} received message with value {} from Planet {} Agent {}",
-//                     self.planet_id,
-//                     self.agent_id,
-//                     msg.data.value,
-//                     msg.data.sender_planet,
-//                     msg.data.sender_agent
-//                 );
-
-//                 // Log the received message
-//                 if let Ok(mut log) = self.message_log.lock() {
-//                     log.push((self.planet_id, self.agent_id, msg.data));
-//                 }
-//             }
-//         }
-
-//         // Planet 0 Agent 0: Sends to Planet 1 Agent 0 AND receives
-//         let agent0_0 = BidirectionalAgent::new(0, 0, 1, 0, 4, 20, message_log.clone());
-//         engine.spawn_agent(0, Box::new(agent0_0)).unwrap();
-
-//         // Planet 0 Agent 1: Just receives
-//         let receiver0 = InterPlanetaryReceiver::new(0, 1, message_log.clone());
-//         engine.spawn_agent(0, Box::new(receiver0)).unwrap();
-
-//         // Planet 1 Agent 0: Sends to Planet 0 Agent 0 AND receives
-//         let agent1_0 = BidirectionalAgent::new(1, 0, 0, 0, 4, 25, message_log.clone());
-//         engine.spawn_agent(1, Box::new(agent1_0)).unwrap();
-
-//         // Planet 1 Agent 1: Just receives
-//         let receiver1 = InterPlanetaryReceiver::new(1, 1, message_log.clone());
-//         engine.spawn_agent(1, Box::new(receiver1)).unwrap();
-
-//         // Schedule all agents
-//         for planet in 0..NUM_PLANETS {
-//             for agent in 0..2 {
-//                 engine.schedule(planet, agent, 1).unwrap();
-//             }
-//         }
-
-//         // Run simulation
-//         let result = engine.run();
-//         assert!(result.is_ok(), "Engine run failed: {:?}", result.err());
-
-//         // Verify bidirectional communication
-//         let log = message_log.lock().unwrap();
-
-//         // Messages from Planet 0 to Planet 1
-//         let p0_to_p1: Vec<_> = log
-//             .iter()
-//             .filter(|(planet, _, msg)| *planet == 1 && msg.sender_planet == 0)
-//             .collect();
-
-//         // Messages from Planet 1 to Planet 0
-//         let p1_to_p0: Vec<_> = log
-//             .iter()
-//             .filter(|(planet, _, msg)| *planet == 0 && msg.sender_planet == 1)
-//             .collect();
-
-//         println!("Planet 0 -> Planet 1: {} messages", p0_to_p1.len());
-//         println!("Planet 1 -> Planet 0: {} messages", p1_to_p0.len());
-
-//         assert_eq!(
-//             p0_to_p1.len(),
-//             4,
-//             "Should have 4 messages from Planet 0 to Planet 1"
-//         );
-//         assert_eq!(
-//             p1_to_p0.len(),
-//             4,
-//             "Should have 4 messages from Planet 1 to Planet 0"
-//         );
-//     }
-
-//     #[test]
-//     fn test_inter_planetary_message_ordering() {
-//         const NUM_PLANETS: usize = 2;
-//         const TERMINAL_TIME: f64 = 200.0;
-
-//         let message_log = Arc::new(Mutex::new(Vec::new()));
-
-//         // Create configuration with smaller values for faster test
-//         let config = HybridConfig::new(NUM_PLANETS, 256)
-//             .with_time_bounds(TERMINAL_TIME, 1.0)
-//             .with_optimistic_sync(50, 100)
-//             .with_uniform_worlds(512, 1, 128);
-
-//         let mut engine = HybridEngine::<128, 64, 2, InterPlanetaryMessage>::create(config).unwrap();
-
-//         // Rapid-fire sender
-//         struct RapidSender {
-//             messages_sent: usize,
-//         }
-
-//         impl ThreadedAgent<128, InterPlanetaryMessage> for RapidSender {
-//             fn step(
-//                 &mut self,
-//                 context: &mut PlanetContext<128, InterPlanetaryMessage>,
-//                 agent_id: usize,
-//             ) -> Event {
-//                 let time = context.time;
-
-//                 // Send multiple messages at once
-//                 for i in 0..3 {
-//                     let msg_data = InterPlanetaryMessage {
-//                         value: (self.messages_sent * 3 + i) as u32,
-//                         sender_planet: 0,
-//                         sender_agent: 0,
-//                         target_planet: 1,
-//                         target_agent: 0,
-//                     };
-
-//                     let msg = Msg::new(
-//                         msg_data,
-//                         time,
-//                         time + 10 + i as u64 * 5, // Staggered receive times
-//                         agent_id,
-//                         Some(0),
-//                     );
-
-//                     let _ = context.send_mail(msg, 1);
-//                 }
-
-//                 self.messages_sent += 1;
-
-//                 if self.messages_sent < 5 {
-//                     Event::new(time, time, agent_id, Action::Timeout(15))
-//                 } else {
-//                     Event::new(time, time, agent_id, Action::Wait)
-//                 }
-//             }
-
-//             fn read_message(
-//                 &mut self,
-//                 _context: &mut PlanetContext<128, InterPlanetaryMessage>,
-//                 _msg: Msg<InterPlanetaryMessage>,
-//                 _agent_id: usize,
-//             ) {
-//             }
-//         }
-
-//         let sender = RapidSender { messages_sent: 0 };
-//         engine.spawn_agent(0, Box::new(sender)).unwrap();
-
-//         let receiver = InterPlanetaryReceiver::new(1, 0, message_log.clone());
-//         engine.spawn_agent(1, Box::new(receiver)).unwrap();
-
-//         // Schedule agents
-//         engine.schedule(0, 0, 1).unwrap();
-//         engine.schedule(1, 0, 1).unwrap();
-
-//         // Run simulation
-//         let result = engine.run();
-//         assert!(result.is_ok());
-
-//         // Verify message ordering
-//         let log = message_log.lock().unwrap();
-//         let received_values: Vec<u32> = log.iter().map(|(_, _, msg)| msg.value).collect();
-
-//         println!("Received values: {received_values:?}");
-
-//         // Messages should be received in order despite being sent in batches
-//         for i in 1..received_values.len() {
-//             assert!(
-//                 received_values[i] >= received_values[i - 1],
-//                 "Messages received out of order: {} came after {}",
-//                 received_values[i - 1],
-//                 received_values[i]
-//             );
-//         }
-//     }
-
-//     #[test]
-//     fn test_inter_planetary_messaging_with_failures() {
-//         const NUM_PLANETS: usize = 3;
-//         const TERMINAL_TIME: f64 = 150.0;
-
-//         // Agent that tries to send to non-existent planets
-//         struct FaultySender {
-//             attempts: usize,
-//         }
-
-//         impl ThreadedAgent<128, InterPlanetaryMessage> for FaultySender {
-//             fn step(
-//                 &mut self,
-//                 context: &mut PlanetContext<128, InterPlanetaryMessage>,
-//                 agent_id: usize,
-//             ) -> Event {
-//                 let time = context.time;
-
-//                 if self.attempts < 3 {
-//                     let msg_data = InterPlanetaryMessage {
-//                         value: self.attempts as u32,
-//                         sender_planet: 0,
-//                         sender_agent: 0,
-//                         target_planet: 99, // Non-existent planet
-//                         target_agent: 0,
-//                     };
-
-//                     let msg = Msg::new(msg_data, time, time + 10, agent_id, Some(0));
-
-//                     // This should fail gracefully
-//                     let result = context.send_mail(msg, 99);
-//                     if result.is_err() {
-//                         println!("Expected error when sending to non-existent planet: {result:?}");
-//                     }
-
-//                     self.attempts += 1;
-//                 }
-
-//                 Event::new(time, time, agent_id, Action::Timeout(10))
-//             }
-
-//             fn read_message(
-//                 &mut self,
-//                 _context: &mut PlanetContext<128, InterPlanetaryMessage>,
-//                 _msg: Msg<InterPlanetaryMessage>,
-//                 _agent_id: usize,
-//             ) {
-//             }
-//         }
-
-//         let config = HybridConfig::new(NUM_PLANETS, 256)
-//             .with_time_bounds(TERMINAL_TIME, 1.0)
-//             .with_optimistic_sync(50, 100)
-//             .with_uniform_worlds(512, 1, 128);
-
-//         let mut engine = HybridEngine::<128, 64, 2, InterPlanetaryMessage>::create(config).unwrap();
-
-//         let sender = FaultySender { attempts: 0 };
-//         engine.spawn_agent(0, Box::new(sender)).unwrap();
-
-//         // Add a dummy agent to planet 1
-//         let message_log = Arc::new(Mutex::new(Vec::new()));
-//         let receiver = InterPlanetaryReceiver::new(1, 0, message_log);
-//         engine.spawn_agent(1, Box::new(receiver)).unwrap();
-
-//         // Add a dummy agent to planet 2
-//         let message_log2 = Arc::new(Mutex::new(Vec::new()));
-//         let receiver2 = InterPlanetaryReceiver::new(2, 0, message_log2);
-//         engine.spawn_agent(2, Box::new(receiver2)).unwrap();
-
-//         engine.schedule(0, 0, 1).unwrap();
-//         engine.schedule(1, 0, 1).unwrap();
-//         engine.schedule(2, 0, 1).unwrap();
-
-//         // Should run without panicking despite send failures
-//         let result = engine.run();
-//         assert!(
-//             result.is_ok(),
-//             "Engine should handle send failures gracefully"
-//         );
-//     }
-// }
-
-// #[cfg(test)]
-// mod rollback_contention_tests {
-//     use crate::{
-//         agents::{PlanetContext, ThreadedAgent},
-//         mt::hybrid::{config::HybridConfig, HybridEngine},
-//         objects::{Action, Event, Msg},
-//     };
-//     use bytemuck::{Pod, Zeroable};
-//     use std::{
-//         sync::{Arc, Mutex},
-//         thread,
-//         time::Duration,
-//     };
-
-//     // A unified message type for all tests in this module.
-//     #[derive(Copy, Clone, Debug, PartialEq)]
-//     #[repr(u8)]
-//     enum MessageType {
-//         Chaos,
-//         Ping,
-//     }
-
-//     // A simple message for contention tests
-//     #[derive(Copy, Clone, Debug, PartialEq)]
-//     #[repr(C)]
-//     struct ContentionMessage {
-//         msg_type: MessageType,
-//         sequence_num: u32,
-//         sender_id: u32,
-//     }
-
-//     unsafe impl Pod for ContentionMessage {}
-//     unsafe impl Zeroable for ContentionMessage {}
-
-//     type MessageLog = Arc<Mutex<Vec<ContentionMessage>>>;
-
-//     /// An agent that simulates a heavy workload by sleeping, then sends a message
-//     /// for immediate processing, likely triggering a rollback on the receiver.
-//     struct ChaosAgent {
-//         target_planet: usize,
-//         target_agent: usize,
-//         workload_nanos: u64,
-//         messages_to_send: u32,
-//         messages_sent: u32,
-//         send_interval: u64,
-//     }
-
-//     impl ChaosAgent {
-//         fn new(
-//             target_planet: usize,
-//             target_agent: usize,
-//             workload_nanos: u64,
-//             messages_to_send: u32,
-//             send_interval: u64,
-//         ) -> Self {
-//             Self {
-//                 target_planet,
-//                 target_agent,
-//                 workload_nanos,
-//                 messages_to_send,
-//                 messages_sent: 0,
-//                 send_interval,
-//             }
-//         }
-//     }
-
-//     impl ThreadedAgent<128, ContentionMessage> for ChaosAgent {
-//         fn step(
-//             &mut self,
-//             context: &mut PlanetContext<128, ContentionMessage>,
-//             agent_id: usize,
-//         ) -> Event {
-//             let time = context.time;
-
-//             if self.messages_sent < self.messages_to_send {
-//                 // Simulate a heavy workload by pausing the thread.
-//                 // This makes it likely that the receiver planet has already advanced its time.
-//                 if self.workload_nanos > 0 {
-//                     thread::sleep(Duration::from_nanos(self.workload_nanos));
-//                 }
-
-//                 let message_data = ContentionMessage {
-//                     msg_type: MessageType::Chaos,
-//                     sequence_num: self.messages_sent,
-//                     sender_id: agent_id as u32,
-//                 };
-
-//                 // Send a message for processing in the immediate future (+1).
-//                 // If this agent's thread was delayed, `time + 1` might be in the
-//                 // receiver's past, forcing a rollback.
-//                 let msg = Msg::new(
-//                     message_data,
-//                     time,
-//                     time + 1, // Receive time is just after send time
-//                     agent_id,
-//                     Some(self.target_agent),
-//                 );
-
-//                 // The send_mail function will correctly create the anti-message.
-//                 if context.send_mail(msg, self.target_planet).is_ok() {
-//                     self.messages_sent += 1;
-//                 }
-//             }
-
-//             // Schedule the next send event or wait if done.
-//             if self.messages_sent < self.messages_to_send {
-//                 Event::new(time, time, agent_id, Action::Timeout(self.send_interval))
-//             } else {
-//                 Event::new(time, time, agent_id, Action::Wait) // Stop sending
-//             }
-//         }
-
-//         fn read_message(
-//             &mut self,
-//             _context: &mut PlanetContext<128, ContentionMessage>,
-//             _msg: Msg<ContentionMessage>,
-//             _agent_id: usize,
-//         ) {
-//             // Chaos agent does not process incoming messages.
-//         }
-//     }
-
-//     /// A simple receiver agent that logs all messages it receives.
-//     struct ContentionReceiver {
-//         message_log: MessageLog,
-//     }
-
-//     impl ContentionReceiver {
-//         fn new(message_log: MessageLog) -> Self {
-//             Self { message_log }
-//         }
-//     }
-
-//     impl ThreadedAgent<128, ContentionMessage> for ContentionReceiver {
-//         fn step(
-//             &mut self,
-//             context: &mut PlanetContext<128, ContentionMessage>,
-//             agent_id: usize,
-//         ) -> Event {
-//             // Just stay alive to receive messages.
-//             Event::new(context.time, context.time, agent_id, Action::Timeout(10))
-//         }
-
-//         fn read_message(
-//             &mut self,
-//             _context: &mut PlanetContext<128, ContentionMessage>,
-//             msg: Msg<ContentionMessage>,
-//             _agent_id: usize,
-//         ) {
-//             // When a message is received, add it to the shared log.
-//             if let Ok(mut log) = self.message_log.lock() {
-//                 log.push(msg.data);
-//             }
-//         }
-//     }
-
-//     struct PingPongAgent {
-//         target_planet: usize,
-//         target_agent: usize,
-//         ping_count: u32,
-//     }
-
-//     impl PingPongAgent {
-//         fn new(target_planet: usize, target_agent: usize) -> Self {
-//             Self {
-//                 target_planet,
-//                 target_agent,
-//                 ping_count: 0,
-//             }
-//         }
-//     }
-
-//     impl ThreadedAgent<128, ContentionMessage> for PingPongAgent {
-//         fn step(
-//             &mut self,
-//             context: &mut PlanetContext<128, ContentionMessage>,
-//             agent_id: usize,
-//         ) -> Event {
-//             println!(
-//                 "world {:?} sending ping {:?}",
-//                 context.world_id,
-//                 self.ping_count + 1
-//             );
-//             let time = context.time;
-//             let message_data = ContentionMessage {
-//                 msg_type: MessageType::Ping,
-//                 sequence_num: self.ping_count,
-//                 sender_id: agent_id as u32,
-//             };
-//             println!("set send time as {time} and recv as {:?}", time + 5);
-//             let msg = Msg::new(
-//                 message_data,
-//                 time,
-//                 time + 5,
-//                 agent_id,
-//                 Some(self.target_agent),
-//             );
-//             let _ = context.send_mail(msg, self.target_planet);
-//             self.ping_count += 1;
-//             // Wait for a reply before sending the next ping
-//             Event::new(time, time, agent_id, Action::Wait)
-//         }
-
-//         fn read_message(
-//             &mut self,
-//             context: &mut PlanetContext<128, ContentionMessage>,
-//             msg: Msg<ContentionMessage>,
-//             agent_id: usize,
-//         ) {
-//             // When we get a ping back, schedule a step to send another one.
-//             println!(
-//                 "world {:?} recieving pong: {:?}",
-//                 context.world_id, msg.data.sequence_num
-//             );
-//             if msg.data.msg_type == MessageType::Ping {
-//                 let time = context.time;
-//                 println!("set send time as {time} and recv as {:?}", time + 5);
-//                 let _ = context.world_state.write(1, time, None); // just to write something
-//                 let _ = self.step(context, agent_id);
-//             }
-//         }
-//     }
-
-//     /// Helper function to run a contention test with a specific workload.
-//     fn run_contention_test(workload_nanos: u64, messages_to_send: u32, noise: bool) {
-//         const NUM_PLANETS: usize = 2;
-//         const TERMINAL_TIME: f64 = 500.0;
-
-//         let message_log = Arc::new(Mutex::new(Vec::new()));
-
-//         // Configure the engine. A small throttle horizon can make rollbacks more likely.
-//         let config = HybridConfig::new(NUM_PLANETS, 1024)
-//             .with_time_bounds(TERMINAL_TIME, 1.0)
-//             .with_optimistic_sync(20, 40) // Small throttle horizon and checkpoint frequency
-//             .with_uniform_worlds(1024, 2, 256); // 1 agent per planet
-
-//         let mut engine = HybridEngine::<128, 128, 2, ContentionMessage>::create(config).unwrap();
-
-//         // Planet 0: The ChaosAgent causing trouble.
-//         let chaos_agent = ChaosAgent::new(
-//             1,                // target_planet
-//             0,                // target_agent
-//             workload_nanos,   // simulated workload
-//             messages_to_send, // number of messages to send
-//             1,                // send a message every 10 time units
-//         );
-//         engine.spawn_agent(0, Box::new(chaos_agent)).unwrap();
-
-//         // Planet 1: The receiver that will be rolled back.
-//         let receiver = ContentionReceiver::new(message_log.clone());
-//         engine.spawn_agent(1, Box::new(receiver)).unwrap();
-
-//         // Schedule initial events to start the simulation.
-//         engine.schedule(0, 0, 1).unwrap(); // Start the chaos agent.
-//         engine.schedule(1, 0, 1).unwrap(); // Start the receiver.
-
-//         if noise {
-//             // Planet 0: PingPong Agent 1
-//             let pinger1 = PingPongAgent::new(1, 1);
-//             engine.spawn_agent(0, Box::new(pinger1)).unwrap();
-//             engine.schedule(0, 1, 1).unwrap(); // Start the ping-pong
-
-//             // Planet 1: PingPong Agent 2
-//             let pinger2 = PingPongAgent::new(0, 1);
-//             engine.spawn_agent(1, Box::new(pinger2)).unwrap();
-//         }
-
-//         // Run the simulation.
-//         let result = engine.run();
-
-//         // The primary check is that the simulation completes without errors.
-//         // The internal GVT checks will fail with AikaError::TimeTravel if GVT
-//         // becomes non-monotonic.
-//         assert!(
-//             result.is_ok(),
-//             "Engine run failed under contention with workload {}ns: {:?}",
-//             workload_nanos,
-//             result.err()
-//         );
-
-//         // Verify that all messages were eventually delivered, despite rollbacks.
-//         let log = message_log.lock().unwrap();
-//         assert_eq!(
-//             log.len(),
-//             messages_to_send as usize,
-//             "Incorrect number of messages received with workload {}ns. Expected {}, got {}.",
-//             workload_nanos,
-//             messages_to_send,
-//             log.len()
-//         );
-
-//         // Verify the sequence numbers to ensure no messages were lost.
-//         let mut received_sequences: Vec<u32> = log.iter().map(|m| m.sequence_num).collect();
-//         received_sequences.sort_unstable();
-//         let expected_sequences: Vec<u32> = (0..messages_to_send).collect();
-//         assert_eq!(
-//             received_sequences, expected_sequences,
-//             "Message sequence numbers are incorrect, indicating lost or duplicated messages."
-//         );
-//     }
-
-//     #[test]
-//     fn test_no_contention_baseline() {
-//         // No workload, should not cause rollbacks.
-//         println!("Running test: No contention baseline");
-//         run_contention_test(0, 200, true);
-//     }
-
-//     #[test]
-//     fn test_light_contention_with_rollbacks() {
-//         // A small delay, may cause occasional rollbacks.
-//         println!("Running test: Light contention");
-//         run_contention_test(100, 200, false); // 100 nanoseconds
-//     }
-
-//     #[test]
-//     fn test_moderate_contention_with_rollbacks() {
-//         // A more significant delay, should reliably cause rollbacks.
-//         println!("Running test: Moderate contention");
-//         run_contention_test(500, 200, false); // 500 nanoseconds
-//     }
-
-//     #[test]
-//     fn test_high_contention_with_rollbacks() {
-//         // A large delay that makes rollbacks very frequent.
-//         println!("Running test: High contention");
-//         run_contention_test(2000, 200, false); // 2 microseconds
-//     }
-// }
+#[cfg(test)]
+mod inter_planetary_message_tests {
+    use crate::{
+        agents::{PlanetContext, ThreadedAgent},
+        mt::hybrid::{config::HybridConfig, HybridEngine},
+        objects::{Action, Event, Msg},
+    };
+    use bytemuck::{Pod, Zeroable};
+    use std::sync::{Arc, Mutex};
+
+    // Test message type with more data
+    #[derive(Copy, Clone, Debug, PartialEq)]
+    #[repr(C)]
+    struct InterPlanetaryMessage {
+        value: u32,
+        sender_planet: u32,
+        sender_agent: u32,
+        target_planet: u32,
+        target_agent: u32,
+    }
+
+    unsafe impl Pod for InterPlanetaryMessage {}
+    unsafe impl Zeroable for InterPlanetaryMessage {}
+
+    // Shared state for tracking received messages
+    type MessageLog = Arc<Mutex<Vec<(usize, usize, InterPlanetaryMessage)>>>; // (planet_id, agent_id, message)
+
+    // Agent that sends messages to agents on other planets
+    struct InterPlanetarySender {
+        planet_id: usize,
+        agent_id: usize,
+        target_planet: usize,
+        target_agent: usize,
+        messages_to_send: usize,
+        messages_sent: usize,
+        send_interval: u64,
+    }
+
+    impl InterPlanetarySender {
+        fn new(
+            planet_id: usize,
+            agent_id: usize,
+            target_planet: usize,
+            target_agent: usize,
+            messages_to_send: usize,
+            send_interval: u64,
+        ) -> Self {
+            Self {
+                planet_id,
+                agent_id,
+                target_planet,
+                target_agent,
+                messages_to_send,
+                messages_sent: 0,
+                send_interval,
+            }
+        }
+    }
+
+    impl ThreadedAgent<128, InterPlanetaryMessage> for InterPlanetarySender {
+        fn step(
+            &mut self,
+            context: &mut PlanetContext<128, InterPlanetaryMessage>,
+            agent_id: usize,
+        ) -> Event {
+            let time = context.time;
+
+            // Send message if we haven't sent all yet
+            if self.messages_sent < self.messages_to_send {
+                let message_data = InterPlanetaryMessage {
+                    value: self.messages_sent as u32,
+                    sender_planet: self.planet_id as u32,
+                    sender_agent: self.agent_id as u32,
+                    target_planet: self.target_planet as u32,
+                    target_agent: self.target_agent as u32,
+                };
+
+                let msg = Msg::new(
+                    message_data,
+                    time,                    // sent time
+                    time + 1,                // receive time (delayed)
+                    agent_id,                // from agent
+                    Some(self.target_agent), // to specific agent
+                );
+
+                // Send to another planet
+                let result = context.send_mail(msg, self.target_planet);
+                if result.is_ok() {
+                    self.messages_sent += 1;
+                    println!(
+                        "Planet {} Agent {} sent message {} to Planet {} Agent {}",
+                        self.planet_id,
+                        self.agent_id,
+                        self.messages_sent,
+                        self.target_planet,
+                        self.target_agent
+                    );
+                }
+            }
+
+            // Continue sending at intervals
+            if self.messages_sent < self.messages_to_send {
+                Event::new(time, time, agent_id, Action::Timeout(self.send_interval))
+            } else {
+                Event::new(time, time, agent_id, Action::Timeout(100)) // Keep alive
+            }
+        }
+
+        fn read_message(
+            &mut self,
+            _context: &mut PlanetContext<128, InterPlanetaryMessage>,
+            _msg: Msg<InterPlanetaryMessage>,
+            _agent_id: usize,
+        ) {
+            // Sender doesn't process incoming messages
+        }
+    }
+
+    // Agent that receives and logs messages
+    struct InterPlanetaryReceiver {
+        planet_id: usize,
+        agent_id: usize,
+        message_log: MessageLog,
+    }
+
+    impl InterPlanetaryReceiver {
+        fn new(planet_id: usize, agent_id: usize, message_log: MessageLog) -> Self {
+            Self {
+                planet_id,
+                agent_id,
+                message_log,
+            }
+        }
+    }
+
+    impl ThreadedAgent<128, InterPlanetaryMessage> for InterPlanetaryReceiver {
+        fn step(
+            &mut self,
+            _context: &mut PlanetContext<128, InterPlanetaryMessage>,
+            agent_id: usize,
+        ) -> Event {
+            let time = _context.time;
+            // Keep checking for messages
+            Event::new(time, time, agent_id, Action::Timeout(1))
+        }
+
+        fn read_message(
+            &mut self,
+            _context: &mut PlanetContext<128, InterPlanetaryMessage>,
+            msg: Msg<InterPlanetaryMessage>,
+            _agent_id: usize,
+        ) {
+            println!(
+                "Planet {} Agent {} received message with value {} from Planet {} Agent {}",
+                self.planet_id,
+                self.agent_id,
+                msg.data.value,
+                msg.data.sender_planet,
+                msg.data.sender_agent
+            );
+
+            // Log the received message
+            if let Ok(mut log) = self.message_log.lock() {
+                log.push((self.planet_id, self.agent_id, msg.data));
+            }
+        }
+    }
+
+    // Agent that broadcasts to all agents on other planets
+    struct InterPlanetaryBroadcaster {
+        planet_id: usize,
+        agent_id: usize,
+        target_planets: Vec<usize>,
+        broadcasts_to_send: usize,
+        broadcasts_sent: usize,
+    }
+
+    impl InterPlanetaryBroadcaster {
+        fn new(
+            planet_id: usize,
+            agent_id: usize,
+            target_planets: Vec<usize>,
+            broadcasts_to_send: usize,
+        ) -> Self {
+            Self {
+                planet_id,
+                agent_id,
+                target_planets,
+                broadcasts_to_send,
+                broadcasts_sent: 0,
+            }
+        }
+    }
+
+    impl ThreadedAgent<128, InterPlanetaryMessage> for InterPlanetaryBroadcaster {
+        fn step(
+            &mut self,
+            context: &mut PlanetContext<128, InterPlanetaryMessage>,
+            agent_id: usize,
+        ) -> Event {
+            let time = context.time;
+
+            if self.broadcasts_sent < self.broadcasts_to_send {
+                let message_data = InterPlanetaryMessage {
+                    value: (100 + self.broadcasts_sent) as u32,
+                    sender_planet: self.planet_id as u32,
+                    sender_agent: self.agent_id as u32,
+                    target_planet: u32::MAX, // Broadcast indicator
+                    target_agent: u32::MAX,  // Broadcast indicator
+                };
+
+                // Send broadcast to each target planet
+                for &target_planet in &self.target_planets {
+                    let msg = Msg::new(
+                        message_data,
+                        time,
+                        time + 15,
+                        agent_id,
+                        None, // None means broadcast
+                    );
+
+                    let _ = context.send_mail(msg, target_planet);
+                }
+
+                self.broadcasts_sent += 1;
+                println!(
+                    "Planet {} Agent {} broadcasted message {} to planets {:?}",
+                    self.planet_id,
+                    self.agent_id,
+                    self.broadcasts_sent - 1,
+                    self.target_planets
+                );
+            }
+
+            if self.broadcasts_sent < self.broadcasts_to_send {
+                Event::new(time, time, agent_id, Action::Timeout(30))
+            } else {
+                Event::new(time, time, agent_id, Action::Timeout(100))
+            }
+        }
+
+        fn read_message(
+            &mut self,
+            _context: &mut PlanetContext<128, InterPlanetaryMessage>,
+            _msg: Msg<InterPlanetaryMessage>,
+            _agent_id: usize,
+        ) {
+            // Broadcaster doesn't process messages
+        }
+    }
+
+    #[test]
+    fn test_basic_inter_planetary_messaging() {
+        const NUM_PLANETS: usize = 3;
+        const TERMINAL_TIME: f64 = 200.0;
+
+        let message_log = Arc::new(Mutex::new(Vec::new()));
+
+        // Create configuration
+        let config = HybridConfig::new(NUM_PLANETS, 512)
+            .with_time_bounds(TERMINAL_TIME, 1.0)
+            .with_optimistic_sync(1000, 2000)
+            .with_uniform_worlds(1024, 2, 256); // 2 agents per planet
+
+        let mut engine =
+            HybridEngine::<128, 128, 8, 128, 2, InterPlanetaryMessage>::create(config, 16).unwrap();
+
+        // Planet 0: Sender agent
+        let sender = InterPlanetarySender::new(
+            0, 0, // planet 0, agent 0
+            1, 0, // target planet 1, agent 0
+            5, // send 5 messages
+            1, // every 10 time units
+        );
+        engine.spawn_agent(0, Box::new(sender)).unwrap();
+
+        // Planet 0: Receiver agent (for any messages sent to it)
+        let receiver0 = InterPlanetaryReceiver::new(0, 1, message_log.clone());
+        engine.spawn_agent(0, Box::new(receiver0)).unwrap();
+
+        // Planet 1: Receiver agent
+        let receiver1 = InterPlanetaryReceiver::new(1, 0, message_log.clone());
+        engine.spawn_agent(1, Box::new(receiver1)).unwrap();
+
+        // Planet 1: Another agent
+        let receiver1_2 = InterPlanetaryReceiver::new(1, 1, message_log.clone());
+        engine.spawn_agent(1, Box::new(receiver1_2)).unwrap();
+
+        // Planet 2: Just receivers
+        let receiver2_1 = InterPlanetaryReceiver::new(2, 0, message_log.clone());
+        let receiver2_2 = InterPlanetaryReceiver::new(2, 1, message_log.clone());
+        engine.spawn_agent(2, Box::new(receiver2_1)).unwrap();
+        engine.spawn_agent(2, Box::new(receiver2_2)).unwrap();
+
+        // Schedule initial events
+        engine.schedule(0, 0, 1).unwrap(); // Start sender
+        for planet in 0..NUM_PLANETS {
+            for agent in 0..2 {
+                engine.schedule(planet, agent, 1).unwrap();
+            }
+        }
+
+        // Run simulation
+        let result = engine.run();
+        assert!(result.is_ok(), "Engine run failed: {:?}", result.err());
+
+        // Verify messages were received
+        let log = message_log.lock().unwrap();
+        println!("Total messages received: {}", log.len());
+
+        // Should have received 5 messages on planet 1, agent 0
+        let planet1_agent0_messages: Vec<_> = log
+            .iter()
+            .filter(|(planet, agent, _)| *planet == 1 && *agent == 0)
+            .collect();
+
+        assert_eq!(
+            planet1_agent0_messages.len(),
+            5,
+            "Planet 1 Agent 0 should have received 5 messages"
+        );
+
+        // Verify message content
+        for (i, (_, _, msg)) in planet1_agent0_messages.iter().enumerate() {
+            assert_eq!(msg.value, i as u32);
+            assert_eq!(msg.sender_planet, 0);
+            assert_eq!(msg.sender_agent, 0);
+            assert_eq!(msg.target_planet, 1);
+            assert_eq!(msg.target_agent, 0);
+        }
+    }
+
+    #[test]
+    fn test_inter_planetary_broadcast() {
+        const NUM_PLANETS: usize = 4;
+        const AGENTS_PER_PLANET: usize = 3;
+        const TERMINAL_TIME: f64 = 300.0;
+
+        let message_log = Arc::new(Mutex::new(Vec::new()));
+
+        // Create configuration
+        let config = HybridConfig::new(NUM_PLANETS, 512)
+            .with_time_bounds(TERMINAL_TIME, 1.0)
+            .with_optimistic_sync(100, 200)
+            .with_uniform_worlds(1024, AGENTS_PER_PLANET, 256);
+
+        let mut engine =
+            HybridEngine::<128, 128, 8, 128, 2, InterPlanetaryMessage>::create(config, 16).unwrap();
+
+        // Planet 0: Broadcaster
+        let broadcaster = InterPlanetaryBroadcaster::new(
+            0,
+            0,             // planet 0, agent 0
+            vec![1, 2, 3], // broadcast to planets 1, 2, 3
+            3,             // send 3 broadcasts
+        );
+        engine.spawn_agent(0, Box::new(broadcaster)).unwrap();
+
+        // Add receivers to planet 0
+        for agent_id in 1..AGENTS_PER_PLANET {
+            let receiver = InterPlanetaryReceiver::new(0, agent_id, message_log.clone());
+            engine.spawn_agent(0, Box::new(receiver)).unwrap();
+        }
+
+        // Add receivers to other planets
+        for planet in 1..NUM_PLANETS {
+            for agent_id in 0..AGENTS_PER_PLANET {
+                let receiver = InterPlanetaryReceiver::new(planet, agent_id, message_log.clone());
+                engine.spawn_agent(planet, Box::new(receiver)).unwrap();
+            }
+        }
+
+        // Schedule all agents
+        for planet in 0..NUM_PLANETS {
+            for agent in 0..AGENTS_PER_PLANET {
+                engine.schedule(planet, agent, 1).unwrap();
+            }
+        }
+
+        // Run simulation
+        let result = engine.run();
+        assert!(result.is_ok(), "Engine run failed: {:?}", result.err());
+
+        // Verify broadcasts were received
+        let log = message_log.lock().unwrap();
+        println!("Total broadcast messages received: {}", log.len());
+
+        // Each broadcast should be received by all agents on planets 1, 2, 3
+        // That's 3 planets * 3 agents per planet * 3 broadcasts = 27 messages
+        let broadcast_messages: Vec<_> = log
+            .iter()
+            .filter(|(planet, _, msg)| *planet > 0 && msg.value >= 100)
+            .collect();
+
+        assert_eq!(
+            broadcast_messages.len(),
+            27,
+            "Should have received 27 broadcast messages (3 broadcasts * 3 planets * 3 agents)"
+        );
+
+        // Verify each planet received all broadcasts
+        for planet in 1..NUM_PLANETS {
+            let planet_broadcasts: Vec<_> = log
+                .iter()
+                .filter(|(p, _, msg)| *p == planet && msg.value >= 100)
+                .collect();
+
+            assert_eq!(
+                planet_broadcasts.len(),
+                9,
+                "Planet {planet} should have received 9 broadcast messages (3 broadcasts * 3 agents)"
+            );
+        }
+    }
+
+    #[test]
+    fn test_bidirectional_inter_planetary_communication() {
+        const NUM_PLANETS: usize = 2;
+        const TERMINAL_TIME: f64 = 400.0;
+
+        let message_log = Arc::new(Mutex::new(Vec::new()));
+
+        // Create configuration
+        let config = HybridConfig::new(NUM_PLANETS, 512)
+            .with_time_bounds(TERMINAL_TIME, 1.0)
+            .with_optimistic_sync(15, 20)
+            .with_uniform_worlds(1024, 2, 256);
+
+        let mut engine =
+            HybridEngine::<128, 128, 8, 128, 2, InterPlanetaryMessage>::create(config, 16).unwrap();
+
+        // Create an agent that can both send and receive
+        struct BidirectionalAgent {
+            planet_id: usize,
+            agent_id: usize,
+            target_planet: usize,
+            target_agent: usize,
+            messages_to_send: usize,
+            messages_sent: usize,
+            send_interval: u64,
+            message_log: MessageLog,
+        }
+
+        impl BidirectionalAgent {
+            fn new(
+                planet_id: usize,
+                agent_id: usize,
+                target_planet: usize,
+                target_agent: usize,
+                messages_to_send: usize,
+                send_interval: u64,
+                message_log: MessageLog,
+            ) -> Self {
+                Self {
+                    planet_id,
+                    agent_id,
+                    target_planet,
+                    target_agent,
+                    messages_to_send,
+                    messages_sent: 0,
+                    send_interval,
+                    message_log,
+                }
+            }
+        }
+
+        impl ThreadedAgent<128, InterPlanetaryMessage> for BidirectionalAgent {
+            fn step(
+                &mut self,
+                context: &mut PlanetContext<128, InterPlanetaryMessage>,
+                agent_id: usize,
+            ) -> Event {
+                let time = context.time;
+
+                // Send message if we haven't sent all yet
+                if self.messages_sent < self.messages_to_send {
+                    let message_data = InterPlanetaryMessage {
+                        value: self.messages_sent as u32,
+                        sender_planet: self.planet_id as u32,
+                        sender_agent: self.agent_id as u32,
+                        target_planet: self.target_planet as u32,
+                        target_agent: self.target_agent as u32,
+                    };
+
+                    let msg = Msg::new(
+                        message_data,
+                        time,
+                        time + 20,
+                        agent_id,
+                        Some(self.target_agent),
+                    );
+
+                    let result = context.send_mail(msg, self.target_planet);
+                    if result.is_ok() {
+                        self.messages_sent += 1;
+                        println!(
+                            "Planet {} Agent {} sent message {} to Planet {} Agent {}",
+                            self.planet_id,
+                            self.agent_id,
+                            self.messages_sent - 1,
+                            self.target_planet,
+                            self.target_agent
+                        );
+                    }
+                }
+
+                if self.messages_sent < self.messages_to_send {
+                    Event::new(time, time, agent_id, Action::Timeout(self.send_interval))
+                } else {
+                    Event::new(time, time, agent_id, Action::Timeout(100))
+                }
+            }
+
+            fn read_message(
+                &mut self,
+                _context: &mut PlanetContext<128, InterPlanetaryMessage>,
+                msg: Msg<InterPlanetaryMessage>,
+                _agent_id: usize,
+            ) {
+                println!(
+                    "Planet {} Agent {} received message with value {} from Planet {} Agent {}",
+                    self.planet_id,
+                    self.agent_id,
+                    msg.data.value,
+                    msg.data.sender_planet,
+                    msg.data.sender_agent
+                );
+
+                // Log the received message
+                if let Ok(mut log) = self.message_log.lock() {
+                    log.push((self.planet_id, self.agent_id, msg.data));
+                }
+            }
+        }
+
+        // Planet 0 Agent 0: Sends to Planet 1 Agent 0 AND receives
+        let agent0_0 = BidirectionalAgent::new(0, 0, 1, 0, 4, 20, message_log.clone());
+        engine.spawn_agent(0, Box::new(agent0_0)).unwrap();
+
+        // Planet 0 Agent 1: Just receives
+        let receiver0 = InterPlanetaryReceiver::new(0, 1, message_log.clone());
+        engine.spawn_agent(0, Box::new(receiver0)).unwrap();
+
+        // Planet 1 Agent 0: Sends to Planet 0 Agent 0 AND receives
+        let agent1_0 = BidirectionalAgent::new(1, 0, 0, 0, 4, 25, message_log.clone());
+        engine.spawn_agent(1, Box::new(agent1_0)).unwrap();
+
+        // Planet 1 Agent 1: Just receives
+        let receiver1 = InterPlanetaryReceiver::new(1, 1, message_log.clone());
+        engine.spawn_agent(1, Box::new(receiver1)).unwrap();
+
+        // Schedule all agents
+        for planet in 0..NUM_PLANETS {
+            for agent in 0..2 {
+                engine.schedule(planet, agent, 1).unwrap();
+            }
+        }
+
+        // Run simulation
+        let result = engine.run();
+        assert!(result.is_ok(), "Engine run failed: {:?}", result.err());
+
+        // Verify bidirectional communication
+        let log = message_log.lock().unwrap();
+
+        // Messages from Planet 0 to Planet 1
+        let p0_to_p1: Vec<_> = log
+            .iter()
+            .filter(|(planet, _, msg)| *planet == 1 && msg.sender_planet == 0)
+            .collect();
+
+        // Messages from Planet 1 to Planet 0
+        let p1_to_p0: Vec<_> = log
+            .iter()
+            .filter(|(planet, _, msg)| *planet == 0 && msg.sender_planet == 1)
+            .collect();
+
+        println!("Planet 0 -> Planet 1: {} messages", p0_to_p1.len());
+        println!("Planet 1 -> Planet 0: {} messages", p1_to_p0.len());
+
+        assert_eq!(
+            p0_to_p1.len(),
+            4,
+            "Should have 4 messages from Planet 0 to Planet 1"
+        );
+        assert_eq!(
+            p1_to_p0.len(),
+            4,
+            "Should have 4 messages from Planet 1 to Planet 0"
+        );
+    }
+
+    #[test]
+    fn test_inter_planetary_message_ordering() {
+        const NUM_PLANETS: usize = 2;
+        const TERMINAL_TIME: f64 = 200.0;
+
+        let message_log = Arc::new(Mutex::new(Vec::new()));
+
+        // Create configuration with smaller values for faster test
+        let config = HybridConfig::new(NUM_PLANETS, 256)
+            .with_time_bounds(TERMINAL_TIME, 1.0)
+            .with_optimistic_sync(50, 100)
+            .with_uniform_worlds(512, 1, 128);
+
+        let mut engine =
+            HybridEngine::<128, 128, 8, 64, 2, InterPlanetaryMessage>::create(config, 16).unwrap();
+
+        // Rapid-fire sender
+        struct RapidSender {
+            messages_sent: usize,
+        }
+
+        impl ThreadedAgent<128, InterPlanetaryMessage> for RapidSender {
+            fn step(
+                &mut self,
+                context: &mut PlanetContext<128, InterPlanetaryMessage>,
+                agent_id: usize,
+            ) -> Event {
+                let time = context.time;
+
+                // Send multiple messages at once
+                for i in 0..3 {
+                    let msg_data = InterPlanetaryMessage {
+                        value: (self.messages_sent * 3 + i) as u32,
+                        sender_planet: 0,
+                        sender_agent: 0,
+                        target_planet: 1,
+                        target_agent: 0,
+                    };
+
+                    let msg = Msg::new(
+                        msg_data,
+                        time,
+                        time + 10 + i as u64 * 5, // Staggered receive times
+                        agent_id,
+                        Some(0),
+                    );
+
+                    let _ = context.send_mail(msg, 1);
+                }
+
+                self.messages_sent += 1;
+
+                if self.messages_sent < 5 {
+                    Event::new(time, time, agent_id, Action::Timeout(15))
+                } else {
+                    Event::new(time, time, agent_id, Action::Wait)
+                }
+            }
+
+            fn read_message(
+                &mut self,
+                _context: &mut PlanetContext<128, InterPlanetaryMessage>,
+                _msg: Msg<InterPlanetaryMessage>,
+                _agent_id: usize,
+            ) {
+            }
+        }
+
+        let sender = RapidSender { messages_sent: 0 };
+        engine.spawn_agent(0, Box::new(sender)).unwrap();
+
+        let receiver = InterPlanetaryReceiver::new(1, 0, message_log.clone());
+        engine.spawn_agent(1, Box::new(receiver)).unwrap();
+
+        // Schedule agents
+        engine.schedule(0, 0, 1).unwrap();
+        engine.schedule(1, 0, 1).unwrap();
+
+        // Run simulation
+        let result = engine.run();
+        assert!(result.is_ok());
+
+        // Verify message ordering
+        let log = message_log.lock().unwrap();
+        let received_values: Vec<u32> = log.iter().map(|(_, _, msg)| msg.value).collect();
+
+        println!("Received values: {received_values:?}");
+
+        // Messages should be received in order despite being sent in batches
+        for i in 1..received_values.len() {
+            assert!(
+                received_values[i] >= received_values[i - 1],
+                "Messages received out of order: {} came after {}",
+                received_values[i - 1],
+                received_values[i]
+            );
+        }
+    }
+
+    #[test]
+    fn test_inter_planetary_messaging_with_failures() {
+        const NUM_PLANETS: usize = 3;
+        const TERMINAL_TIME: f64 = 150.0;
+
+        // Agent that tries to send to non-existent planets
+        struct FaultySender {
+            attempts: usize,
+        }
+
+        impl ThreadedAgent<128, InterPlanetaryMessage> for FaultySender {
+            fn step(
+                &mut self,
+                context: &mut PlanetContext<128, InterPlanetaryMessage>,
+                agent_id: usize,
+            ) -> Event {
+                let time = context.time;
+
+                if self.attempts < 3 {
+                    let msg_data = InterPlanetaryMessage {
+                        value: self.attempts as u32,
+                        sender_planet: 0,
+                        sender_agent: 0,
+                        target_planet: 99, // Non-existent planet
+                        target_agent: 0,
+                    };
+
+                    let msg = Msg::new(msg_data, time, time + 10, agent_id, Some(0));
+
+                    // This should fail gracefully
+                    let result = context.send_mail(msg, 99);
+                    if result.is_err() {
+                        println!("Expected error when sending to non-existent planet: {result:?}");
+                    }
+
+                    self.attempts += 1;
+                }
+
+                Event::new(time, time, agent_id, Action::Timeout(10))
+            }
+
+            fn read_message(
+                &mut self,
+                _context: &mut PlanetContext<128, InterPlanetaryMessage>,
+                _msg: Msg<InterPlanetaryMessage>,
+                _agent_id: usize,
+            ) {
+            }
+        }
+
+        let config = HybridConfig::new(NUM_PLANETS, 256)
+            .with_time_bounds(TERMINAL_TIME, 1.0)
+            .with_optimistic_sync(50, 100)
+            .with_uniform_worlds(512, 1, 128);
+
+        let mut engine =
+            HybridEngine::<128, 128, 8, 64, 2, InterPlanetaryMessage>::create(config, 16).unwrap();
+
+        let sender = FaultySender { attempts: 0 };
+        engine.spawn_agent(0, Box::new(sender)).unwrap();
+
+        // Add a dummy agent to planet 1
+        let message_log = Arc::new(Mutex::new(Vec::new()));
+        let receiver = InterPlanetaryReceiver::new(1, 0, message_log);
+        engine.spawn_agent(1, Box::new(receiver)).unwrap();
+
+        // Add a dummy agent to planet 2
+        let message_log2 = Arc::new(Mutex::new(Vec::new()));
+        let receiver2 = InterPlanetaryReceiver::new(2, 0, message_log2);
+        engine.spawn_agent(2, Box::new(receiver2)).unwrap();
+
+        engine.schedule(0, 0, 1).unwrap();
+        engine.schedule(1, 0, 1).unwrap();
+        engine.schedule(2, 0, 1).unwrap();
+
+        // Should run without panicking despite send failures
+        let result = engine.run();
+        assert!(
+            result.is_ok(),
+            "Engine should handle send failures gracefully"
+        );
+    }
+}
+
+#[cfg(test)]
+mod rollback_contention_tests {
+    use crate::{
+        agents::{PlanetContext, ThreadedAgent},
+        mt::hybrid::{config::HybridConfig, HybridEngine},
+        objects::{Action, Event, Msg},
+    };
+    use bytemuck::{Pod, Zeroable};
+    use std::{
+        sync::{Arc, Mutex},
+        thread,
+        time::Duration,
+    };
+
+    // A unified message type for all tests in this module.
+    #[derive(Copy, Clone, Debug, PartialEq)]
+    #[repr(u8)]
+    enum MessageType {
+        Chaos,
+        Ping,
+    }
+
+    // A simple message for contention tests
+    #[derive(Copy, Clone, Debug, PartialEq)]
+    #[repr(C)]
+    struct ContentionMessage {
+        msg_type: MessageType,
+        sequence_num: u32,
+        sender_id: u32,
+    }
+
+    unsafe impl Pod for ContentionMessage {}
+    unsafe impl Zeroable for ContentionMessage {}
+
+    type MessageLog = Arc<Mutex<Vec<ContentionMessage>>>;
+
+    /// An agent that simulates a heavy workload by sleeping, then sends a message
+    /// for immediate processing, likely triggering a rollback on the receiver.
+    struct ChaosAgent {
+        target_planet: usize,
+        target_agent: usize,
+        workload_nanos: u64,
+        messages_to_send: u32,
+        messages_sent: u32,
+        send_interval: u64,
+    }
+
+    impl ChaosAgent {
+        fn new(
+            target_planet: usize,
+            target_agent: usize,
+            workload_nanos: u64,
+            messages_to_send: u32,
+            send_interval: u64,
+        ) -> Self {
+            Self {
+                target_planet,
+                target_agent,
+                workload_nanos,
+                messages_to_send,
+                messages_sent: 0,
+                send_interval,
+            }
+        }
+    }
+
+    impl ThreadedAgent<128, ContentionMessage> for ChaosAgent {
+        fn step(
+            &mut self,
+            context: &mut PlanetContext<128, ContentionMessage>,
+            agent_id: usize,
+        ) -> Event {
+            let time = context.time;
+
+            if self.messages_sent < self.messages_to_send {
+                // Simulate a heavy workload by pausing the thread.
+                // This makes it likely that the receiver planet has already advanced its time.
+                if self.workload_nanos > 0 {
+                    thread::sleep(Duration::from_nanos(self.workload_nanos));
+                }
+
+                let message_data = ContentionMessage {
+                    msg_type: MessageType::Chaos,
+                    sequence_num: self.messages_sent,
+                    sender_id: agent_id as u32,
+                };
+
+                // Send a message for processing in the immediate future (+1).
+                // If this agent's thread was delayed, `time + 1` might be in the
+                // receiver's past, forcing a rollback.
+                let msg = Msg::new(
+                    message_data,
+                    time,
+                    time + 1, // Receive time is just after send time
+                    agent_id,
+                    Some(self.target_agent),
+                );
+
+                // The send_mail function will correctly create the anti-message.
+                if context.send_mail(msg, self.target_planet).is_ok() {
+                    self.messages_sent += 1;
+                }
+            }
+
+            // Schedule the next send event or wait if done.
+            if self.messages_sent < self.messages_to_send {
+                Event::new(time, time, agent_id, Action::Timeout(self.send_interval))
+            } else {
+                Event::new(time, time, agent_id, Action::Wait) // Stop sending
+            }
+        }
+
+        fn read_message(
+            &mut self,
+            _context: &mut PlanetContext<128, ContentionMessage>,
+            _msg: Msg<ContentionMessage>,
+            _agent_id: usize,
+        ) {
+            // Chaos agent does not process incoming messages.
+        }
+    }
+
+    /// A simple receiver agent that logs all messages it receives.
+    struct ContentionReceiver {
+        message_log: MessageLog,
+    }
+
+    impl ContentionReceiver {
+        fn new(message_log: MessageLog) -> Self {
+            Self { message_log }
+        }
+    }
+
+    impl ThreadedAgent<128, ContentionMessage> for ContentionReceiver {
+        fn step(
+            &mut self,
+            context: &mut PlanetContext<128, ContentionMessage>,
+            agent_id: usize,
+        ) -> Event {
+            // Just stay alive to receive messages.
+            Event::new(context.time, context.time, agent_id, Action::Timeout(10))
+        }
+
+        fn read_message(
+            &mut self,
+            _context: &mut PlanetContext<128, ContentionMessage>,
+            msg: Msg<ContentionMessage>,
+            _agent_id: usize,
+        ) {
+            // When a message is received, add it to the shared log.
+            if let Ok(mut log) = self.message_log.lock() {
+                log.push(msg.data);
+            }
+        }
+    }
+
+    struct PingPongAgent {
+        target_planet: usize,
+        target_agent: usize,
+        ping_count: u32,
+    }
+
+    impl PingPongAgent {
+        fn new(target_planet: usize, target_agent: usize) -> Self {
+            Self {
+                target_planet,
+                target_agent,
+                ping_count: 0,
+            }
+        }
+    }
+
+    impl ThreadedAgent<128, ContentionMessage> for PingPongAgent {
+        fn step(
+            &mut self,
+            context: &mut PlanetContext<128, ContentionMessage>,
+            agent_id: usize,
+        ) -> Event {
+            println!(
+                "world {:?} sending ping {:?}",
+                context.world_id,
+                self.ping_count + 1
+            );
+            let time = context.time;
+            let message_data = ContentionMessage {
+                msg_type: MessageType::Ping,
+                sequence_num: self.ping_count,
+                sender_id: agent_id as u32,
+            };
+            println!("set send time as {time} and recv as {:?}", time + 5);
+            let msg = Msg::new(
+                message_data,
+                time,
+                time + 5,
+                agent_id,
+                Some(self.target_agent),
+            );
+            let _ = context.send_mail(msg, self.target_planet);
+            self.ping_count += 1;
+            // Wait for a reply before sending the next ping
+            Event::new(time, time, agent_id, Action::Wait)
+        }
+
+        fn read_message(
+            &mut self,
+            context: &mut PlanetContext<128, ContentionMessage>,
+            msg: Msg<ContentionMessage>,
+            agent_id: usize,
+        ) {
+            // When we get a ping back, schedule a step to send another one.
+            println!(
+                "world {:?} recieving pong: {:?}",
+                context.world_id, msg.data.sequence_num
+            );
+            if msg.data.msg_type == MessageType::Ping {
+                let time = context.time;
+                println!("set send time as {time} and recv as {:?}", time + 5);
+                let _ = context.world_state.write(1, time, None); // just to write something
+                let _ = self.step(context, agent_id);
+            }
+        }
+    }
+
+    /// Helper function to run a contention test with a specific workload.
+    fn run_contention_test(workload_nanos: u64, messages_to_send: u32, noise: bool) {
+        const NUM_PLANETS: usize = 2;
+        const TERMINAL_TIME: f64 = 500.0;
+
+        let message_log = Arc::new(Mutex::new(Vec::new()));
+
+        // Configure the engine. A small throttle horizon can make rollbacks more likely.
+        let config = HybridConfig::new(NUM_PLANETS, 1024)
+            .with_time_bounds(TERMINAL_TIME, 1.0)
+            .with_optimistic_sync(20, 40) // Small throttle horizon and checkpoint frequency
+            .with_uniform_worlds(1024, 2, 256); // 1 agent per planet
+
+        let mut engine =
+            HybridEngine::<128, 128, 8, 128, 2, ContentionMessage>::create(config, 16).unwrap();
+
+        // Planet 0: The ChaosAgent causing trouble.
+        let chaos_agent = ChaosAgent::new(
+            1,                // target_planet
+            0,                // target_agent
+            workload_nanos,   // simulated workload
+            messages_to_send, // number of messages to send
+            1,                // send a message every 10 time units
+        );
+        engine.spawn_agent(0, Box::new(chaos_agent)).unwrap();
+
+        // Planet 1: The receiver that will be rolled back.
+        let receiver = ContentionReceiver::new(message_log.clone());
+        engine.spawn_agent(1, Box::new(receiver)).unwrap();
+
+        // Schedule initial events to start the simulation.
+        engine.schedule(0, 0, 1).unwrap(); // Start the chaos agent.
+        engine.schedule(1, 0, 1).unwrap(); // Start the receiver.
+
+        if noise {
+            // Planet 0: PingPong Agent 1
+            let pinger1 = PingPongAgent::new(1, 1);
+            engine.spawn_agent(0, Box::new(pinger1)).unwrap();
+            engine.schedule(0, 1, 1).unwrap(); // Start the ping-pong
+
+            // Planet 1: PingPong Agent 2
+            let pinger2 = PingPongAgent::new(0, 1);
+            engine.spawn_agent(1, Box::new(pinger2)).unwrap();
+        }
+
+        // Run the simulation.
+        let result = engine.run();
+
+        // The primary check is that the simulation completes without errors.
+        // The internal GVT checks will fail with AikaError::TimeTravel if GVT
+        // becomes non-monotonic.
+        assert!(
+            result.is_ok(),
+            "Engine run failed under contention with workload {}ns: {:?}",
+            workload_nanos,
+            result.err()
+        );
+
+        // Verify that all messages were eventually delivered, despite rollbacks.
+        let log = message_log.lock().unwrap();
+        assert_eq!(
+            log.len(),
+            messages_to_send as usize,
+            "Incorrect number of messages received with workload {}ns. Expected {}, got {}.",
+            workload_nanos,
+            messages_to_send,
+            log.len()
+        );
+
+        // Verify the sequence numbers to ensure no messages were lost.
+        let mut received_sequences: Vec<u32> = log.iter().map(|m| m.sequence_num).collect();
+        received_sequences.sort_unstable();
+        let expected_sequences: Vec<u32> = (0..messages_to_send).collect();
+        assert_eq!(
+            received_sequences, expected_sequences,
+            "Message sequence numbers are incorrect, indicating lost or duplicated messages."
+        );
+    }
+
+    #[test]
+    fn test_no_contention_baseline() {
+        // No workload, should not cause rollbacks.
+        println!("Running test: No contention baseline");
+        run_contention_test(0, 200, false);
+    }
+
+    #[test]
+    fn test_light_contention_with_rollbacks() {
+        // A small delay, may cause occasional rollbacks.
+        println!("Running test: Light contention");
+        run_contention_test(100, 200, false); // 100 nanoseconds
+    }
+
+    #[test]
+    fn test_moderate_contention_with_rollbacks() {
+        // A more significant delay, should reliably cause rollbacks.
+        println!("Running test: Moderate contention");
+        run_contention_test(500, 200, false); // 500 nanoseconds
+    }
+
+    #[test]
+    fn test_high_contention_with_rollbacks() {
+        // A large delay that makes rollbacks very frequent.
+        println!("Running test: High contention");
+        run_contention_test(2000, 200, false); // 2 microseconds
+    }
+}
