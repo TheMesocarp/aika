@@ -4,6 +4,8 @@
 
 A Rust-native coordination layer for multi-agent systems, with support for single-threaded, multi-threaded, and distributed execution. Finnish for "Time". Built entirely from systems theory first developed in the mid '80s through early '90s.
 
+> Do Not Use `mt::hybrid` Yet! Changes Unstable
+
 ## Roadmap
 
 In its current state, the framework supports single-threaded and multi-threaded hybrid execution, with both point-to-point and broadcast messaging support. The aim is to continue expanding into conservative synchronization support as well. A near term list of goals can be seen below:
