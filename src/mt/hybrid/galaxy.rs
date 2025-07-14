@@ -1,118 +1,148 @@
-//! Central coordinator managing global virtual time (GVT) and checkpointing across planets.
-//! The `Galaxy` handles inter-planetary message delivery, GVT calculation, and throttling to
-//! maintain causality constraints in the optimistic parallel simulation.
-use std::sync::{
-    atomic::{AtomicU64, AtomicUsize, Ordering},
-    Arc,
-};
+use std::sync::Arc;
 
 use bytemuck::{Pod, Zeroable};
-use mesocarp::{comms::mailbox::ThreadedMessenger, scheduling::Scheduleable, MesoError};
+use mesocarp::{
+    comms::{
+        mailbox::{ThreadedMessenger, ThreadedMessengerUser},
+        spmc::Subscriber,
+        spsc::BufferWheel,
+    },
+    logging::journal::Journal,
+    MesoError,
+};
 
-use crate::{mt::hybrid::planet::RegistryOutput, objects::Mail, st::TimeInfo, AikaError};
+use crate::{
+    mt::hybrid::blocks::{Block, GVTComms},
+    objects::Mail,
+    AikaError,
+};
 
-/// A `Galaxy` updates the global synchronization checkpoint and handles interplanetary message passing.
-pub struct Galaxy<
-    const INTER_SLOTS: usize,
-    const CLOCK_SLOTS: usize,
-    const CLOCK_HEIGHT: usize,
+pub struct PlanetaryRegister<
+    const MSG_SLOTS: usize,
+    const BLOCK_SLOTS: usize,
+    const GVT_SLOTS: usize,
     MessageType: Pod + Zeroable + Clone,
 > {
-    pub messenger: ThreadedMessenger<INTER_SLOTS, Mail<MessageType>>,
-    pub lvts: Vec<Arc<AtomicU64>>,
-    pub gvt: Arc<AtomicU64>,
-    pub send_counters: Vec<Arc<AtomicUsize>>,
-    pub recv_counters: Vec<Arc<AtomicUsize>>,
-    pub next_checkpoint: Arc<AtomicU64>,
-    pub checkpoint_frequency: u64,
-    pub throttle_horizon: u64,
+    pub planet_id: usize,
+    pub messenger_account: ThreadedMessengerUser<MSG_SLOTS, Mail<MessageType>>,
+    pub block_channel: Arc<BufferWheel<BLOCK_SLOTS, Block<BLOCK_SLOTS>>>,
+    pub gvt_subscriber: Subscriber<GVT_SLOTS, u64>,
+    pub terminal: f64,
+    pub timestep: f64,
+    pub throttle: u64,
+    pub checkpoint_hz: u64,
+    pub block_size: u64,
+}
+
+pub struct Galaxy<
+    const MSG_SLOTS: usize,
+    const GVT_SLOTS: usize,
+    const BLOCK_SLOTS: usize,
+    MessageType: Pod + Zeroable + Clone,
+> {
+    // block things
+    pub block_counter: usize,
+    pub block_size: u64,
+    pub blocks: Journal,
+    pub next: Vec<Option<Block<BLOCK_SLOTS>>>,
+    pub pending: Vec<[Option<Block<BLOCK_SLOTS>>; BLOCK_SLOTS]>,
+    pub unmatched_sends: usize,
+    pub(crate) gvtcomms: GVTComms<BLOCK_SLOTS, GVT_SLOTS>,
+    // messenger
+    pub messenger: ThreadedMessenger<MSG_SLOTS, Mail<MessageType>>,
+    // time things
+    pub gvt: u64,
+    pub checkpoint_hz: u64,
+    pub throttle: u64,
+    pub terminal: f64,
+    pub timestep: f64,
+    // validation things
     pub registered: usize,
-    time_info: TimeInfo,
+    pub planet_count: usize,
 }
 
 impl<
-        const INTER_SLOTS: usize,
-        const CLOCK_SLOTS: usize,
-        const CLOCK_HEIGHT: usize,
+        const MSG_SLOTS: usize,
+        const GVT_SLOTS: usize,
+        const BLOCK_SLOTS: usize,
         MessageType: Pod + Zeroable + Clone,
-    > Galaxy<INTER_SLOTS, CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>
+    > Galaxy<MSG_SLOTS, GVT_SLOTS, BLOCK_SLOTS, MessageType>
 {
-    pub fn new(
-        num_world: usize,
-        throttle_horizon: u64,
-        checkpoint_frequency: u64,
-        terminal: f64,
-        timestep: f64,
-    ) -> Result<Self, AikaError> {
-        let gvt = Arc::new(AtomicU64::new(0));
-        let mut world_ids = Vec::new();
-        for i in 0..num_world {
-            world_ids.push(i);
+    pub fn create(planet_count: usize) -> Result<Self, AikaError> {
+        let blocks = Journal::init(64 * 1024);
+        let gvtcomms = GVTComms::new()?;
+
+        let mut planet_ids = Vec::new();
+        for i in 0..planet_count {
+            planet_ids.push(i);
         }
-        let messenger = ThreadedMessenger::new(world_ids)?;
+        let messenger = ThreadedMessenger::new(planet_ids)?;
+        let pending: Vec<[Option<Block<BLOCK_SLOTS>>; BLOCK_SLOTS]> =
+            vec![[Option::<Block<BLOCK_SLOTS>>::None; BLOCK_SLOTS]; planet_count];
         Ok(Self {
+            block_counter: 0,
+            block_size: 16,
+            blocks,
+            next: vec![Option::<Block<BLOCK_SLOTS>>::None; planet_count],
+            pending,
+            unmatched_sends: 0,
+            gvtcomms,
             messenger,
-            lvts: Vec::new(),
-            gvt,
-            send_counters: Vec::new(),
-            recv_counters: Vec::new(),
-            next_checkpoint: Arc::new(AtomicU64::new(checkpoint_frequency)),
-            checkpoint_frequency,
-            throttle_horizon,
-            time_info: TimeInfo { timestep, terminal },
+            gvt: 0,
+            checkpoint_hz: u64::MAX,
+            throttle: u64::MAX,
+            terminal: f64::MAX,
+            timestep: 1.0,
             registered: 0,
+            planet_count,
         })
     }
 
-    pub fn spawn_world(&mut self) -> Result<RegistryOutput<INTER_SLOTS, MessageType>, AikaError> {
-        let arc = Arc::clone(&self.gvt);
-
-        let lvt = Arc::new(AtomicU64::new(0));
-        let out = Arc::clone(&lvt);
-
-        self.lvts.push(lvt);
-
-        let user = self.messenger.get_user(self.registered)?;
-        let world_id = self.registered;
-
-        let send = Arc::new(AtomicUsize::new(0));
-        let send_clone = Arc::clone(&send);
-
-        let recv = Arc::new(AtomicUsize::new(0));
-        let recv_clone = Arc::clone(&recv);
-
-        self.registered += 1;
-        let output = RegistryOutput::new(
-            arc,
-            out,
-            send_clone,
-            recv_clone,
-            Arc::clone(&self.next_checkpoint),
-            user,
-            world_id,
-        );
-        self.send_counters.push(send);
-        self.recv_counters.push(recv);
-        Ok(output)
+    pub fn set_time_scale(&mut self, timestep: f64, terminal: f64) {
+        self.terminal = terminal;
+        self.timestep = timestep
     }
 
-    fn deliver_the_mail(&mut self) -> Result<u64, AikaError> {
+    pub fn throttle(&mut self, throttle: u64) {
+        self.throttle = throttle
+    }
+
+    pub fn checkpoints(&mut self, frequency: u64) {
+        self.checkpoint_hz = frequency
+    }
+
+    pub fn spawn_planet(
+        &mut self,
+    ) -> Result<PlanetaryRegister<MSG_SLOTS, BLOCK_SLOTS, GVT_SLOTS, MessageType>, AikaError> {
+        if self.registered == self.planet_count {
+            return Err(AikaError::MaximumAgentsAllowed);
+        }
+        let id = self.registered;
+        self.registered += 1;
+        let messenger_account = self.messenger.get_user(id)?;
+        let (block_channel, gvt_subscriber) = self.gvtcomms.register();
+        Ok(PlanetaryRegister {
+            planet_id: id,
+            messenger_account,
+            block_channel,
+            gvt_subscriber,
+            terminal: self.terminal,
+            timestep: self.timestep,
+            throttle: self.throttle,
+            checkpoint_hz: self.checkpoint_hz,
+            block_size: self.block_size,
+        })
+    }
+
+    fn deliver_the_mail(&mut self) -> Result<(), AikaError> {
         match self.messenger.poll() {
             Ok(msgs) => {
-                let mut lowest = u64::MAX;
-                for (_, mail) in &msgs {
-                    let time = mail.transfer.commit_time();
-                    if time < lowest {
-                        lowest = time;
-                    }
-                }
                 self.messenger.deliver(msgs)?;
-                println!("found messages to transfer!");
-                Ok(lowest)
+                Ok(())
             }
             Err(err) => {
                 if let MesoError::NoDirectCommsToShare = err {
-                    Ok(u64::MAX)
+                    Ok(())
                 } else {
                     Err(AikaError::MesoError(err))
                 }
@@ -120,86 +150,190 @@ impl<
         }
     }
 
-    fn recalc_gvt(&mut self, in_transit_floor: u64) -> Result<(), AikaError> {
-        // this is a lazy gvt implementation. it works for the purposes used here 
-        // but it ultimately is out of date by up to min(throttle_horizon, checkpoint_frequency)
-        let total_sends: usize = self.send_counters.iter().map(|x| x.load(Ordering::Relaxed)).sum();
-        let total_recvs: usize = self.recv_counters.iter().map(|x| x.load(Ordering::Relaxed)).sum();
-        println!("total sends {total_sends} and total receives {total_recvs}");
-        let in_flight = total_sends.saturating_sub(total_recvs);
-        if in_flight > 0 {
-            println!("found {in_flight} unprocessed messages in gvt thread");
-            return Ok(())
-        }
-        println!("no inflights");
-        let new_time = self.gvt.load(Ordering::Acquire);
-
-        let mut lowest = u64::MAX;
-        let mut all = Vec::new();
-        for local in &self.lvts {
-            let load = local.load(Ordering::Acquire);
-            if load < lowest {
-                lowest = load;
+    fn poll_blocks(&mut self) -> Result<(), AikaError> {
+        let blocks = self.gvtcomms.poll()?;
+        for (i, planet_blocks) in blocks.into_iter().enumerate() {
+            if let Some(pblocks) = planet_blocks {
+                for block in pblocks {
+                    if block.start == self.gvt + 1 {
+                        self.next[i] = Some(block);
+                        continue;
+                    }
+                    let diff = ((block.end - block.start) / (block.start - self.gvt)) as usize;
+                    if diff >= BLOCK_SLOTS {
+                        return Err(AikaError::DistantBlocks(diff));
+                    }
+                    self.pending[i][diff] = Some(block);
+                }
             }
-            all.push(load);
         }
-
-        if in_transit_floor < lowest {
-            println!("in transit");
-            return Ok(())
-        }
-        //println!("new_gvt: {lowest}");
-        if new_time > lowest {
-            println!("time travel error: local clocks: {all:?}, gvt: {new_time}, lowest: {lowest}");
-            return Ok(());
-        }
-        println!("local clocks: {all:?}, gvt: {new_time}, lowest: {lowest}");
-        if lowest == u64::MAX {
-            return Ok(());
-        }
-        self.gvt.store(lowest, Ordering::Release);
         Ok(())
     }
 
-    fn check_mail_and_gvt(&mut self) -> Result<(), AikaError> {
-        let transit_time = self.deliver_the_mail()?;
-        //std::thread::sleep(Duration::from_nanos(30));
-        self.recalc_gvt(transit_time)?;
+    fn fetch_latest_uncommited_blocks(
+        &mut self,
+    ) -> Result<Vec<Option<Block<BLOCK_SLOTS>>>, AikaError> {
+        let mut latests = Vec::new();
+        for i in &self.next {
+            latests.push(i.clone());
+        }
+
+        for (idx, row) in self.pending.iter().enumerate() {
+            for i in row {
+                if let Some(block) = i {
+                    let cloned = Some(block.clone());
+                    latests[idx] = cloned;
+                }
+            }
+        }
+        Ok(latests)
+    }
+
+    fn update_consensus(&mut self) -> Result<Option<u64>, AikaError> {
+        if self.next.iter().all(|x| x.is_some()) {
+            let mut sends = 0;
+            let mut recvs = 0;
+            let mut start = 0;
+            let mut end = 0;
+            let mut recvs_from_previous = [0usize; BLOCK_SLOTS];
+
+            // fetch next block stats
+            for i in &mut self.next {
+                if let Some(block) = i {
+                    sends += block.sends;
+                    recvs += block.recvs;
+                    if start == end && end == 0 {
+                        end = block.end;
+                        start = block.start;
+                    }
+                    if end != block.end && start != block.start {
+                        return Err(AikaError::MismatchBlockSizes(self.block_counter));
+                    }
+                    recvs_from_previous
+                        .iter_mut()
+                        .zip(block.recvs_from_previous.iter())
+                        .for_each(|(x, y)| *x += *y);
+                }
+            }
+
+            let unmatched = sends - recvs;
+            self.unmatched_sends = unmatched;
+            // if all messages are accounted for locally, and we are indeed looking at the next block, commit and move on
+            if unmatched == 0 && end > self.gvt {
+                self.commit_block(start, end, sends, recvs, recvs_from_previous)?;
+                return Ok(Some(end));
+            }
+            // check blocks after "self.next" for receives from this block.
+            let mut late_recvs = 0;
+            for row in self.pending.iter() {
+                for (i, maybe) in row.iter().enumerate() {
+                    match maybe {
+                        Some(block) => {
+                            late_recvs += block.recvs_from_previous[i];
+                        }
+                        None => break,
+                    }
+                }
+            }
+
+            // if all messages are eventually accounted for, no more rollbacks can happen into this block and its safe to commit
+            if unmatched - late_recvs == 0 {
+                self.commit_block(start, end, sends, recvs, recvs_from_previous)?;
+                return Ok(Some(end));
+            }
+        }
+        Ok(None)
+    }
+
+    fn commit_block(
+        &mut self,
+        start: u64,
+        end: u64,
+        sends: usize,
+        recvs: usize,
+        recvs_from_previous: [usize; BLOCK_SLOTS],
+    ) -> Result<(), AikaError> {
+        self.block_counter += 1;
+        let mut new = Block::<BLOCK_SLOTS>::new(start, end, usize::MAX, self.block_counter)?;
+        new.recvs = recvs;
+        new.sends = sends;
+        new.recvs_from_previous = recvs_from_previous;
+        self.blocks.write(new, end, None);
+        self.gvt = end;
+
+        self.next.fill(None);
+
+        let mut new_pendings = 0;
+        for (planet_idx, planet_pending) in self.pending.iter_mut().enumerate() {
+            // Move the closest pending block (if any) to self.next
+            if let Some(block) = planet_pending[0].take() {
+                let diff = block.sends as i32 - block.recvs as i32;
+                new_pendings += diff;
+                self.next[planet_idx] = Some(block);
+            }
+
+            // Shift all other pending blocks left
+            for i in 0..(BLOCK_SLOTS - 1) {
+                planet_pending[i] = planet_pending[i + 1].take();
+            }
+            planet_pending[BLOCK_SLOTS - 1] = None;
+        }
+        if new_pendings < 0 {
+            return Err(AikaError::TimeTravel);
+        }
+
+        self.unmatched_sends = new_pendings as usize;
         Ok(())
     }
 
-    pub fn gvt_daemon(&mut self) -> Result<(), AikaError> {
+    fn check_all_terminal(&mut self) -> Result<bool, AikaError> {
+        if self.gvt as f64 * self.timestep >= self.terminal {
+            return Ok(true);
+        }
+        let latest = self.fetch_latest_uncommited_blocks()?;
+        let mut truth = true;
+        for block in latest {
+            if let Some(block) = block {
+                truth = (block.end as f64 * self.timestep) >= self.terminal;
+                continue;
+            }
+            return Ok(false);
+        }
+        Ok(truth)
+    }
+
+    fn check_terminate(&mut self) -> bool {
+        if self.unmatched_sends != 0 {
+            return false;
+        }
+        if !self.next.iter().all(|x| x.is_none()) {
+            return false;
+        }
+        true
+    }
+
+    pub fn master(&mut self) -> Result<(), AikaError> {
         loop {
-            //std::thread::sleep(Duration::from_nanos(30));
-            println!("daemon looping...");
-            self.check_mail_and_gvt()?;
-
-            let current_gvt = self.gvt.load(Ordering::Acquire);
-
-            // Check if all LPs have reached terminal
-            let all_terminal = self.lvts.iter().all(|lvt| {
-                let lvt_val = lvt.load(Ordering::Acquire);
-                lvt_val as f64 * self.time_info.timestep >= self.time_info.terminal
-                // assuming you store this somewhere
-            });
-
-            if all_terminal {
-                //println!("All LPs reached terminal time, shutting down");
-                break;
+            // mail
+            for _ in 0..10 {
+                self.deliver_the_mail()?;
             }
-
-            // Handle checkpointing
-            if current_gvt >= self.next_checkpoint.load(Ordering::Acquire) {
-                self.next_checkpoint
-                    .store(current_gvt + self.checkpoint_frequency, Ordering::Release);
+            // block polling and try commiting
+            self.poll_blocks()?;
+            while let Some(new_gvt) = self.update_consensus()? {
+                self.gvtcomms.broadcast(new_gvt);
             }
-            std::thread::yield_now();
+            // check if all worlds have reached an end, and check if all messages have been received and blocks processed
+            if self.check_all_terminal()? {
+                if self.check_terminate() {
+                    break;
+                }
+            }
         }
-        println!("exited gvt");
         Ok(())
     }
 
-    pub fn time_info(&self) -> (f64, f64) {
-        (self.time_info.timestep, self.time_info.terminal)
+    pub fn with_block_size(&mut self, block_size: u64) {
+        self.block_size = block_size;
     }
 }
