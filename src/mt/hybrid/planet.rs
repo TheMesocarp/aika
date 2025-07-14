@@ -122,6 +122,37 @@ impl<
         })
     }
 
+    pub fn from_config(
+        planet_allocation_consts: (usize, usize, &Vec<usize>),
+        registration: PlanetaryRegister<MSG_SLOTS, BLOCK_SLOTS, GVT_SLOTS, MessageType>,
+    ) -> Result<Self, AikaError> {
+        let mut context = PlanetContext::new(
+            planet_allocation_consts.0,
+            planet_allocation_consts.1,
+            registration.messenger_account,
+            registration.planet_id,
+        );
+        for i in planet_allocation_consts.2 {
+            context.agent_states.push(Journal::init(*i));
+        }
+        Ok(Self {
+            agents: Vec::new(),
+            context,
+            event_system: LocalEventSystem::<CLOCK_SLOTS, CLOCK_HEIGHT>::new()?,
+            local_messages: LocalMailSystem::new()?,
+            block_submitter: registration.block_channel,
+            block: Block::new(1, 1 + registration.block_size, registration.planet_id, 1)?,
+            block_nmb: 1,
+            block_size: registration.block_size,
+            throttle: registration.throttle,
+            checkpoint_hz: registration.checkpoint_hz,
+            current_gvt: 0,
+            timestep: registration.timestep,
+            terminal: registration.terminal,
+            gvt: registration.gvt_subscriber,
+        })
+    }
+
     fn commit(&mut self, event: Event) {
         self.event_system.insert(event)
     }
@@ -367,6 +398,7 @@ impl<
         self.context.time += 1;
         // check-process block now
         if self.context.time > self.block.end {
+            println!("Planet {:?}, Time {:?}: submitting local block #{:?}", self.context.world_id, self.context.time, self.block_nmb);
             self.block_submitter.write(std::mem::take(&mut self.block))?;
 
             self.block_nmb += 1;
@@ -406,18 +438,22 @@ impl<
             }
 
             // if at a checkpoint or the throttle limit, busy-wait the thread
-            if now == (self.checkpoint_hz * self.block_size * self.block_nmb as u64)
-                && now != (self.terminal / self.timestep) as u64
-                && self.current_gvt != now
-            {
-                sleep(Duration::from_nanos(100));
-                std::thread::yield_now();
-                continue;
+            if self.checkpoint_hz != u64::MAX {
+                if now == (self.checkpoint_hz * self.block_size * self.block_nmb as u64)
+                    && now != (self.terminal / self.timestep) as u64
+                    && self.current_gvt != now
+                {
+                    sleep(Duration::from_nanos(100));
+                    std::thread::yield_now();
+                    continue;
+                }
             }
-            if self.current_gvt + (self.throttle * self.block_size) < self.now() {
-                sleep(Duration::from_nanos(100));
-                std::thread::yield_now();
-                continue;
+            if self.throttle != u64::MAX {
+                if self.current_gvt + (self.throttle * self.block_size) < self.now() {
+                    sleep(Duration::from_nanos(100));
+                    std::thread::yield_now();
+                    continue;
+                }
             }
             // step the sim forward one time step
             let step = self.step();

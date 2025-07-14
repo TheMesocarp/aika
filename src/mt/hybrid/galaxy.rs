@@ -36,8 +36,8 @@ pub struct PlanetaryRegister<
 
 pub struct Galaxy<
     const MSG_SLOTS: usize,
-    const GVT_SLOTS: usize,
     const BLOCK_SLOTS: usize,
+    const GVT_SLOTS: usize,
     MessageType: Pod + Zeroable + Clone,
 > {
     // block things
@@ -63,10 +63,10 @@ pub struct Galaxy<
 
 impl<
         const MSG_SLOTS: usize,
-        const GVT_SLOTS: usize,
         const BLOCK_SLOTS: usize,
+        const GVT_SLOTS: usize,
         MessageType: Pod + Zeroable + Clone,
-    > Galaxy<MSG_SLOTS, GVT_SLOTS, BLOCK_SLOTS, MessageType>
+    > Galaxy<MSG_SLOTS, BLOCK_SLOTS, GVT_SLOTS, MessageType>
 {
     pub fn create(planet_count: usize) -> Result<Self, AikaError> {
         let blocks = Journal::init(64 * 1024);
@@ -253,6 +253,7 @@ impl<
         recvs: usize,
         recvs_from_previous: [usize; BLOCK_SLOTS],
     ) -> Result<(), AikaError> {
+        println!("GVT Master: committing block #{:?}", self.block_counter + 1);
         self.block_counter += 1;
         let mut new = Block::<BLOCK_SLOTS>::new(start, end, usize::MAX, self.block_counter)?;
         new.recvs = recvs;
@@ -315,9 +316,11 @@ impl<
     pub fn master(&mut self) -> Result<(), AikaError> {
         loop {
             // mail
+            println!("GVT Master, GVT {:?}: delivering mail...", self.gvt);
             for _ in 0..10 {
                 self.deliver_the_mail()?;
             }
+            println!("GVT Master, GVT {:?}: polling blocks, updating time consensus...", self.gvt);
             // block polling and try commiting
             self.poll_blocks()?;
             while let Some(new_gvt) = self.update_consensus()? {
@@ -325,7 +328,9 @@ impl<
             }
             // check if all worlds have reached an end, and check if all messages have been received and blocks processed
             if self.check_all_terminal()? {
+                println!("GVT Master, GVT {:?}: all planets are waiting", self.gvt);
                 if self.check_terminate() {
+                    println!("GVT Master, GVT {:?}: GVT has caught up, consensus reached!", self.gvt);
                     break;
                 }
             }
