@@ -203,7 +203,7 @@ mod hybrid_engine_tests {
 
         // Create the hybrid engine
         let mut engine = HybridEngine::<32, 128, 16, 128, 1, TestData>::create(config).unwrap();
-
+        engine.galaxy.with_block_size(2);
         // Spawn agents using autobalancing
         for _i in 0..TOTAL_AGENTS {
             let agent = SimpleSchedulingAgent::new();

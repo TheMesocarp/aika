@@ -54,4 +54,6 @@ pub enum AikaError {
     DistantBlocks(usize),
     #[error("Mismatched block sizes for block number {0}")]
     MismatchBlockSizes(usize),
+    #[error("Mismatched block time stamps for block number {0}, start {1}, end {2}")]
+    MismatchBlockTimeStamps(usize, u64, u64),
 }

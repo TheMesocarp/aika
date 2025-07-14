@@ -155,14 +155,17 @@ impl<
         for (i, planet_blocks) in blocks.into_iter().enumerate() {
             if let Some(pblocks) = planet_blocks {
                 for block in pblocks {
+                    println!("GVT Master: received block from planet #{i}, with start time {:?}", block.start);
                     if block.start == self.gvt + 1 {
+                        println!("GVT Master: placing block in next slot");
                         self.next[i] = Some(block);
                         continue;
                     }
-                    let diff = ((block.end - block.start) / (block.start - self.gvt)) as usize;
+                    let diff = ((block.start - self.gvt) / self.block_size) as usize - 1;
                     if diff >= BLOCK_SLOTS {
                         return Err(AikaError::DistantBlocks(diff));
                     }
+                    println!("GVT Master: placing block in pending slot number {diff}");
                     self.pending[i][diff] = Some(block);
                 }
             }
@@ -207,7 +210,7 @@ impl<
                         start = block.start;
                     }
                     if end != block.end && start != block.start {
-                        return Err(AikaError::MismatchBlockSizes(self.block_counter));
+                        return Err(AikaError::MismatchBlockTimeStamps(self.block_counter, block.start, block.end));
                     }
                     recvs_from_previous
                         .iter_mut()
@@ -217,6 +220,7 @@ impl<
             }
 
             let unmatched = sends - recvs;
+            println!("GVT Master: block number {:?}, found with {unmatched} unmatched messages.", self.block_counter);
             self.unmatched_sends = unmatched;
             // if all messages are accounted for locally, and we are indeed looking at the next block, commit and move on
             if unmatched == 0 && end > self.gvt {
@@ -253,7 +257,7 @@ impl<
         recvs: usize,
         recvs_from_previous: [usize; BLOCK_SLOTS],
     ) -> Result<(), AikaError> {
-        println!("GVT Master: committing block #{:?}", self.block_counter + 1);
+        println!("GVT Master: committing block #{:?} with new gvt {end}", self.block_counter + 1);
         self.block_counter += 1;
         let mut new = Block::<BLOCK_SLOTS>::new(start, end, usize::MAX, self.block_counter)?;
         new.recvs = recvs;
@@ -305,9 +309,11 @@ impl<
 
     fn check_terminate(&mut self) -> bool {
         if self.unmatched_sends != 0 {
+            println!("GVT Master: unmatched sends aren't zero yet! {:?}", self.unmatched_sends);
             return false;
         }
         if !self.next.iter().all(|x| x.is_none()) {
+            println!("GVT Master: there are still blocks pending approval!");
             return false;
         }
         true
@@ -316,13 +322,13 @@ impl<
     pub fn master(&mut self) -> Result<(), AikaError> {
         loop {
             // mail
-            println!("GVT Master, GVT {:?}: delivering mail...", self.gvt);
+            //println!("GVT Master, GVT {:?}: delivering mail...", self.gvt);
             for _ in 0..10 {
                 self.deliver_the_mail()?;
+                self.poll_blocks()?;
             }
-            println!("GVT Master, GVT {:?}: polling blocks, updating time consensus...", self.gvt);
+            //println!("GVT Master, GVT {:?}: polling blocks, updating time consensus...", self.gvt);
             // block polling and try commiting
-            self.poll_blocks()?;
             while let Some(new_gvt) = self.update_consensus()? {
                 self.gvtcomms.broadcast(new_gvt);
             }

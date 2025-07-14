@@ -1,5 +1,5 @@
 use std::{
-    cmp::Reverse,
+    cmp::{min, Reverse},
     collections::{BTreeSet, BinaryHeap},
     sync::Arc,
     thread::sleep,
@@ -405,7 +405,7 @@ impl<
 
             self.block.block_id = (self.context.world_id, self.block_nmb);
             self.block.start = self.context.time;
-            self.block.end = self.context.time + self.block_size;
+            self.block.end = min(self.context.time + self.block_size, (self.terminal / self.timestep) as u64);
         }
         Ok(())
     }
@@ -416,10 +416,12 @@ impl<
         {
             return Err(AikaError::ClockSyncIssue);
         }
-        if self.terminal <= self.timestep * self.context.time as f64 {
+        if self.terminal < self.timestep * self.context.time as f64 {
+            println!("Planet {:?}: local time past terminal {:?}", self.context.world_id, self.context.time);
             return Err(AikaError::PastTerminal);
         }
-        if self.current_gvt as f64 * self.timestep >= self.terminal {
+        if self.current_gvt as f64 * self.timestep > self.terminal {
+            println!("Planet {:?}: gvt time past terminal {:?}", self.context.world_id, self.current_gvt);
             return Err(AikaError::PastTerminal);
         }
         Ok(())
@@ -443,6 +445,7 @@ impl<
                     && now != (self.terminal / self.timestep) as u64
                     && self.current_gvt != now
                 {
+                    println!("Planet {:?}: checkpoint sleeping", self.context.world_id);
                     sleep(Duration::from_nanos(100));
                     std::thread::yield_now();
                     continue;
@@ -450,6 +453,7 @@ impl<
             }
             if self.throttle != u64::MAX {
                 if self.current_gvt + (self.throttle * self.block_size) < self.now() {
+                    println!("Planet {:?}: throttle sleeping", self.context.world_id);
                     sleep(Duration::from_nanos(100));
                     std::thread::yield_now();
                     continue;
@@ -458,11 +462,13 @@ impl<
             // step the sim forward one time step
             let step = self.step();
             if let Err(AikaError::PastTerminal) = step {
+                println!("Planet {:?}: past terminal time detected", self.context.world_id);
                 break;
             }
             step?;
             std::thread::yield_now();
         }
+        println!("Planet {:?}: exited run", self.context.world_id);
         Ok(())
     }
 }
