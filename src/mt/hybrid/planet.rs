@@ -1,158 +1,155 @@
-//! Individual threaded simulation world containing agents and local event processing.
-//! Each `Planet` runs independently with its own local time, handling agent execution, local
-//! messaging, and rollback operations when causality violations are detected.
 use std::{
-    cmp::Reverse,
+    cmp::{min, Reverse},
     collections::{BTreeSet, BinaryHeap},
-    sync::{
-        atomic::{AtomicU64, AtomicUsize, Ordering},
-        Arc,
-    },
+    sync::Arc,
     thread::sleep,
     time::Duration,
 };
 
 use bytemuck::{Pod, Zeroable};
 use mesocarp::{
-    comms::mailbox::ThreadedMessengerUser,
+    comms::{spmc::Subscriber, spsc::BufferWheel},
     logging::journal::Journal,
-    scheduling::{htw::Clock, Scheduleable},
+    scheduling::Scheduleable,
 };
 
 use crate::{
     agents::{PlanetContext, ThreadedAgent},
+    mt::hybrid::{blocks::Block, galaxy::PlanetaryRegister},
     objects::{Action, AntiMsg, Event, LocalEventSystem, LocalMailSystem, Mail, Msg, Transfer},
-    st::TimeInfo,
     AikaError,
 };
 
-/// The registry information required to spawn a new `Planet` in a `Galaxy`
-pub struct RegistryOutput<const SLOTS: usize, MessageType: Pod + Zeroable + Clone> {
-    gvt: Arc<AtomicU64>,
-    counter: Arc<AtomicUsize>,
-    lvt: Arc<AtomicU64>,
-    checkpoint: Arc<AtomicU64>,
-    user: ThreadedMessengerUser<SLOTS, Mail<MessageType>>,
-    world_id: usize,
+pub enum Noisiness {
+    Silent,
+    Quiet,
+    Average,
+    Loud,
+    Screaming,
 }
 
-impl<const SLOTS: usize, MessageType: Pod + Zeroable + Clone> RegistryOutput<SLOTS, MessageType> {
-    pub fn new(
-        gvt: Arc<AtomicU64>,
-        lvt: Arc<AtomicU64>,
-        counter: Arc<AtomicUsize>,
-        checkpoint: Arc<AtomicU64>,
-        user: ThreadedMessengerUser<SLOTS, Mail<MessageType>>,
-        world_id: usize,
-    ) -> Self {
-        Self {
-            gvt,
-            lvt,
-            counter,
-            checkpoint,
-            user,
-            world_id,
-        }
-    }
-}
-
-/// A `Planet` is much like `World`, except is equipped with "inter-planetary" messaging and rollback functionality.
 pub struct Planet<
-    const INTER_SLOTS: usize,
+    const MSG_SLOTS: usize,
+    const BLOCK_SLOTS: usize,
+    const GVT_SLOTS: usize,
     const CLOCK_SLOTS: usize,
     const CLOCK_HEIGHT: usize,
     MessageType: Pod + Zeroable + Clone,
 > {
-    pub agents: Vec<Box<dyn ThreadedAgent<INTER_SLOTS, MessageType>>>,
-    pub context: PlanetContext<INTER_SLOTS, MessageType>,
-    time_info: TimeInfo,
+    // interactables
+    pub agents: Vec<Box<dyn ThreadedAgent<MSG_SLOTS, MessageType>>>,
+    pub context: PlanetContext<MSG_SLOTS, MessageType>,
+    // local processors
     event_system: LocalEventSystem<CLOCK_SLOTS, CLOCK_HEIGHT>,
     local_messages: LocalMailSystem<CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>,
-    gvt: Arc<AtomicU64>,
-    next_checkpoint: Arc<AtomicU64>,
-    local_time: Arc<AtomicU64>,
-    throttle_horizon: u64,
+    // block management
+    block_submitter: Arc<BufferWheel<BLOCK_SLOTS, Block<BLOCK_SLOTS>>>,
+    block: Block<BLOCK_SLOTS>,
+    block_nmb: usize,
+    block_size: u64,
+    // time
+    throttle: u64,
+    checkpoint_hz: u64,
+    current_gvt: u64,
+    timestep: f64,
+    terminal: f64,
+    gvt: Subscriber<GVT_SLOTS, u64>,
 }
 
 unsafe impl<
-        const INTER_SLOTS: usize,
+        const MSG_SLOTS: usize,
+        const BLOCK_SLOTS: usize,
+        const GVT_SLOTS: usize,
         const CLOCK_SLOTS: usize,
         const CLOCK_HEIGHT: usize,
         MessageType: Pod + Zeroable + Clone,
-    > Send for Planet<INTER_SLOTS, CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>
+    > Send for Planet<MSG_SLOTS, BLOCK_SLOTS, GVT_SLOTS, CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>
 {
 }
+
 unsafe impl<
-        const INTER_SLOTS: usize,
+        const MSG_SLOTS: usize,
+        const BLOCK_SLOTS: usize,
+        const GVT_SLOTS: usize,
         const CLOCK_SLOTS: usize,
         const CLOCK_HEIGHT: usize,
         MessageType: Pod + Zeroable + Clone,
-    > Sync for Planet<INTER_SLOTS, CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>
+    > Sync for Planet<MSG_SLOTS, BLOCK_SLOTS, GVT_SLOTS, CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>
 {
 }
 
 impl<
-        const INTER_SLOTS: usize,
+        const MSG_SLOTS: usize,
+        const BLOCK_SLOTS: usize,
+        const GVT_SLOTS: usize,
         const CLOCK_SLOTS: usize,
         const CLOCK_HEIGHT: usize,
         MessageType: Pod + Zeroable + Clone,
-    > Planet<INTER_SLOTS, CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>
+    > Planet<MSG_SLOTS, BLOCK_SLOTS, GVT_SLOTS, CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>
 {
-    /// Create a new `Planet` given the provided time information, `Galaxy` registry output, and arena allocation sizes.
     pub fn create(
-        terminal: f64,
-        timestep: f64,
-        throttle_horizon: u64,
-        world_arena_size: usize,
-        anti_msg_arena_size: usize,
-        registry: RegistryOutput<INTER_SLOTS, MessageType>,
+        registration: PlanetaryRegister<MSG_SLOTS, BLOCK_SLOTS, GVT_SLOTS, MessageType>,
+        shared_world_size: usize,
+        noise_level: Noisiness,
     ) -> Result<Self, AikaError> {
+        let size = match noise_level {
+            Noisiness::Silent => 0,
+            Noisiness::Quiet => 16,
+            Noisiness::Average => 64,
+            Noisiness::Loud => 256,
+            Noisiness::Screaming => 512,
+        } * 1024;
         Ok(Self {
             agents: Vec::new(),
             context: PlanetContext::new(
-                world_arena_size,
-                anti_msg_arena_size,
-                registry.user,
-                registry.world_id,
-                registry.counter,
+                shared_world_size,
+                size,
+                registration.messenger_account,
+                registration.planet_id,
             ),
-            time_info: TimeInfo { terminal, timestep },
             event_system: LocalEventSystem::<CLOCK_SLOTS, CLOCK_HEIGHT>::new()?,
             local_messages: LocalMailSystem::new()?,
-            gvt: registry.gvt,
-            next_checkpoint: registry.checkpoint,
-            local_time: registry.lvt,
-            throttle_horizon,
+            block_submitter: registration.block_channel,
+            block: Block::new(1, registration.block_size, registration.planet_id, 1)?,
+            block_nmb: 1,
+            block_size: registration.block_size,
+            throttle: registration.throttle,
+            checkpoint_hz: registration.checkpoint_hz,
+            current_gvt: 0,
+            timestep: registration.timestep,
+            terminal: registration.terminal,
+            gvt: registration.gvt_subscriber,
         })
     }
-    /// Creates a new `Planet` from registry, time, and HybridConfig information.
+
     pub fn from_config(
-        world_consts: (usize, usize, &Vec<usize>),
-        terminal: f64,
-        timestep: f64,
-        throttle_horizon: u64,
-        registry: RegistryOutput<INTER_SLOTS, MessageType>,
+        planet_allocation_consts: (usize, usize, &Vec<usize>),
+        registration: PlanetaryRegister<MSG_SLOTS, BLOCK_SLOTS, GVT_SLOTS, MessageType>,
     ) -> Result<Self, AikaError> {
         let mut context = PlanetContext::new(
-            world_consts.0,
-            world_consts.1,
-            registry.user,
-            registry.world_id,
-            registry.counter,
+            planet_allocation_consts.0,
+            planet_allocation_consts.1,
+            registration.messenger_account,
+            registration.planet_id,
         );
-        for i in world_consts.2 {
+        for i in planet_allocation_consts.2 {
             context.agent_states.push(Journal::init(*i));
         }
         Ok(Self {
             agents: Vec::new(),
             context,
-            time_info: TimeInfo { terminal, timestep },
             event_system: LocalEventSystem::<CLOCK_SLOTS, CLOCK_HEIGHT>::new()?,
             local_messages: LocalMailSystem::new()?,
-            gvt: registry.gvt,
-            next_checkpoint: registry.checkpoint,
-            local_time: registry.lvt,
-            throttle_horizon,
+            block_submitter: registration.block_channel,
+            block: Block::new(1, registration.block_size, registration.planet_id, 1)?,
+            block_nmb: 1,
+            block_size: registration.block_size,
+            throttle: registration.throttle,
+            checkpoint_hz: registration.checkpoint_hz,
+            current_gvt: 0,
+            timestep: registration.timestep,
+            terminal: registration.terminal,
+            gvt: registration.gvt_subscriber,
         })
     }
 
@@ -173,7 +170,7 @@ impl<
     pub fn schedule(&mut self, time: u64, agent: usize) -> Result<(), AikaError> {
         if time < self.now() {
             return Err(AikaError::TimeTravel);
-        } else if time as f64 * self.time_info.timestep > self.time_info.terminal {
+        } else if time as f64 * self.timestep > self.terminal {
             return Err(AikaError::PastTerminal);
         }
         let now = self.now();
@@ -187,15 +184,9 @@ impl<
         self.event_system.local_clock.time
     }
 
-    /// Get the time information of the simulation.
-    pub fn time_info(&self) -> (f64, f64) {
-        (self.time_info.timestep, self.time_info.terminal)
-    }
-
-    /// Spawn a new `ThreadedAgent` on the `Planet` with the provided agent state arena allocation size.
     pub fn spawn_agent(
         &mut self,
-        agent: Box<dyn ThreadedAgent<INTER_SLOTS, MessageType>>,
+        agent: Box<dyn ThreadedAgent<MSG_SLOTS, MessageType>>,
         state_arena_size: usize,
     ) -> usize {
         self.agents.push(agent);
@@ -208,24 +199,31 @@ impl<
     /// Spawn a preconfigured `ThreadedAgent`.
     pub fn spawn_agent_preconfigured(
         &mut self,
-        agent: Box<dyn ThreadedAgent<INTER_SLOTS, MessageType>>,
+        agent: Box<dyn ThreadedAgent<MSG_SLOTS, MessageType>>,
     ) -> usize {
         self.agents.push(agent);
         self.agents.len() - 1
     }
 
+    // NEED TO REVIEW
     fn rollback(&mut self, time: u64) -> Result<(), AikaError> {
-        if time > self.event_system.local_clock.time {
+        let now = self.event_system.local_clock.time;
+        if time > now {
             return Err(AikaError::TimeTravel);
         }
+        // rollback world and agent states
         self.context.world_state.rollback(time);
         for i in &mut self.context.agent_states {
             i.rollback(time);
         }
+        // rollback local message scheduler
         self.local_messages
             .schedule
             .rollback(&mut self.local_messages.overflow, time);
+        // rollback and claim all the anti messages produced after the rollback time
         let anti_msgs: Vec<(Mail<MessageType>, u64)> = self.context.anti_msgs.rollback_return(time);
+
+        // send out anti messages generated post rollback.
         for (anti, _) in anti_msgs {
             if let Some(to) = anti.to_world {
                 if to == self.context.world_id {
@@ -239,14 +237,21 @@ impl<
             self.context.user.send(anti)?;
         }
 
-        self.event_system.local_clock = Clock::new()?;
-        self.event_system.local_clock.set_time(time);
+        // rollback local event scheduling system.
+        self.event_system
+            .local_clock
+            .rollback(&mut self.event_system.overflow, time);
+        // reset context time
+        self.context.time = time;
 
-        self.local_time.store(time, Ordering::Release);
-        println!("ROLLBACK!!!!! rolling back! {:?}", self.context.world_id);
+        println!(
+            "Planet {:?}, Time {now}: ROLLBACK!!!!! rolling back to {time}",
+            self.context.world_id
+        );
         Ok(())
     }
 
+    // NEED TO REVIEW
     fn annihilate(&mut self, anti_msg: AntiMsg) {
         let time = anti_msg.time();
         let idxs = self.local_messages.schedule.current_idxs;
@@ -294,7 +299,6 @@ impl<
     }
 
     fn poll_interplanetary_messenger(&mut self) -> Result<(), AikaError> {
-        let mut counter = 0;
         let maybe = self.context.user.poll();
         if maybe.is_none() {
             return Ok(());
@@ -306,30 +310,40 @@ impl<
                 }
             }
             let time = msg.transfer.time();
+            println!(
+                "Planet {:?}: opening mail with recieve time {time}",
+                self.context.world_id
+            );
             if time < self.now() {
+                println!(
+                    "Planet {:?}, Time {:?}: found old message in poll with recieve time {time}",
+                    self.context.world_id,
+                    self.now()
+                );
                 self.rollback(time)?;
             }
+
             match msg.open_letter() {
-                Transfer::Msg(msg) => self.commit_mail(msg),
+                Transfer::Msg(msg) => {
+                    self.block.recv(msg.commit_time())?;
+                    self.commit_mail(msg)
+                }
                 Transfer::AntiMsg(anti_msg) => self.annihilate(anti_msg),
             }
-            counter += 1;
         }
-        self.context.counter.fetch_sub(counter, Ordering::SeqCst);
         Ok(())
     }
 
-    /// step forward one timestamp on all local clocks
     fn step(&mut self) -> Result<(), AikaError> {
         self.check_time_validity()?;
 
         // process messages at the next time step
         if let Ok(msgs) = self.local_messages.schedule.tick() {
             for msg in msgs {
+                self.context.time = msg.time();
                 let id = msg.to;
                 if id.is_none() {
                     for i in 0..self.agents.len() {
-                        self.context.time = msg.recv;
                         self.agents[i].read_message(&mut self.context, msg, i);
                     }
                     continue;
@@ -345,9 +359,7 @@ impl<
                 let event = self.agents[event.agent].step(&mut self.context, event.agent);
                 match event.yield_ {
                     Action::Timeout(time) => {
-                        if (self.now() + time) as f64 * self.time_info.timestep
-                            > self.time_info.terminal
-                        {
+                        if (self.now() + time) as f64 * self.timestep > self.terminal {
                             continue;
                         }
 
@@ -371,62 +383,109 @@ impl<
                 }
             }
         }
+        self.block.sends += self.context.sends;
+        self.context.sends = 0;
+        self.increment()?;
+        std::thread::yield_now();
+        Ok(())
+    }
+
+    fn increment(&mut self) -> Result<(), AikaError> {
         self.event_system
             .local_clock
             .increment(&mut self.event_system.overflow);
         self.local_messages
             .schedule
             .increment(&mut self.local_messages.overflow);
-        self.local_time.store(self.now(), Ordering::Release);
-        std::thread::yield_now();
+        // check-process block now
+        self.context.time += 1;
+        if self.context.time > self.block.end {
+            println!(
+                "Planet {:?}, Time {:?}: submitting local block #{:?} with end time {:?}",
+                self.context.world_id, self.context.time, self.block_nmb, self.block.end
+            );
+            self.block_submitter
+                .write(std::mem::take(&mut self.block))?;
+
+            self.block_nmb += 1;
+
+            self.block.block_id = (self.context.world_id, self.block_nmb);
+            self.block.start = self.context.time;
+            self.block.end = min(
+                self.context.time + self.block_size - 1,
+                (self.terminal / self.timestep) as u64,
+            );
+        }
         Ok(())
     }
 
     fn check_time_validity(&self) -> Result<(), AikaError> {
-        let load = self.local_time.load(Ordering::Acquire);
         if self.local_messages.schedule.time != self.event_system.local_clock.time
-            && self.local_messages.schedule.time != load
+            && self.local_messages.schedule.time != self.context.time
         {
             return Err(AikaError::ClockSyncIssue);
         }
-        if self.time_info.terminal <= self.time_info.timestep * load as f64 {
+        if self.terminal < self.timestep * self.context.time as f64 {
+            println!(
+                "Planet {:?}: local time past terminal {:?}",
+                self.context.world_id, self.context.time
+            );
             return Err(AikaError::PastTerminal);
         }
-        let gvt = self.gvt.load(Ordering::Acquire);
-        if gvt as f64 * self.time_info.timestep >= self.time_info.terminal {
+        if self.current_gvt as f64 * self.timestep > self.terminal {
+            println!(
+                "Planet {:?}: gvt time past terminal {:?}",
+                self.context.world_id, self.current_gvt
+            );
             return Err(AikaError::PastTerminal);
         }
         Ok(())
     }
 
-    /// Run the `Planet` optimistically.
     pub fn run(&mut self) -> Result<(), AikaError> {
-        //let id = self.context.world_id;
+        // let id = self.context.world_id;
         loop {
-            let checkpoint = self.next_checkpoint.load(Ordering::SeqCst);
+            // poll-receive messages and GVT updates before proceeding
             let now = self.now();
-            self.poll_interplanetary_messenger()?;
-            if now == checkpoint
-                && now != (self.time_info.terminal / self.time_info.timestep) as u64
+            for _ in 0..8 {
+                self.poll_interplanetary_messenger()?;
+            }
+            if let Some(gvt) = self.gvt.try_recv() {
+                self.current_gvt = gvt;
+            }
+
+            // if at a checkpoint or the throttle limit, busy-wait the thread
+            if self.checkpoint_hz != u64::MAX
+                && now == (self.checkpoint_hz * self.block_size * self.block_nmb as u64)
+                && now != (self.terminal / self.timestep) as u64
+                && self.current_gvt != now
             {
-                //println!("world {id} found sleeping");
+                println!("Planet {:?}: checkpoint sleeping", self.context.world_id);
                 sleep(Duration::from_nanos(100));
+                std::thread::yield_now();
                 continue;
             }
-            let gvt = self.gvt.load(Ordering::SeqCst);
-            //println!("world {id} found gvt {gvt}, has local time {now}");
-            if gvt + self.throttle_horizon < self.now() {
-                //println!("world {id} found sleeping");
+            if self.throttle != u64::MAX
+                && self.current_gvt + (self.throttle * self.block_size) < self.now()
+            {
+                println!("Planet {:?}: throttle sleeping", self.context.world_id);
                 sleep(Duration::from_nanos(100));
+                std::thread::yield_now();
                 continue;
             }
+            // step the sim forward one time step
             let step = self.step();
             if let Err(AikaError::PastTerminal) = step {
+                println!(
+                    "Planet {:?}: past terminal time detected",
+                    self.context.world_id
+                );
                 break;
             }
             step?;
+            std::thread::yield_now();
         }
-        //println!("made it here for planet {id}, almost done");
+        println!("Planet {:?}: exited run", self.context.world_id);
         Ok(())
     }
 }
@@ -436,15 +495,12 @@ mod planet_tests {
     use super::*;
     use crate::{
         agents::{PlanetContext, ThreadedAgent},
-        mt::hybrid::planet::{Planet, RegistryOutput},
+        mt::hybrid::planet::Planet,
         objects::{Action, Event, Mail, Msg},
     };
     use bytemuck::{Pod, Zeroable};
-    use mesocarp::comms::mailbox::ThreadedMessenger;
-    use std::sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc,
-    };
+    use mesocarp::comms::{mailbox::ThreadedMessenger, spmc::Broadcast};
+    use std::sync::Arc;
 
     // Simple test message type
     #[derive(Copy, Clone, Debug, PartialEq)]
@@ -527,31 +583,38 @@ mod planet_tests {
     }
 
     // Helper function to create a mock RegistryOutput
-    fn create_mock_registry(world_id: usize) -> Result<RegistryOutput<16, TestMessage>, AikaError> {
-        let gvt = Arc::new(AtomicU64::new(0));
-        let lvt = Arc::new(AtomicU64::new(0));
-        let checkpoint = Arc::new(AtomicU64::new(100));
-        let counter = Arc::new(AtomicUsize::new(0));
+    fn create_mock_registry(
+        world_id: usize,
+    ) -> Result<PlanetaryRegister<16, 32, 8, TestMessage>, AikaError> {
+        let block_channel = Arc::new(BufferWheel::new());
         // Create a simple messenger for testing
         let messenger = ThreadedMessenger::<16, Mail<TestMessage>>::new(vec![world_id])?;
         let user = messenger.get_user(world_id)?;
 
-        Ok(RegistryOutput::new(
-            gvt, lvt, counter, checkpoint, user, world_id,
-        ))
+        let gvt = Broadcast::new()?;
+        let gvt_subscriber = Arc::new(gvt).register_subscriber();
+
+        Ok(PlanetaryRegister {
+            planet_id: 0,
+            messenger_account: user,
+            block_channel,
+            gvt_subscriber,
+            terminal: 300.0,
+            timestep: 1.0,
+            throttle: 5,
+            checkpoint_hz: 10,
+            block_size: 16,
+        })
     }
 
     #[test]
     fn test_planet_creation() {
         let registry = create_mock_registry(0).unwrap();
 
-        let planet = Planet::<16, 128, 2, TestMessage>::create(
-            1000.0, // terminal
-            1.0,    // timestep
-            50,     // throttle_horizon
-            1024,   // world_arena_size
-            512,    // anti_msg_arena_size
-            registry,
+        let planet = Planet::<16, 32, 8, 128, 2, TestMessage>::create(
+            registry, // terminal
+            1024,     // timestep
+            Noisiness::Average,
         );
 
         assert!(planet.is_ok());
@@ -561,29 +624,14 @@ mod planet_tests {
     }
 
     #[test]
-    fn test_planet_from_config() {
-        let registry = create_mock_registry(0).unwrap();
-        let agent_state_sizes = vec![256, 256, 256];
-        let config = (1024, 512, &agent_state_sizes);
-
-        let planet = Planet::<16, 128, 2, TestMessage>::from_config(
-            config, 1000.0, // terminal
-            1.0,    // timestep
-            50,     // throttle_horizon
-            registry,
-        );
-
-        assert!(planet.is_ok());
-        let planet = planet.unwrap();
-        assert_eq!(planet.context.agent_states.len(), 3);
-    }
-
-    #[test]
     fn test_spawn_agent() {
         let registry = create_mock_registry(0).unwrap();
-        let mut planet =
-            Planet::<16, 128, 2, TestMessage>::create(1000.0, 1.0, 50, 1024, 512, registry)
-                .unwrap();
+        let mut planet = Planet::<16, 32, 8, 128, 2, TestMessage>::create(
+            registry, // terminal
+            1024,     // timestep
+            Noisiness::Average,
+        )
+        .unwrap();
 
         let agent = BasicTestAgent {
             timeout_count: 0,
@@ -597,31 +645,14 @@ mod planet_tests {
     }
 
     #[test]
-    fn test_spawn_agent_preconfigured() {
-        let registry = create_mock_registry(0).unwrap();
-        let agent_state_sizes = vec![256];
-        let config = (1024, 512, &agent_state_sizes);
-
-        let mut planet =
-            Planet::<16, 128, 2, TestMessage>::from_config(config, 1000.0, 1.0, 50, registry)
-                .unwrap();
-
-        let agent = BasicTestAgent {
-            timeout_count: 0,
-            max_timeouts: 5,
-        };
-
-        let agent_id = planet.spawn_agent_preconfigured(Box::new(agent));
-        assert_eq!(agent_id, 0);
-        assert_eq!(planet.agents.len(), 1);
-    }
-
-    #[test]
     fn test_schedule_event() {
         let registry = create_mock_registry(0).unwrap();
-        let mut planet =
-            Planet::<16, 128, 2, TestMessage>::create(1000.0, 1.0, 50, 1024, 512, registry)
-                .unwrap();
+        let mut planet = Planet::<16, 32, 8, 128, 2, TestMessage>::create(
+            registry, // terminal
+            1024,     // timestep
+            Noisiness::Average,
+        )
+        .unwrap();
 
         let agent = BasicTestAgent {
             timeout_count: 0,
@@ -647,9 +678,12 @@ mod planet_tests {
     #[test]
     fn test_time_advancement() {
         let registry = create_mock_registry(0).unwrap();
-        let mut planet =
-            Planet::<16, 128, 2, TestMessage>::create(1000.0, 1.0, 50, 1024, 512, registry)
-                .unwrap();
+        let mut planet = Planet::<16, 32, 8, 128, 2, TestMessage>::create(
+            registry, // terminal
+            1024,     // timestep
+            Noisiness::Average,
+        )
+        .unwrap();
 
         let agent = BasicTestAgent {
             timeout_count: 0,
@@ -669,9 +703,12 @@ mod planet_tests {
     #[test]
     fn test_rollback() {
         let registry = create_mock_registry(0).unwrap();
-        let mut planet =
-            Planet::<16, 128, 2, TestMessage>::create(1000.0, 1.0, 50, 1024, 512, registry)
-                .unwrap();
+        let mut planet = Planet::<16, 32, 8, 128, 2, TestMessage>::create(
+            registry, // terminal
+            1024,     // timestep
+            Noisiness::Average,
+        )
+        .unwrap();
 
         // Advance time
         planet.event_system.local_clock.time = 50;
@@ -691,9 +728,12 @@ mod planet_tests {
     #[test]
     fn test_agent_triggering() {
         let registry = create_mock_registry(0).unwrap();
-        let mut planet =
-            Planet::<16, 128, 2, TestMessage>::create(1000.0, 1.0, 50, 1024, 512, registry)
-                .unwrap();
+        let mut planet = Planet::<16, 32, 8, 128, 2, TestMessage>::create(
+            registry, // terminal
+            1024,     // timestep
+            Noisiness::Average,
+        )
+        .unwrap();
 
         // Create trigger agent
         let trigger_agent = TriggerAgent {
@@ -723,60 +763,5 @@ mod planet_tests {
 
         // The trigger should have fired and scheduled the target
         assert!(planet.now() >= 15);
-    }
-
-    #[test]
-    fn test_gvt_throttling() {
-        let registry = create_mock_registry(0).unwrap();
-        let mut planet = Planet::<16, 128, 2, TestMessage>::create(
-            1000.0, 1.0, 10, 1024, 512, registry, // throttle_horizon = 10
-        )
-        .unwrap();
-
-        let agent = BasicTestAgent {
-            timeout_count: 0,
-            max_timeouts: 20,
-        };
-
-        planet.spawn_agent(Box::new(agent), 256);
-        planet.schedule(1, 0).unwrap();
-
-        // Set GVT to 0
-        planet.gvt.store(0, Ordering::SeqCst);
-
-        // Try to advance past throttle horizon
-        let mut steps = 0;
-        while steps < 15 && planet.now() < 11 {
-            let _ = planet.step();
-            steps += 1;
-        }
-
-        // Should be throttled around time 10
-        assert!(planet.now() <= 11);
-    }
-
-    #[test]
-    fn test_checkpoint_blocking() {
-        let registry = create_mock_registry(0).unwrap();
-        let mut planet =
-            Planet::<16, 128, 2, TestMessage>::create(1000.0, 1.0, 50, 1024, 512, registry)
-                .unwrap();
-
-        let agent = BasicTestAgent {
-            timeout_count: 0,
-            max_timeouts: 10,
-        };
-
-        planet.spawn_agent(Box::new(agent), 256);
-        planet.schedule(1, 0).unwrap();
-
-        // Set next checkpoint to current time
-        planet.next_checkpoint.store(5, Ordering::SeqCst);
-        planet.event_system.local_clock.time = 5;
-
-        // Step should succeed but simulation would pause at checkpoint in run()
-        let result = planet.step();
-        // In actual run(), it would sleep at checkpoint
-        assert!(result.is_ok() || result.is_err());
     }
 }

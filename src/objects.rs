@@ -243,6 +243,7 @@ unsafe impl<T: Pod + Zeroable + Clone> Zeroable for Transfer<T> {}
 
 /// Inter-planetary `Mail` carry data of type `T` for optimistic execution environments
 #[derive(Debug, Clone, Copy)]
+#[repr(C)]
 pub struct Mail<T: Pod + Zeroable + Clone> {
     pub transfer: Transfer<T>,
     pub to_world: Option<usize>,

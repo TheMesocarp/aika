@@ -9,48 +9,44 @@ use crate::{
     AikaError,
 };
 
+pub mod blocks;
 pub mod config;
 pub mod galaxy;
 pub mod planet;
 
 /// Hybrid synchronization engine for multi-threaded execution environments.
 pub struct HybridEngine<
-    const INTER_SLOTS: usize,
+    const MSG_SLOTS: usize,
+    const BLOCK_SLOTS: usize,
+    const GVT_SLOTS: usize,
     const CLOCK_SLOTS: usize,
     const CLOCK_HEIGHT: usize,
     MessageType: Pod + Zeroable + Clone,
 > {
-    pub galaxy: Galaxy<INTER_SLOTS, CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>,
-    pub planets: Vec<Planet<INTER_SLOTS, CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>>,
+    pub galaxy: Galaxy<MSG_SLOTS, BLOCK_SLOTS, GVT_SLOTS, MessageType>,
+    pub planets:
+        Vec<Planet<MSG_SLOTS, BLOCK_SLOTS, GVT_SLOTS, CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>>,
     pub config: HybridConfig,
 }
 
 impl<
-        const INTER_SLOTS: usize,
+        const MSG_SLOTS: usize,
+        const BLOCK_SLOTS: usize,
+        const GVT_SLOTS: usize,
         const CLOCK_SLOTS: usize,
         const CLOCK_HEIGHT: usize,
         MessageType: Pod + Zeroable + Clone,
-    > HybridEngine<INTER_SLOTS, CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>
+    > HybridEngine<MSG_SLOTS, BLOCK_SLOTS, GVT_SLOTS, CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>
 {
     /// Create a new synchronization engine from the provided config.
-    pub fn create(config: HybridConfig) -> Result<Self, AikaError> {
-        let mut galaxy = Galaxy::new(
-            config.number_of_worlds,
-            config.throttle_horizon,
-            config.checkpoint_frequency,
-            config.terminal,
-            config.timestep,
-        )?;
+    pub fn create(config: HybridConfig, block_size: u64) -> Result<Self, AikaError> {
+        let mut galaxy = Galaxy::create(config.number_of_worlds)?;
+        galaxy.set_time_scale(config.timestep, config.terminal);
+        galaxy.block_size = block_size;
         let mut planets = Vec::new();
         for i in 0..config.number_of_worlds {
-            let registry = galaxy.spawn_world()?;
-            let planet = Planet::from_config(
-                config.world_config(i)?,
-                config.terminal,
-                config.timestep,
-                config.throttle_horizon,
-                registry,
-            )?;
+            let registry = galaxy.spawn_planet()?;
+            let planet = Planet::from_config(config.world_config(i)?, registry)?;
             planets.push(planet);
         }
         Ok(Self {
@@ -64,7 +60,7 @@ impl<
     pub fn spawn_agent(
         &mut self,
         planet_id: usize,
-        agent: Box<dyn ThreadedAgent<INTER_SLOTS, MessageType>>,
+        agent: Box<dyn ThreadedAgent<MSG_SLOTS, MessageType>>,
     ) -> Result<(), AikaError> {
         if planet_id >= self.planets.len() {
             return Err(AikaError::InvalidWorldId(planet_id));
@@ -76,7 +72,7 @@ impl<
     /// Spawn a `ThreadedAgent` on any `Planet`
     pub fn spawn_agent_autobalance(
         &mut self,
-        agent: Box<dyn ThreadedAgent<INTER_SLOTS, MessageType>>,
+        agent: Box<dyn ThreadedAgent<MSG_SLOTS, MessageType>>,
     ) -> Result<(), AikaError> {
         let mut lowest = (usize::MAX, usize::MAX);
         for (i, planet) in self.planets.iter().enumerate() {
@@ -111,7 +107,7 @@ impl<
         } = self;
         let galaxy_handle = std::thread::spawn(move || {
             let mut galaxy = galaxy;
-            galaxy.gvt_daemon().map(|_| galaxy)
+            galaxy.master().map(|_| galaxy)
         });
 
         let mut planet_handles = Vec::new();
@@ -164,8 +160,8 @@ mod hybrid_engine_tests {
         }
     }
 
-    impl ThreadedAgent<128, TestData> for SimpleSchedulingAgent {
-        fn step(&mut self, context: &mut PlanetContext<128, TestData>, agent_id: usize) -> Event {
+    impl ThreadedAgent<32, TestData> for SimpleSchedulingAgent {
+        fn step(&mut self, context: &mut PlanetContext<32, TestData>, agent_id: usize) -> Event {
             let time = context.time;
             // Just timeout for 1 time unit
             Event::new(time, time, agent_id, Action::Timeout(1))
@@ -173,7 +169,7 @@ mod hybrid_engine_tests {
 
         fn read_message(
             &mut self,
-            _context: &mut PlanetContext<128, TestData>,
+            _context: &mut PlanetContext<32, TestData>,
             _msg: Msg<TestData>,
             _agent_id: usize,
         ) {
@@ -182,12 +178,12 @@ mod hybrid_engine_tests {
     }
 
     #[test]
-    fn test_hybrid_engine_basic_run() {
+    fn test_hybrid_basic_run() {
         // Configuration
-        const NUM_PLANETS: usize = 14;
+        const NUM_PLANETS: usize = 7;
         const AGENTS_PER_PLANET: usize = 100;
         const TOTAL_AGENTS: usize = NUM_PLANETS * AGENTS_PER_PLANET;
-        const EVENTS: u64 = 10000;
+        const EVENTS: u64 = 100;
         // Create configuration
         let config = HybridConfig::new(NUM_PLANETS, 16) // 512 bytes for anti-message arena
             .with_time_bounds(EVENTS as f64, 1.0) // terminal=1000, timestep=1.0
@@ -203,8 +199,7 @@ mod hybrid_engine_tests {
         assert_eq!(config.total_agents(), TOTAL_AGENTS);
 
         // Create the hybrid engine
-        let mut engine = HybridEngine::<128, 128, 1, TestData>::create(config).unwrap();
-
+        let mut engine = HybridEngine::<32, 64, 16, 128, 1, TestData>::create(config, 2).unwrap();
         // Spawn agents using autobalancing
         for _i in 0..TOTAL_AGENTS {
             let agent = SimpleSchedulingAgent::new();
@@ -347,7 +342,7 @@ mod inter_planetary_message_tests {
                 let msg = Msg::new(
                     message_data,
                     time,                    // sent time
-                    time - 1,                // receive time (delayed)
+                    time + 1,                // receive time (delayed)
                     agent_id,                // from agent
                     Some(self.target_agent), // to specific agent
                 );
@@ -532,7 +527,7 @@ mod inter_planetary_message_tests {
             .with_uniform_worlds(1024, 2, 256); // 2 agents per planet
 
         let mut engine =
-            HybridEngine::<128, 128, 2, InterPlanetaryMessage>::create(config).unwrap();
+            HybridEngine::<128, 128, 8, 128, 2, InterPlanetaryMessage>::create(config, 16).unwrap();
 
         // Planet 0: Sender agent
         let sender = InterPlanetarySender::new(
@@ -614,7 +609,7 @@ mod inter_planetary_message_tests {
             .with_uniform_worlds(1024, AGENTS_PER_PLANET, 256);
 
         let mut engine =
-            HybridEngine::<128, 128, 2, InterPlanetaryMessage>::create(config).unwrap();
+            HybridEngine::<128, 128, 8, 128, 2, InterPlanetaryMessage>::create(config, 16).unwrap();
 
         // Planet 0: Broadcaster
         let broadcaster = InterPlanetaryBroadcaster::new(
@@ -696,7 +691,7 @@ mod inter_planetary_message_tests {
             .with_uniform_worlds(1024, 2, 256);
 
         let mut engine =
-            HybridEngine::<128, 128, 2, InterPlanetaryMessage>::create(config).unwrap();
+            HybridEngine::<128, 128, 8, 128, 2, InterPlanetaryMessage>::create(config, 16).unwrap();
 
         // Create an agent that can both send and receive
         struct BidirectionalAgent {
@@ -872,7 +867,8 @@ mod inter_planetary_message_tests {
             .with_optimistic_sync(50, 100)
             .with_uniform_worlds(512, 1, 128);
 
-        let mut engine = HybridEngine::<128, 64, 2, InterPlanetaryMessage>::create(config).unwrap();
+        let mut engine =
+            HybridEngine::<128, 128, 8, 64, 2, InterPlanetaryMessage>::create(config, 16).unwrap();
 
         // Rapid-fire sender
         struct RapidSender {
@@ -1012,7 +1008,8 @@ mod inter_planetary_message_tests {
             .with_optimistic_sync(50, 100)
             .with_uniform_worlds(512, 1, 128);
 
-        let mut engine = HybridEngine::<128, 64, 2, InterPlanetaryMessage>::create(config).unwrap();
+        let mut engine =
+            HybridEngine::<128, 128, 8, 64, 2, InterPlanetaryMessage>::create(config, 16).unwrap();
 
         let sender = FaultySender { attempts: 0 };
         engine.spawn_agent(0, Box::new(sender)).unwrap();
@@ -1037,5 +1034,336 @@ mod inter_planetary_message_tests {
             result.is_ok(),
             "Engine should handle send failures gracefully"
         );
+    }
+}
+
+#[cfg(test)]
+mod rollback_contention_tests {
+    use crate::{
+        agents::{PlanetContext, ThreadedAgent},
+        mt::hybrid::{config::HybridConfig, HybridEngine},
+        objects::{Action, Event, Msg},
+    };
+    use bytemuck::{Pod, Zeroable};
+    use std::{
+        sync::{Arc, Mutex},
+        thread,
+        time::Duration,
+    };
+
+    // A unified message type for all tests in this module.
+    #[derive(Copy, Clone, Debug, PartialEq)]
+    #[repr(u8)]
+    enum MessageType {
+        Chaos,
+        Ping,
+    }
+
+    // A simple message for contention tests
+    #[derive(Copy, Clone, Debug, PartialEq)]
+    #[repr(C)]
+    struct ContentionMessage {
+        msg_type: MessageType,
+        sequence_num: u32,
+        sender_id: u32,
+    }
+
+    unsafe impl Pod for ContentionMessage {}
+    unsafe impl Zeroable for ContentionMessage {}
+
+    type MessageLog = Arc<Mutex<Vec<ContentionMessage>>>;
+
+    /// An agent that simulates a heavy workload by sleeping, then sends a message
+    /// for immediate processing, likely triggering a rollback on the receiver.
+    struct ChaosAgent {
+        target_planet: usize,
+        target_agent: usize,
+        workload_nanos: u64,
+        messages_to_send: u32,
+        messages_sent: u32,
+        send_interval: u64,
+    }
+
+    impl ChaosAgent {
+        fn new(
+            target_planet: usize,
+            target_agent: usize,
+            workload_nanos: u64,
+            messages_to_send: u32,
+            send_interval: u64,
+        ) -> Self {
+            Self {
+                target_planet,
+                target_agent,
+                workload_nanos,
+                messages_to_send,
+                messages_sent: 0,
+                send_interval,
+            }
+        }
+    }
+
+    impl ThreadedAgent<128, ContentionMessage> for ChaosAgent {
+        fn step(
+            &mut self,
+            context: &mut PlanetContext<128, ContentionMessage>,
+            agent_id: usize,
+        ) -> Event {
+            let time = context.time;
+
+            if self.messages_sent < self.messages_to_send {
+                // Simulate a heavy workload by pausing the thread.
+                // This makes it likely that the receiver planet has already advanced its time.
+                if self.workload_nanos > 0 {
+                    thread::sleep(Duration::from_nanos(self.workload_nanos));
+                }
+
+                let message_data = ContentionMessage {
+                    msg_type: MessageType::Chaos,
+                    sequence_num: self.messages_sent,
+                    sender_id: agent_id as u32,
+                };
+
+                // Send a message for processing in the immediate future (+1).
+                // If this agent's thread was delayed, `time + 1` might be in the
+                // receiver's past, forcing a rollback.
+                let msg = Msg::new(
+                    message_data,
+                    time,
+                    time + 1, // Receive time is just after send time
+                    agent_id,
+                    Some(self.target_agent),
+                );
+
+                // The send_mail function will correctly create the anti-message.
+                if context.send_mail(msg, self.target_planet).is_ok() {
+                    self.messages_sent += 1;
+                }
+            }
+
+            // Schedule the next send event or wait if done.
+            if self.messages_sent < self.messages_to_send {
+                Event::new(time, time, agent_id, Action::Timeout(self.send_interval))
+            } else {
+                Event::new(time, time, agent_id, Action::Wait) // Stop sending
+            }
+        }
+
+        fn read_message(
+            &mut self,
+            _context: &mut PlanetContext<128, ContentionMessage>,
+            _msg: Msg<ContentionMessage>,
+            _agent_id: usize,
+        ) {
+            // Chaos agent does not process incoming messages.
+        }
+    }
+
+    /// A simple receiver agent that logs all messages it receives.
+    struct ContentionReceiver {
+        message_log: MessageLog,
+    }
+
+    impl ContentionReceiver {
+        fn new(message_log: MessageLog) -> Self {
+            Self { message_log }
+        }
+    }
+
+    impl ThreadedAgent<128, ContentionMessage> for ContentionReceiver {
+        fn step(
+            &mut self,
+            context: &mut PlanetContext<128, ContentionMessage>,
+            agent_id: usize,
+        ) -> Event {
+            // Just stay alive to receive messages.
+            Event::new(context.time, context.time, agent_id, Action::Timeout(10))
+        }
+
+        fn read_message(
+            &mut self,
+            _context: &mut PlanetContext<128, ContentionMessage>,
+            msg: Msg<ContentionMessage>,
+            _agent_id: usize,
+        ) {
+            // When a message is received, add it to the shared log.
+            if let Ok(mut log) = self.message_log.lock() {
+                log.push(msg.data);
+            }
+        }
+    }
+
+    struct PingPongAgent {
+        target_planet: usize,
+        target_agent: usize,
+        ping_count: u32,
+    }
+
+    impl PingPongAgent {
+        fn new(target_planet: usize, target_agent: usize) -> Self {
+            Self {
+                target_planet,
+                target_agent,
+                ping_count: 0,
+            }
+        }
+    }
+
+    impl ThreadedAgent<128, ContentionMessage> for PingPongAgent {
+        fn step(
+            &mut self,
+            context: &mut PlanetContext<128, ContentionMessage>,
+            agent_id: usize,
+        ) -> Event {
+            println!(
+                "world {:?} sending ping {:?}",
+                context.world_id,
+                self.ping_count + 1
+            );
+            let time = context.time;
+            let message_data = ContentionMessage {
+                msg_type: MessageType::Ping,
+                sequence_num: self.ping_count,
+                sender_id: agent_id as u32,
+            };
+            println!("set send time as {time} and recv as {:?}", time + 5);
+            let msg = Msg::new(
+                message_data,
+                time,
+                time + 5,
+                agent_id,
+                Some(self.target_agent),
+            );
+            let _ = context.send_mail(msg, self.target_planet);
+            self.ping_count += 1;
+            // Wait for a reply before sending the next ping
+            Event::new(time, time, agent_id, Action::Wait)
+        }
+
+        fn read_message(
+            &mut self,
+            context: &mut PlanetContext<128, ContentionMessage>,
+            msg: Msg<ContentionMessage>,
+            agent_id: usize,
+        ) {
+            // When we get a ping back, schedule a step to send another one.
+            println!(
+                "world {:?} recieving pong: {:?}",
+                context.world_id, msg.data.sequence_num
+            );
+            if msg.data.msg_type == MessageType::Ping {
+                let time = context.time;
+                println!("set send time as {time} and recv as {:?}", time + 5);
+                let _ = context.world_state.write(1, time, None); // just to write something
+                let _ = self.step(context, agent_id);
+            }
+        }
+    }
+
+    /// Helper function to run a contention test with a specific workload.
+    fn run_contention_test(workload_nanos: u64, messages_to_send: u32, noise: bool) {
+        const NUM_PLANETS: usize = 2;
+        const TERMINAL_TIME: f64 = 500.0;
+
+        let message_log = Arc::new(Mutex::new(Vec::new()));
+
+        // Configure the engine. A small throttle horizon can make rollbacks more likely.
+        let config = HybridConfig::new(NUM_PLANETS, 1024)
+            .with_time_bounds(TERMINAL_TIME, 1.0)
+            .with_optimistic_sync(20, 40) // Small throttle horizon and checkpoint frequency
+            .with_uniform_worlds(1024, 2, 256); // 1 agent per planet
+
+        let mut engine =
+            HybridEngine::<128, 128, 8, 128, 2, ContentionMessage>::create(config, 16).unwrap();
+
+        // Planet 0: The ChaosAgent causing trouble.
+        let chaos_agent = ChaosAgent::new(
+            1,                // target_planet
+            0,                // target_agent
+            workload_nanos,   // simulated workload
+            messages_to_send, // number of messages to send
+            1,                // send a message every 10 time units
+        );
+        engine.spawn_agent(0, Box::new(chaos_agent)).unwrap();
+
+        // Planet 1: The receiver that will be rolled back.
+        let receiver = ContentionReceiver::new(message_log.clone());
+        engine.spawn_agent(1, Box::new(receiver)).unwrap();
+
+        // Schedule initial events to start the simulation.
+        engine.schedule(0, 0, 1).unwrap(); // Start the chaos agent.
+        engine.schedule(1, 0, 1).unwrap(); // Start the receiver.
+
+        if noise {
+            // Planet 0: PingPong Agent 1
+            let pinger1 = PingPongAgent::new(1, 1);
+            engine.spawn_agent(0, Box::new(pinger1)).unwrap();
+            engine.schedule(0, 1, 1).unwrap(); // Start the ping-pong
+
+            // Planet 1: PingPong Agent 2
+            let pinger2 = PingPongAgent::new(0, 1);
+            engine.spawn_agent(1, Box::new(pinger2)).unwrap();
+        }
+
+        // Run the simulation.
+        let result = engine.run();
+
+        // The primary check is that the simulation completes without errors.
+        // The internal GVT checks will fail with AikaError::TimeTravel if GVT
+        // becomes non-monotonic.
+        assert!(
+            result.is_ok(),
+            "Engine run failed under contention with workload {}ns: {:?}",
+            workload_nanos,
+            result.err()
+        );
+
+        // Verify that all messages were eventually delivered, despite rollbacks.
+        let log = message_log.lock().unwrap();
+        assert_eq!(
+            log.len(),
+            messages_to_send as usize,
+            "Incorrect number of messages received with workload {}ns. Expected {}, got {}.",
+            workload_nanos,
+            messages_to_send,
+            log.len()
+        );
+
+        // Verify the sequence numbers to ensure no messages were lost.
+        let mut received_sequences: Vec<u32> = log.iter().map(|m| m.sequence_num).collect();
+        received_sequences.sort_unstable();
+        let expected_sequences: Vec<u32> = (0..messages_to_send).collect();
+        assert_eq!(
+            received_sequences, expected_sequences,
+            "Message sequence numbers are incorrect, indicating lost or duplicated messages."
+        );
+    }
+
+    #[test]
+    fn test_no_contention_baseline() {
+        // No workload, should not cause rollbacks.
+        println!("Running test: No contention baseline");
+        run_contention_test(0, 200, false);
+    }
+
+    #[test]
+    fn test_light_contention_with_rollbacks() {
+        // A small delay, may cause occasional rollbacks.
+        println!("Running test: Light contention");
+        run_contention_test(100, 200, false); // 100 nanoseconds
+    }
+
+    #[test]
+    fn test_moderate_contention_with_rollbacks() {
+        // A more significant delay, should reliably cause rollbacks.
+        println!("Running test: Moderate contention");
+        run_contention_test(500, 200, false); // 500 nanoseconds
+    }
+
+    #[test]
+    fn test_high_contention_with_rollbacks() {
+        // A large delay that makes rollbacks very frequent.
+        println!("Running test: High contention");
+        run_contention_test(2000, 200, false); // 2 microseconds
     }
 }

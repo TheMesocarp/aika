@@ -50,4 +50,10 @@ pub enum AikaError {
     InvalidWorldId(usize),
     #[error("Configuration error: {0}")]
     ConfigError(String),
+    #[error("current processor is receiving messages from {0} blocks; too far in the past! Messaging is lagging somewhere")]
+    DistantBlocks(usize),
+    #[error("Mismatched block sizes for block number {0}")]
+    MismatchBlockSizes(usize),
+    #[error("Mismatched block time stamps for block number {0}, start {1}, end {2}")]
+    MismatchBlockTimeStamps(usize, u64, u64),
 }
