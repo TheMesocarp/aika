@@ -156,17 +156,17 @@ impl<
             if let Some(pblocks) = planet_blocks {
                 for block in pblocks {
                     println!("GVT Master: received block from planet #{i}, with start time {:?}", block.start);
-                    if block.start == self.gvt + 1 {
+                    let diff = ((block.start - self.gvt) / self.block_size) as usize;
+                    if diff == 0 {
                         println!("GVT Master: placing block in next slot");
                         self.next[i] = Some(block);
                         continue;
                     }
-                    let diff = ((block.start - self.gvt) / self.block_size) as usize - 1;
-                    if diff >= BLOCK_SLOTS {
+                    if diff - 1 >= BLOCK_SLOTS {
                         return Err(AikaError::DistantBlocks(diff));
                     }
                     println!("GVT Master: placing block in pending slot number {diff}");
-                    self.pending[i][diff] = Some(block);
+                    self.pending[i][diff - 1] = Some(block);
                 }
             }
         }
@@ -193,6 +193,7 @@ impl<
     }
 
     fn update_consensus(&mut self) -> Result<Option<u64>, AikaError> {
+        println!("GVT Master: polling next for full block reports...");
         if self.next.iter().all(|x| x.is_some()) {
             let mut sends = 0;
             let mut recvs = 0;
@@ -223,7 +224,7 @@ impl<
             println!("GVT Master: block number {:?}, found with {unmatched} unmatched messages.", self.block_counter);
             self.unmatched_sends = unmatched;
             // if all messages are accounted for locally, and we are indeed looking at the next block, commit and move on
-            if unmatched == 0 && end > self.gvt {
+            if unmatched == 0 {
                 self.commit_block(start, end, sends, recvs, recvs_from_previous)?;
                 return Ok(Some(end));
             }
@@ -245,6 +246,12 @@ impl<
                 self.commit_block(start, end, sends, recvs, recvs_from_previous)?;
                 return Ok(Some(end));
             }
+        }
+        let missing_planets: Vec<usize> = self.next.iter().enumerate()
+            .filter_map(|(i, block)| if block.is_none() { Some(i) } else { None })
+            .collect();
+        if !missing_planets.is_empty() {
+            println!("GVT Master: waiting for planets {:?} to submit next block", missing_planets);
         }
         Ok(None)
     }
@@ -268,10 +275,12 @@ impl<
 
         self.next.fill(None);
 
+        println!("GVT Master: rotating...");
         let mut new_pendings = 0;
         for (planet_idx, planet_pending) in self.pending.iter_mut().enumerate() {
             // Move the closest pending block (if any) to self.next
             if let Some(block) = planet_pending[0].take() {
+                println!("found next block for planet #{planet_idx}");
                 let diff = block.sends as i32 - block.recvs as i32;
                 new_pendings += diff;
                 self.next[planet_idx] = Some(block);
@@ -313,7 +322,7 @@ impl<
             return false;
         }
         if !self.next.iter().all(|x| x.is_none()) {
-            println!("GVT Master: there are still blocks pending approval!");
+            //println!("GVT Master: there are still blocks pending approval! {:?}", self.gvt);
             return false;
         }
         true
@@ -326,17 +335,17 @@ impl<
             for _ in 0..10 {
                 self.deliver_the_mail()?;
                 self.poll_blocks()?;
+                while let Some(new_gvt) = self.update_consensus()? {
+                    self.gvtcomms.broadcast(new_gvt);
+                }
             }
             //println!("GVT Master, GVT {:?}: polling blocks, updating time consensus...", self.gvt);
             // block polling and try commiting
-            while let Some(new_gvt) = self.update_consensus()? {
-                self.gvtcomms.broadcast(new_gvt);
-            }
             // check if all worlds have reached an end, and check if all messages have been received and blocks processed
             if self.check_all_terminal()? {
-                println!("GVT Master, GVT {:?}: all planets are waiting", self.gvt);
+                //println!("GVT Master, GVT {:?}: all planets are waiting", self.gvt);
                 if self.check_terminate() {
-                    println!("GVT Master, GVT {:?}: GVT has caught up, consensus reached!", self.gvt);
+                    //println!("GVT Master, GVT {:?}: GVT has caught up, consensus reached!", self.gvt);
                     break;
                 }
             }

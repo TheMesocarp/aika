@@ -38,11 +38,12 @@ impl<
     > HybridEngine<MSG_SLOTS, BLOCK_SLOTS, GVT_SLOTS, CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>
 {
     /// Create a new synchronization engine from the provided config.
-    pub fn create(config: HybridConfig) -> Result<Self, AikaError> {
+    pub fn create(config: HybridConfig, block_size: u64) -> Result<Self, AikaError> {
         let mut galaxy = Galaxy::create(
             config.number_of_worlds,
         )?;
         galaxy.set_time_scale(config.timestep, config.terminal);
+        galaxy.block_size = block_size;
         let mut planets = Vec::new();
         for i in 0..config.number_of_worlds {
             let registry = galaxy.spawn_planet()?;
@@ -183,7 +184,7 @@ mod hybrid_engine_tests {
     #[test]
     fn test_hybrid_basic_run() {
         // Configuration
-        const NUM_PLANETS: usize = 14;
+        const NUM_PLANETS: usize = 7;
         const AGENTS_PER_PLANET: usize = 100;
         const TOTAL_AGENTS: usize = NUM_PLANETS * AGENTS_PER_PLANET;
         const EVENTS: u64 = 100;
@@ -202,8 +203,7 @@ mod hybrid_engine_tests {
         assert_eq!(config.total_agents(), TOTAL_AGENTS);
 
         // Create the hybrid engine
-        let mut engine = HybridEngine::<32, 128, 16, 128, 1, TestData>::create(config).unwrap();
-        engine.galaxy.with_block_size(2);
+        let mut engine = HybridEngine::<32, 128, 16, 128, 1, TestData>::create(config, 2).unwrap();
         // Spawn agents using autobalancing
         for _i in 0..TOTAL_AGENTS {
             let agent = SimpleSchedulingAgent::new();

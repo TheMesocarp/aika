@@ -87,7 +87,7 @@ fn hybrid_engine_benchmark(c: &mut Criterion) {
             b.iter(|| {
                 // Create the hybrid engine
                 let mut engine =
-                    HybridEngine::<16, 32, 8, 128, 1, TestData>::create(config.clone()).unwrap(); // config.clone() is important here
+                    HybridEngine::<16, 32, 8, 128, 1, TestData>::create(config.clone(), 2).unwrap(); // config.clone() is important here
 
                 // Spawn agents using autobalancing
                 for _i in 0..TOTAL_AGENTS {

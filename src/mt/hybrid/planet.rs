@@ -110,7 +110,7 @@ impl<
             event_system: LocalEventSystem::<CLOCK_SLOTS, CLOCK_HEIGHT>::new()?,
             local_messages: LocalMailSystem::new()?,
             block_submitter: registration.block_channel,
-            block: Block::new(1, 1 + registration.block_size, registration.planet_id, 1)?,
+            block: Block::new(1, registration.block_size, registration.planet_id, 1)?,
             block_nmb: 1,
             block_size: registration.block_size,
             throttle: registration.throttle,
@@ -141,7 +141,7 @@ impl<
             event_system: LocalEventSystem::<CLOCK_SLOTS, CLOCK_HEIGHT>::new()?,
             local_messages: LocalMailSystem::new()?,
             block_submitter: registration.block_channel,
-            block: Block::new(1, 1 + registration.block_size, registration.planet_id, 1)?,
+            block: Block::new(1, registration.block_size, registration.planet_id, 1)?,
             block_nmb: 1,
             block_size: registration.block_size,
             throttle: registration.throttle,
@@ -395,17 +395,17 @@ impl<
         self.local_messages
             .schedule
             .increment(&mut self.local_messages.overflow);
-        self.context.time += 1;
         // check-process block now
+        self.context.time += 1;
         if self.context.time > self.block.end {
-            println!("Planet {:?}, Time {:?}: submitting local block #{:?}", self.context.world_id, self.context.time, self.block_nmb);
+            println!("Planet {:?}, Time {:?}: submitting local block #{:?} with end time {:?}", self.context.world_id, self.context.time, self.block_nmb, self.block.end);
             self.block_submitter.write(std::mem::take(&mut self.block))?;
 
             self.block_nmb += 1;
 
             self.block.block_id = (self.context.world_id, self.block_nmb);
             self.block.start = self.context.time;
-            self.block.end = min(self.context.time + self.block_size, (self.terminal / self.timestep) as u64);
+            self.block.end = min(self.context.time + self.block_size - 1, (self.terminal / self.timestep) as u64);
         }
         Ok(())
     }
