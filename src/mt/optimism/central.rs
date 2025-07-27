@@ -1,7 +1,7 @@
 use bytemuck::{Pod, Zeroable};
 use mesocarp::{comms::mailbox::ThreadedMessenger, sync::gvt::aika::Consensus, MesoError};
 
-use crate::{mt::chain::{producer::Planet, Time}, objects::Mail, AikaError};
+use crate::{mt::optimism::{planets::Planet, Time}, objects::Mail, AikaError};
 
 
 pub struct Galaxy<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + Clone> {
