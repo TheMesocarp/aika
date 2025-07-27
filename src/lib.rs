@@ -32,6 +32,8 @@ pub enum AikaError {
     TimeTravel,
     #[error("Terminal time stamp hit, no more scheduling allowed.")]
     PastTerminal,
+    #[error("Terminal time stamp hit, no more scheduling allowed, though messages are still in transit")]
+    PastTerminalButGVTBehind,
     #[error("Maximum number of agents already specified. If you want to add more agents, you need to configure the GVT to support more.")]
     MaximumAgentsAllowed,
     #[error("Cannot start parallel simulation, not all specified agents have been configured or provided.")]
@@ -54,4 +56,8 @@ pub enum AikaError {
     MismatchBlockSizes(usize),
     #[error("Mismatched block time stamps for block number {0}, start {1}, end {2}")]
     MismatchBlockTimeStamps(usize, u64, u64),
+    #[error("Planet {0} Time {1}: Rolled back past the GVT safe point at {2}. GVT is moving ahead too fast!")]
+    GVTPastLocalClock(usize, u64, u64),
+    #[error("GVT is backtracking. Submitted blocks are decrementing in time.")]
+    GVTisDecreasing
 }

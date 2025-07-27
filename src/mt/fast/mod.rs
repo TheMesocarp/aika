@@ -1,5 +1,4 @@
-pub mod planets;
-pub mod central;
+pub mod universe;
 
 #[derive(Copy, Clone, Debug)]
 pub struct Time {
