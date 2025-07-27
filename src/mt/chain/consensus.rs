@@ -1,7 +1,7 @@
 use bytemuck::{Pod, Zeroable};
 use mesocarp::{comms::mailbox::ThreadedMessenger, sync::gvt::aika::Consensus, MesoError};
 
-use crate::{mt::chain::Time, objects::Mail, AikaError};
+use crate::{mt::chain::{producer::Planet, Time}, objects::Mail, AikaError};
 
 
 pub struct Galaxy<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + Clone> {
@@ -44,6 +44,21 @@ impl<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + C
         self.time.cp_hz = frequency
     }
 
+    pub fn with_block_duration(&mut self, duration: u64) {
+        self.max_block_dur = duration;
+    }
+
+    pub fn spawn_planet<const CLOCK_BW: usize, const CLOCK_SCALES: usize>(&mut self) -> Result<Planet<BLOCK_BW, MSG_BW, CLOCK_BW, CLOCK_SCALES, MessageType>, AikaError> {
+        if self.registered == self.planet_count {
+            return Err(AikaError::MaximumAgentsAllowed);
+        }
+        let id = self.registered;
+        self.registered += 1;
+        let messenger_account = self.interplanetary_messenger.get_user(id)?;
+        let spoke = self.consensus.register_producer(None)?.unwrap();
+        Planet::from_galaxy_registration(self.time, spoke, messenger_account, id)
+    }
+
     fn deliver_the_mail(&mut self) -> Result<(), AikaError> {
         match self.interplanetary_messenger.poll() {
             Ok(msgs) => {
@@ -60,8 +75,43 @@ impl<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + C
         }
     }
 
-    pub fn with_block_duration(&mut self, duration: u64) {
-        self.max_block_dur = duration;
+    fn check_all_terminal(&mut self) -> Result<bool, AikaError> {
+        if self.time.gvt as f64 * self.time.timestep >= self.time.terminal {
+            return Ok(true);
+        }
+        let latest = self.consensus.fetch_latest_uncommited_blocks()?;
+        let mut truth = true;
+        for block in latest {
+            if let Some(block) = block {
+                truth = ((block.start + block.dur) as f64 * self.time.timestep) >= self.time.terminal;
+                continue;
+            }
+            return Ok(false);
+        }
+        Ok(truth)
+    }
+
+    pub fn master(&mut self) -> Result<(), AikaError> {
+        loop {
+            // mail
+            //println!("GVT Master, GVT {:?}: delivering mail...", self.gvt);
+            for _ in 0..10 {
+                self.deliver_the_mail()?;
+                self.consensus.poll_n_slot()?;
+                while let Some(new_gvt) = self.consensus.check_update_safe_point()? {
+                    self.consensus.processor.broadcast_new_safe_point(new_gvt);
+                }
+            }
+            //println!("GVT Master, GVT {:?}: polling blocks, updating time consensus...", self.gvt);
+            if self.check_all_terminal()? {
+                //println!("GVT Master, GVT {:?}: all planets are waiting", self.gvt);
+                if self.consensus.check_status() {
+                    //println!("GVT Master, GVT {:?}: GVT has caught up, consensus reached!", self.gvt);
+                    break;
+                }
+            }
+        }
+        Ok(())
     }
 }
 

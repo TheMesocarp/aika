@@ -1,6 +1,7 @@
 pub mod producer;
 pub mod consensus;
 
+#[derive(Copy, Clone, Debug)]
 pub struct Time {
     pub gvt: u64,
     pub cp_hz: u64,
