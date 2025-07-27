@@ -1,11 +1,13 @@
 //! Single-threaded simulation world supporting multiple agents with message passing capabilities.
-//! Provides a `World` struct that manages agent execution, event scheduling, and local message
+//! Provides a `LonePlanet` struct that manages agent execution, event scheduling, and local message
 //! delivery in a deterministic single-threaded environment with configurable time bounds.
 use mesocarp::comms::mailbox::ThreadedMessenger;
 
+pub mod agents;
+
 use crate::{
-    agents::{Agent, AgentSupport, WorldContext},
-    objects::{Action, Event, LocalEventSystem, Msg},
+    st::agents::{Agent, AgentSupport, WorldContext},
+    objects::{SchedulingTask, Event, LocalEventSystem, Msg},
     AikaError,
 };
 
@@ -15,7 +17,7 @@ pub(crate) struct TimeInfo {
 }
 
 /// A world that can contain multiple agents and run a simulation.
-pub struct World<
+pub struct LonePlanet<
     const MESSAGE_SLOTS: usize,
     const CLOCK_SLOTS: usize,
     const CLOCK_HEIGHT: usize,
@@ -33,7 +35,7 @@ unsafe impl<
         const CLOCK_SLOTS: usize,
         const CLOCK_HEIGHT: usize,
         MessageType: Clone,
-    > Send for World<MESSAGE_SLOTS, CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>
+    > Send for LonePlanet<MESSAGE_SLOTS, CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>
 {
 }
 unsafe impl<
@@ -41,7 +43,7 @@ unsafe impl<
         const CLOCK_SLOTS: usize,
         const CLOCK_HEIGHT: usize,
         MessageType: Clone,
-    > Sync for World<MESSAGE_SLOTS, CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>
+    > Sync for LonePlanet<MESSAGE_SLOTS, CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>
 {
 }
 
@@ -50,7 +52,7 @@ impl<
         const CLOCK_SLOTS: usize,
         const CLOCK_HEIGHT: usize,
         MessageType: Clone,
-    > World<MESSAGE_SLOTS, CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>
+    > LonePlanet<MESSAGE_SLOTS, CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>
 {
     /// Initialize a new world with the provided time information and world state arena allocation size
     pub fn init(terminal: f64, timestep: f64, world_arena_size: usize) -> Result<Self, AikaError> {
@@ -63,7 +65,7 @@ impl<
             time_info: TimeInfo { timestep, terminal },
         })
     }
-    /// Spawn a new `Agent` to the `World`.
+    /// Spawn a new `Agent` to the `LonePlanet`.
     pub fn spawn_agent(&mut self, agent: Box<dyn Agent<MESSAGE_SLOTS, Msg<MessageType>>>) -> usize {
         self.agents.push(agent);
         self.agents.len() - 1
@@ -113,7 +115,7 @@ impl<
             return Err(AikaError::PastTerminal);
         }
         let now = self.now();
-        self.commit(Event::new(now, time, agent, Action::Wait));
+        self.commit(Event::new(now, time, agent, SchedulingTask::Wait));
         Ok(())
     }
 
@@ -134,7 +136,7 @@ impl<
                     supports.time = event.time;
                     let event = self.agents[event.agent].step(supports, event.agent);
                     match event.yield_ {
-                        Action::Timeout(time) => {
+                        SchedulingTask::Timeout(time) => {
                             if (self.now() + time) as f64 * self.time_info.timestep
                                 > self.time_info.terminal
                             {
@@ -145,17 +147,17 @@ impl<
                                 self.now(),
                                 self.now() + time,
                                 event.agent,
-                                Action::Wait,
+                                SchedulingTask::Wait,
                             ));
                         }
-                        Action::Schedule(time) => {
-                            self.commit(Event::new(self.now(), time, event.agent, Action::Wait));
+                        SchedulingTask::Schedule(time) => {
+                            self.commit(Event::new(self.now(), time, event.agent, SchedulingTask::Wait));
                         }
-                        Action::Trigger { time, idx } => {
-                            self.commit(Event::new(self.now(), time, idx, Action::Wait));
+                        SchedulingTask::Trigger { time, idx } => {
+                            self.commit(Event::new(self.now(), time, idx, SchedulingTask::Wait));
                         }
-                        Action::Wait => {}
-                        Action::Break => {
+                        SchedulingTask::Wait => {}
+                        SchedulingTask::Break => {
                             break;
                         }
                     }
@@ -201,7 +203,7 @@ mod tests {
     impl Agent<8, Msg<u8>> for TestAgent {
         fn step(&mut self, supports: &mut WorldContext<8, Msg<u8>>, id: usize) -> Event {
             let time = supports.time;
-            Event::new(time, time, id, Action::Timeout(1))
+            Event::new(time, time, id, SchedulingTask::Timeout(1))
         }
     }
 
@@ -247,9 +249,9 @@ mod tests {
 
             // Continue sending every 5 time units
             if self.messages_sent < self.message_count {
-                Event::new(time, time, self.id, Action::Timeout(5))
+                Event::new(time, time, self.id, SchedulingTask::Timeout(5))
             } else {
-                Event::new(time, time, self.id, Action::Wait)
+                Event::new(time, time, self.id, SchedulingTask::Wait)
             }
         }
     }
@@ -285,7 +287,7 @@ mod tests {
             }
 
             // Keep checking every time unit
-            Event::new(time, time, id, Action::Timeout(1))
+            Event::new(time, time, id, SchedulingTask::Timeout(1))
         }
     }
 
@@ -327,9 +329,9 @@ mod tests {
             }
 
             if self.broadcasts_sent < self.broadcast_count {
-                Event::new(time, time, id, Action::Timeout(10))
+                Event::new(time, time, id, SchedulingTask::Timeout(10))
             } else {
-                Event::new(time, time, id, Action::Wait)
+                Event::new(time, time, id, SchedulingTask::Wait)
             }
         }
     }
@@ -365,20 +367,20 @@ mod tests {
                     time,
                     time,
                     id,
-                    Action::Trigger {
+                    SchedulingTask::Trigger {
                         time: trigger_time,
                         idx: self.target,
                     },
                 );
             }
 
-            Event::new(time, time, id, Action::Wait)
+            Event::new(time, time, id, SchedulingTask::Wait)
         }
     }
 
     #[test]
     fn test_run() {
-        let mut world = World::<8, 128, 1, u8>::init(400000.0, 1.0, 0).unwrap();
+        let mut world = LonePlanet::<8, 128, 1, u8>::init(400000.0, 1.0, 0).unwrap();
         let agent_test = TestAgent::new(0);
         world.spawn_agent(Box::new(agent_test));
         world.init_support_layers(None).unwrap();
@@ -389,7 +391,7 @@ mod tests {
 
     #[test]
     fn test_simple_message_passing() {
-        let mut world = World::<8, 128, 1, u8>::init(100.0, 1.0, 0).unwrap();
+        let mut world = LonePlanet::<8, 128, 1, u8>::init(100.0, 1.0, 0).unwrap();
 
         // Create sender and receiver
         let sender = SendingAgent::new(0, 1, 3);
@@ -418,7 +420,7 @@ mod tests {
 
     #[test]
     fn test_broadcast_messages() {
-        let mut world = World::<8, 128, 1, u8>::init(100.0, 1.0, 0).unwrap();
+        let mut world = LonePlanet::<8, 128, 1, u8>::init(100.0, 1.0, 0).unwrap();
 
         // Create one broadcaster and two receivers
         let broadcaster = BroadcastingAgent::new(0, 2);
@@ -457,7 +459,7 @@ mod tests {
 
     #[test]
     fn test_agent_triggering() {
-        let mut world = World::<8, 128, 1, u8>::init(100.0, 1.0, 0).unwrap();
+        let mut world = LonePlanet::<8, 128, 1, u8>::init(100.0, 1.0, 0).unwrap();
 
         // Create a triggering agent that will trigger agent 1 at specific times
         let trigger_times = vec![10, 20, 30];
@@ -482,7 +484,7 @@ mod tests {
 
     #[test]
     fn test_multiple_simultaneous_messages() {
-        let mut world = World::<8, 128, 1, u8>::init(50.0, 1.0, 0).unwrap();
+        let mut world = LonePlanet::<8, 128, 1, u8>::init(50.0, 1.0, 0).unwrap();
 
         // Create multiple senders all targeting the same receiver
         let sender1 = SendingAgent::new(0, 3, 2);
@@ -529,7 +531,7 @@ mod tests {
 
     #[test]
     fn test_invalid_target_handling() {
-        let mut world = World::<8, 128, 1, u8>::init(50.0, 1.0, 0).unwrap();
+        let mut world = LonePlanet::<8, 128, 1, u8>::init(50.0, 1.0, 0).unwrap();
 
         // Agent that tries to send to non-existent agent
         pub struct InvalidTargetAgent {
@@ -552,7 +554,7 @@ mod tests {
                     }
                 }
 
-                Event::new(time, time, id, Action::Wait)
+                Event::new(time, time, id, SchedulingTask::Wait)
             }
         }
 

@@ -1,0 +1,958 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running unittests src/lib.rs (target/debug/deps/aika-ef09b9a305c6abd4)
+
+running 1 test
+Running test: No contention baseline
+GVT Master: polling next for full block reports...
+GVT Master: waiting for planets [0, 1] to submit next block
+GVT Master: polling next for full block reports...
+GVT Master: waiting for planets [0, 1] to submit next block
+GVT Master: polling next for full block reports...
+GVT Master: waiting for planets [0, 1] to submit next block
+GVT Master: polling next for full block reports...
+GVT Master: waiting for planets [0, 1] to submit next block
+GVT Master: polling next for full block reports...
+GVT Master: waiting for planets [0, 1] to submit next block
+GVT Master: polling next for full block reports...
+GVT Master: waiting for planets [0, 1] to submit next block
+GVT Master: polling next for full block reports...
+GVT Master: waiting for planets [0, 1] to submit next block
+GVT Master: polling next for full block reports...
+GVT Master: waiting for planets [0, 1] to submit next block
+GVT Master: polling next for full block reports...
+GVT Master: waiting for planets [0, 1] to submit next block
+GVT Master: polling next for full block reports...
+GVT Master: waiting for planets [0, 1] to submit next block
+world 0 sending ping 1
+set send time as 1 and recv as 6
+Planet 1, Time 17: submitting local block #1 with end time 16
+Planet 1, Time 33: submitting local block #2 with end time 32
+Planet 1, Time 49: submitting local block #3 with end time 48
+Planet 1, Time 65: submitting local block #4 with end time 64
+Planet 1: opening mail with recieve time 2
+Planet 1, Time 74: found old message in poll with recieve time 2
+GVT Master: received block from planet #1, with start time 1
+GVT Master: placing block in next slot
+GVT Master: received block from planet #1, with start time 17
+GVT Master: placing block in pending slot number 1
+GVT Master: received block from planet #1, with start time 33
+GVT Master: placing block in pending slot number 2
+GVT Master: received block from planet #1, with start time 49
+GVT Master: placing block in pending slot number 3
+GVT Master: polling next for full block reports...
+GVT Master: waiting for planets [0] to submit next block
+GVT Master: polling next for full block reports...
+GVT Master: waiting for planets [0] to submit next block
+Planet 0, Time 17: submitting local block #1 with end time 16
+Planet 1, Time 74: ROLLBACK!!!!! rolling back to 2
+Planet 1: opening mail with recieve time 6
+Planet 1: opening mail with recieve time 3
+Planet 1: opening mail with recieve time 4
+Planet 1: opening mail with recieve time 5
+Planet 1: opening mail with recieve time 6
+Planet 1: opening mail with recieve time 7
+Planet 1: opening mail with recieve time 8
+Planet 1: opening mail with recieve time 9
+Planet 1: opening mail with recieve time 10
+Planet 1: opening mail with recieve time 11
+Planet 1: opening mail with recieve time 12
+Planet 1: opening mail with recieve time 13
+Planet 0, Time 33: submitting local block #2 with end time 32
+GVT Master: polling next for full block reports...
+GVT Master: waiting for planets [0] to submit next block
+Planet 1: opening mail with recieve time 14
+Planet 1: opening mail with recieve time 15
+Planet 1: opening mail with recieve time 16
+Planet 1: opening mail with recieve time 17
+GVT Master: received block from planet #0, with start time 1
+GVT Master: placing block in next slot
+GVT Master: received block from planet #0, with start time 17
+Planet 0, Time 49: submitting local block #3 with end time 48
+GVT Master: placing block in pending slot number 1
+GVT Master: polling next for full block reports...
+Planet 1: opening mail with recieve time 18
+Planet 1: opening mail with recieve time 19
+Planet 1: opening mail with recieve time 20
+Planet 1: opening mail with recieve time 21
+Planet 1: opening mail with recieve time 22
+Planet 1: opening mail with recieve time 23
+Planet 1: opening mail with recieve time 24
+Planet 1: opening mail with recieve time 25
+Planet 1: opening mail with recieve time 26
+Planet 1: opening mail with recieve time 27
+Planet 1: opening mail with recieve time 28
+Planet 1: opening mail with recieve time 29
+Planet 1: opening mail with recieve time 30
+Planet 1: opening mail with recieve time 31
+Planet 1: opening mail with recieve time 32
+Planet 1: opening mail with recieve time 33
+Planet 1: opening mail with recieve time 34
+Planet 1: opening mail with recieve time 35
+Planet 1: opening mail with recieve time 36
+Planet 1: opening mail with recieve time 37
+Planet 0, Time 65: submitting local block #4 with end time 64
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+world 1 recieving pong: 0
+set send time as 6 and recv as 11
+world 1 sending ping 1
+set send time as 6 and recv as 11
+GVT Master: received block from planet #0, with start time 33
+GVT Master: placing block in pending slot number 2
+GVT Master: received block from planet #0, with start time 49
+GVT Master: placing block in pending slot number 3
+GVT Master: polling next for full block reports...
+Planet 0, Time 81: submitting local block #5 with end time 80
+Planet 1: opening mail with recieve time 38
+Planet 1: opening mail with recieve time 39
+Planet 1: opening mail with recieve time 40
+Planet 1: opening mail with recieve time 41
+Planet 1: opening mail with recieve time 42
+Planet 1: opening mail with recieve time 43
+Planet 1: opening mail with recieve time 44
+Planet 1: opening mail with recieve time 45
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+Planet 1: opening mail with recieve time 46
+Planet 1: opening mail with recieve time 47
+GVT Master: received block from planet #0, with start time 65
+GVT Master: placing block in pending slot number 4
+GVT Master: polling next for full block reports...
+Planet 1: opening mail with recieve time 48
+Planet 1: opening mail with recieve time 49
+Planet 1: opening mail with recieve time 50
+Planet 1: opening mail with recieve time 51
+Planet 1: opening mail with recieve time 52
+Planet 1: opening mail with recieve time 53
+Planet 1: opening mail with recieve time 54
+Planet 1: opening mail with recieve time 55
+Planet 1: opening mail with recieve time 56
+Planet 1: opening mail with recieve time 57
+Planet 1: opening mail with recieve time 58
+Planet 1: opening mail with recieve time 59
+Planet 1: opening mail with recieve time 60
+Planet 1: opening mail with recieve time 61
+Planet 1: opening mail with recieve time 62
+Planet 1: opening mail with recieve time 63
+Planet 1: opening mail with recieve time 64
+Planet 1: opening mail with recieve time 65
+Planet 1: opening mail with recieve time 66
+Planet 1, block 5: recv counter now 1
+Planet 1: opening mail with recieve time 67
+Planet 1, block 5: recv counter now 2
+Planet 1: opening mail with recieve time 68
+Planet 1, block 5: recv counter now 3
+Planet 1: opening mail with recieve time 69
+Planet 1, block 5: recv counter now 4
+Planet 1: opening mail with recieve time 70
+Planet 1, block 5: recv counter now 5
+Planet 1: opening mail with recieve time 71
+Planet 1, block 5: recv counter now 6
+Planet 1: opening mail with recieve time 72
+Planet 1, block 5: recv counter now 7
+Planet 1: opening mail with recieve time 73
+Planet 1, block 5: recv counter now 8
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+Planet 1: opening mail with recieve time 74
+Planet 1, block 5: recv counter now 9
+Planet 1: opening mail with recieve time 75
+Planet 1, block 5: recv counter now 10
+Planet 1: opening mail with recieve time 76
+Planet 1, block 5: recv counter now 11
+Planet 1: opening mail with recieve time 77
+Planet 1, block 5: recv counter now 12
+Planet 1: opening mail with recieve time 78
+Planet 1, block 5: recv counter now 13
+Planet 1: opening mail with recieve time 79
+Planet 1, block 5: recv counter now 14
+Planet 1: opening mail with recieve time 80
+Planet 1, block 5: recv counter now 15
+Planet 1: opening mail with recieve time 81
+Planet 1, block 5: recv counter now 16
+Planet 1: opening mail with recieve time 82
+Planet 1, block 5: recv counter now 17
+Planet 1: opening mail with recieve time 83
+Planet 1, block 5: recv counter now 18
+Planet 1: opening mail with recieve time 84
+Planet 1, block 5: recv counter now 19
+Planet 1: opening mail with recieve time 85
+Planet 1, block 5: recv counter now 20
+Planet 1: opening mail with recieve time 86
+Planet 1, block 5: recv counter now 21
+Planet 1: opening mail with recieve time 87
+Planet 1, block 5: recv counter now 22
+Planet 1: opening mail with recieve time 88
+Planet 1, block 5: recv counter now 23
+Planet 1: opening mail with recieve time 89
+Planet 1, block 5: recv counter now 24
+Planet 1: opening mail with recieve time 90
+Planet 1, block 5: recv counter now 25
+Planet 1: opening mail with recieve time 91
+Planet 1, block 5: recv counter now 26
+Planet 1: opening mail with recieve time 92
+Planet 1, block 5: recv counter now 27
+Planet 1: opening mail with recieve time 93
+Planet 1, block 5: recv counter now 28
+Planet 1: opening mail with recieve time 94
+Planet 1, block 5: recv counter now 29
+Planet 1: opening mail with recieve time 95
+Planet 1, block 5: recv counter now 30
+Planet 1: opening mail with recieve time 96
+Planet 1, block 5: recv counter now 31
+Planet 1: opening mail with recieve time 97
+Planet 1, block 5: recv counter now 32
+GVT Master: polling next for full block reports...
+Planet 0, Time 97: submitting local block #6 with end time 96
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+Planet 0: opening mail with recieve time 11
+Planet 0, Time 97: found old message in poll with recieve time 11
+GVT Master: received block from planet #0, with start time 81
+GVT Master: placing block in pending slot number 5
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+Planet 1, Time 81: submitting local block #5 with end time 80
+Planet 0, Time 97: ROLLBACK!!!!! rolling back to 11
+GVT Master: received block from planet #1, with start time 65
+Planet 1: opening mail with recieve time 13
+Planet 1, Time 81: found old message in poll with recieve time 13
+world 0 recieving pong: 0
+set send time as 11 and recv as 16
+world 0 sending ping 2
+set send time as 11 and recv as 16
+GVT Master: placing block in pending slot number 4
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+Planet 1, Time 81: ROLLBACK!!!!! rolling back to 13
+Planet 1, block 6: recv counter now 1
+Planet 1: opening mail with recieve time 14
+Planet 1: opening mail with recieve time 15
+Planet 1: opening mail with recieve time 16
+Planet 1: opening mail with recieve time 17
+Planet 1: opening mail with recieve time 18
+Planet 1: opening mail with recieve time 19
+Planet 1: opening mail with recieve time 20
+Planet 1: opening mail with recieve time 21
+Planet 1: opening mail with recieve time 22
+Planet 1: opening mail with recieve time 23
+Planet 1: opening mail with recieve time 24
+Planet 1: opening mail with recieve time 25
+Planet 1: opening mail with recieve time 26
+Planet 1: opening mail with recieve time 27
+Planet 1: opening mail with recieve time 28
+Planet 1: opening mail with recieve time 29
+Planet 1: opening mail with recieve time 30
+Planet 1: opening mail with recieve time 31
+Planet 1: opening mail with recieve time 32
+Planet 1: opening mail with recieve time 33
+Planet 0, Time 113: submitting local block #7 with end time 112
+Planet 1: opening mail with recieve time 34
+Planet 1: opening mail with recieve time 35
+Planet 1: opening mail with recieve time 36
+Planet 1: opening mail with recieve time 37
+Planet 0, Time 129: submitting local block #8 with end time 128
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+Planet 1: opening mail with recieve time 38
+Planet 1: opening mail with recieve time 39
+Planet 1: opening mail with recieve time 40
+Planet 1: opening mail with recieve time 41
+Planet 1: opening mail with recieve time 42
+Planet 1: opening mail with recieve time 43
+Planet 1: opening mail with recieve time 44
+Planet 1: opening mail with recieve time 45
+Planet 1: opening mail with recieve time 46
+Planet 0, Time 145: submitting local block #9 with end time 144
+Planet 1: opening mail with recieve time 47
+Planet 1: opening mail with recieve time 48
+Planet 1: opening mail with recieve time 49
+Planet 1: opening mail with recieve time 50
+Planet 1: opening mail with recieve time 51
+Planet 1: opening mail with recieve time 52
+Planet 1: opening mail with recieve time 53
+Planet 1: opening mail with recieve time 54
+Planet 1: opening mail with recieve time 55
+Planet 0, Time 161: submitting local block #10 with end time 160
+Planet 1: opening mail with recieve time 56
+Planet 1: opening mail with recieve time 57
+Planet 1: opening mail with recieve time 58
+Planet 1: opening mail with recieve time 59
+Planet 1: opening mail with recieve time 60
+Planet 1: opening mail with recieve time 61
+Planet 1: opening mail with recieve time 62
+Planet 1: opening mail with recieve time 63
+Planet 1: opening mail with recieve time 64
+GVT Master: received block from planet #0, with start time 97
+GVT Master: placing block in pending slot number 6
+GVT Master: received block from planet #0, with start time 113
+GVT Master: placing block in pending slot number 7
+GVT Master: polling next for full block reports...
+Planet 1: opening mail with recieve time 65
+Planet 1: opening mail with recieve time 66
+Planet 1: opening mail with recieve time 67
+Planet 1: opening mail with recieve time 68
+Planet 1: opening mail with recieve time 69
+Planet 1: opening mail with recieve time 70
+Planet 1: opening mail with recieve time 71
+Planet 1: opening mail with recieve time 72
+Planet 1: opening mail with recieve time 73
+Planet 1, block 6: recv counter now 2
+Planet 1: opening mail with recieve time 74
+Planet 1: opening mail with recieve time 75
+Planet 1: opening mail with recieve time 76
+Planet 1: opening mail with recieve time 77
+Planet 1: opening mail with recieve time 78
+Planet 1: opening mail with recieve time 79
+Planet 1: opening mail with recieve time 80
+Planet 1: opening mail with recieve time 81
+Planet 1: opening mail with recieve time 82
+Planet 1: opening mail with recieve time 83
+Planet 1: opening mail with recieve time 84
+Planet 1: opening mail with recieve time 85
+Planet 1: opening mail with recieve time 86
+Planet 1: opening mail with recieve time 87
+Planet 1: opening mail with recieve time 88
+Planet 1: opening mail with recieve time 89
+Planet 1: opening mail with recieve time 90
+Planet 1: opening mail with recieve time 91
+Planet 1: opening mail with recieve time 92
+Planet 1: opening mail with recieve time 93
+Planet 1: opening mail with recieve time 94
+Planet 1: opening mail with recieve time 95
+Planet 1: opening mail with recieve time 96
+Planet 1: opening mail with recieve time 97
+GVT Master: block number 0, sends 17, recvs 0
+Planet 1: opening mail with recieve time 16
+Planet 1: opening mail with recieve time 98
+Planet 1, block 6: recv counter now 3
+Planet 1: opening mail with recieve time 99
+Planet 1, block 6: recv counter now 4
+Planet 1: opening mail with recieve time 100
+Planet 1, block 6: recv counter now 5
+Planet 1: opening mail with recieve time 101
+Planet 1, block 6: recv counter now 6
+Planet 1: opening mail with recieve time 102
+Planet 1, block 6: recv counter now 7
+Planet 1: opening mail with recieve time 103
+Planet 1, block 6: recv counter now 8
+Planet 1: opening mail with recieve time 104
+Planet 1, block 6: recv counter now 9
+Planet 1: opening mail with recieve time 105
+Planet 1, block 6: recv counter now 10
+Planet 1: opening mail with recieve time 106
+Planet 1, block 6: recv counter now 11
+Planet 1: opening mail with recieve time 107
+Planet 1, block 6: recv counter now 12
+Planet 1: opening mail with recieve time 108
+Planet 1, block 6: recv counter now 13
+Planet 1: opening mail with recieve time 109
+Planet 1, block 6: recv counter now 14
+Planet 1: opening mail with recieve time 110
+Planet 1, block 6: recv counter now 15
+Planet 1: opening mail with recieve time 111
+Planet 1, block 6: recv counter now 16
+Planet 1: opening mail with recieve time 112
+Planet 1, block 6: recv counter now 17
+Planet 1: opening mail with recieve time 113
+Planet 1, block 6: recv counter now 18
+Planet 1: opening mail with recieve time 114
+Planet 1, block 6: recv counter now 19
+Planet 1: opening mail with recieve time 115
+Planet 1, block 6: recv counter now 20
+Planet 1: opening mail with recieve time 116
+Planet 1, block 6: recv counter now 21
+Planet 1: opening mail with recieve time 117
+Planet 1, block 6: recv counter now 22
+Planet 1: opening mail with recieve time 118
+Planet 1, block 6: recv counter now 23
+Planet 1: opening mail with recieve time 119
+Planet 1, block 6: recv counter now 24
+Planet 1: opening mail with recieve time 120
+Planet 1, block 6: recv counter now 25
+Planet 1: opening mail with recieve time 121
+Planet 1, block 6: recv counter now 26
+Planet 1: opening mail with recieve time 122
+Planet 1, block 6: recv counter now 27
+Planet 1: opening mail with recieve time 123
+Planet 1, block 6: recv counter now 28
+Planet 1: opening mail with recieve time 124
+Planet 1, block 6: recv counter now 29
+Planet 1: opening mail with recieve time 125
+Planet 1, block 6: recv counter now 30
+Planet 1: opening mail with recieve time 126
+Planet 1, block 6: recv counter now 31
+Planet 1: opening mail with recieve time 127
+Planet 1, block 6: recv counter now 32
+Planet 1: opening mail with recieve time 128
+Planet 1, block 6: recv counter now 33
+Planet 1: opening mail with recieve time 129
+Planet 1, block 6: recv counter now 34
+Planet 1: opening mail with recieve time 130
+Planet 1, block 6: recv counter now 35
+Planet 1: opening mail with recieve time 131
+Planet 1, block 6: recv counter now 36
+Planet 1: opening mail with recieve time 132
+Planet 1, block 6: recv counter now 37
+Planet 1: opening mail with recieve time 133
+Planet 1, block 6: recv counter now 38
+Planet 1: opening mail with recieve time 134
+Planet 1, block 6: recv counter now 39
+Planet 1: opening mail with recieve time 135
+Planet 1, block 6: recv counter now 40
+Planet 1: opening mail with recieve time 136
+Planet 1, block 6: recv counter now 41
+GVT Master: block number 0, found with 17 unmatched messages.
+Planet 0, Time 177: submitting local block #11 with end time 176
+world 1 recieving pong: 0
+GVT Master: received block from planet #0, with start time 129
+GVT Master: placing block in pending slot number 8
+GVT Master: received block from planet #0, with start time 145
+GVT Master: placing block in pending slot number 9
+GVT Master: received block from planet #0, with start time 161
+GVT Master: placing block in pending slot number 10
+GVT Master: polling next for full block reports...
+Planet 1: opening mail with recieve time 137
+Planet 1, block 6: recv counter now 42
+Planet 1: opening mail with recieve time 138
+Planet 1, block 6: recv counter now 43
+Planet 1: opening mail with recieve time 139
+Planet 1, block 6: recv counter now 44
+Planet 1: opening mail with recieve time 140
+Planet 1, block 6: recv counter now 45
+Planet 1: opening mail with recieve time 141
+Planet 1, block 6: recv counter now 46
+Planet 1: opening mail with recieve time 142
+Planet 1, block 6: recv counter now 47
+Planet 1: opening mail with recieve time 143
+Planet 1, block 6: recv counter now 48
+Planet 1: opening mail with recieve time 144
+Planet 1, block 6: recv counter now 49
+Planet 1: opening mail with recieve time 145
+Planet 1, block 6: recv counter now 50
+Planet 1: opening mail with recieve time 146
+Planet 1, block 6: recv counter now 51
+Planet 1: opening mail with recieve time 147
+Planet 1, block 6: recv counter now 52
+Planet 1: opening mail with recieve time 148
+Planet 1, block 6: recv counter now 53
+Planet 1: opening mail with recieve time 149
+Planet 1, block 6: recv counter now 54
+Planet 1: opening mail with recieve time 150
+Planet 1, block 6: recv counter now 55
+Planet 1: opening mail with recieve time 151
+Planet 1, block 6: recv counter now 56
+Planet 1: opening mail with recieve time 152
+Planet 1, block 6: recv counter now 57
+Planet 1: opening mail with recieve time 153
+Planet 1, block 6: recv counter now 58
+Planet 1: opening mail with recieve time 154
+Planet 1, block 6: recv counter now 59
+Planet 1: opening mail with recieve time 155
+Planet 1, block 6: recv counter now 60
+Planet 1: opening mail with recieve time 156
+Planet 1, block 6: recv counter now 61
+Planet 1: opening mail with recieve time 157
+Planet 1, block 6: recv counter now 62
+Planet 1: opening mail with recieve time 158
+Planet 1, block 6: recv counter now 63
+Planet 1: opening mail with recieve time 159
+Planet 1, block 6: recv counter now 64
+Planet 1: opening mail with recieve time 160
+Planet 1, block 6: recv counter now 65
+Planet 1: opening mail with recieve time 161
+Planet 1, block 6: recv counter now 66
+Planet 1: opening mail with recieve time 162
+Planet 1, block 6: recv counter now 67
+Planet 1: opening mail with recieve time 163
+Planet 1, block 6: recv counter now 68
+Planet 1: opening mail with recieve time 164
+Planet 1, block 6: recv counter now 69
+Planet 1: opening mail with recieve time 165
+Planet 1, block 6: recv counter now 70
+Planet 1: opening mail with recieve time 166
+Planet 1, block 6: recv counter now 71
+Planet 1: opening mail with recieve time 167
+Planet 1, block 6: recv counter now 72
+Planet 1: opening mail with recieve time 168
+Planet 1, block 6: recv counter now 73
+Planet 1: opening mail with recieve time 169
+Planet 1, block 6: recv counter now 74
+Planet 1: opening mail with recieve time 170
+Planet 1, block 6: recv counter now 75
+Planet 1: opening mail with recieve time 171
+Planet 1, block 6: recv counter now 76
+Planet 1: opening mail with recieve time 172
+Planet 1, block 6: recv counter now 77
+Planet 1: opening mail with recieve time 173
+Planet 1, block 6: recv counter now 78
+Planet 1: opening mail with recieve time 174
+Planet 1, block 6: recv counter now 79
+Planet 1: opening mail with recieve time 175
+Planet 1, block 6: recv counter now 80
+Planet 1: opening mail with recieve time 176
+Planet 1, block 6: recv counter now 81
+Planet 1: opening mail with recieve time 177
+Planet 1, block 6: recv counter now 82
+Planet 1: opening mail with recieve time 178
+Planet 1, block 6: recv counter now 83
+Planet 0, Time 193: submitting local block #12 with end time 192
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+world 1 recieving pong: 1
+set send time as 16 and recv as 21
+world 1 sending ping 2
+set send time as 16 and recv as 21
+GVT Master: received block from planet #0, with start time 177
+Planet 1: opening mail with recieve time 179
+Planet 1, block 6: recv counter now 84
+Planet 1: opening mail with recieve time 180
+Planet 1, block 6: recv counter now 85
+Planet 1: opening mail with recieve time 181
+Planet 1, block 6: recv counter now 86
+Planet 1: opening mail with recieve time 182
+Planet 1, block 6: recv counter now 87
+Planet 1: opening mail with recieve time 183
+Planet 1, block 6: recv counter now 88
+Planet 1: opening mail with recieve time 184
+Planet 1, block 6: recv counter now 89
+Planet 1: opening mail with recieve time 185
+Planet 1, block 6: recv counter now 90
+Planet 1: opening mail with recieve time 186
+Planet 1, block 6: recv counter now 91
+Planet 1: opening mail with recieve time 187
+Planet 1, block 6: recv counter now 92
+Planet 1: opening mail with recieve time 188
+Planet 1, block 6: recv counter now 93
+Planet 1: opening mail with recieve time 189
+Planet 1, block 6: recv counter now 94
+Planet 1: opening mail with recieve time 190
+Planet 1, block 6: recv counter now 95
+Planet 1: opening mail with recieve time 191
+Planet 1, block 6: recv counter now 96
+Planet 1: opening mail with recieve time 192
+Planet 1, block 6: recv counter now 97
+GVT Master: placing block in pending slot number 11
+GVT Master: polling next for full block reports...
+Planet 0, Time 209: submitting local block #13 with end time 208
+Planet 1: opening mail with recieve time 193
+Planet 1, block 6: recv counter now 98
+Planet 1: opening mail with recieve time 194
+Planet 1, block 6: recv counter now 99
+Planet 1: opening mail with recieve time 195
+Planet 1, block 6: recv counter now 100
+Planet 1: opening mail with recieve time 196
+Planet 1, block 6: recv counter now 101
+Planet 1: opening mail with recieve time 197
+Planet 1, block 6: recv counter now 102
+Planet 1: opening mail with recieve time 198
+Planet 1, block 6: recv counter now 103
+Planet 1: opening mail with recieve time 199
+Planet 1, block 6: recv counter now 104
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: received block from planet #0, with start time 193
+Planet 0, Time 225: submitting local block #14 with end time 224
+Planet 1: opening mail with recieve time 200
+Planet 1, block 6: recv counter now 105
+Planet 0: opening mail with recieve time 21
+Planet 0, Time 225: found old message in poll with recieve time 21
+GVT Master: placing block in pending slot number 12
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+Planet 1: opening mail with recieve time 201
+Planet 1, block 6: recv counter now 106
+GVT Master: received block from planet #0, with start time 209
+GVT Master: placing block in pending slot number 13
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+Planet 0, Time 225: ROLLBACK!!!!! rolling back to 21
+!!! PANIC !!! mail planet to ID: 1, context ID 0. source agent 1 on planet 1
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+Planet 1: opening mail with recieve time 98
+Planet 1: opening mail with recieve time 98
+Planet 1: opening mail with recieve time 0
+Planet 1, Time 37: found old message in poll with recieve time 0
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+
+thread 'mt::hybrid::rollback_contention_tests::test_no_contention_baseline' panicked at src/mt/hybrid/mod.rs:1314:9:
+Engine run failed under contention with workload 0ns: Some(MismatchedDeliveryAddress)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+Planet 1, Time 37: ROLLBACK!!!!! rolling back to 0
+Planet 1: opening mail with recieve time 99
+!!! PANIC !!! mail planet to ID: 0, context ID 1. source agent 99 on planet 100
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+test mt::hybrid::rollback_contention_tests::test_no_contention_baseline ... FAILED
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+
+failures:
+
+failures:
+    mt::hybrid::rollback_contention_tests::test_no_contention_baseline
+
+test result: FAILEDGVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+. 0 passed; 1 failed; 0 ignored; 0 measured; 21 filtered out; finished in 0.01s
+
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+GVT Master: block number 0, found with 17 unmatched messages.
+GVT Master: polling next for full block reports...
+GVT Master: block number 0, sends 17, recvs 0
+error: test failed, to rerun pass `--lib`

@@ -4,7 +4,7 @@
 use bytemuck::{Pod, Zeroable};
 
 use crate::{
-    agents::ThreadedAgent,
+    mt::agents::ThreadedAgent,
     mt::hybrid::{config::HybridConfig, galaxy::Galaxy, planet::Planet},
     AikaError,
 };
@@ -1343,7 +1343,7 @@ mod rollback_contention_tests {
     fn test_no_contention_baseline() {
         // No workload, should not cause rollbacks.
         println!("Running test: No contention baseline");
-        run_contention_test(0, 200, false);
+        run_contention_test(0, 200, true);
     }
 
     #[test]

@@ -86,11 +86,11 @@ impl<T: Clone> Ord for Msg<T> {
 
 #[derive(Debug, Copy, Clone)]
 /// An `AntiMsg` allows you to directly cancel messages with the same metadata in an optimistic execution environment
-pub struct AntiMsg {
-    pub sent: u64,
-    pub received: u64,
-    pub from: usize,
-    pub to: Option<usize>,
+pub(crate) struct AntiMsg {
+    pub(crate) sent: u64,
+    pub(crate) received: u64,
+    pub(crate) from: usize,
+    pub(crate) to: Option<usize>,
 }
 
 impl AntiMsg {
@@ -155,27 +155,9 @@ impl Message for AntiMsg {
 unsafe impl Pod for AntiMsg {}
 unsafe impl Zeroable for AntiMsg {}
 
-/// A `Message` and `AntiMessage` aannihilate each other if they encounter again after creation.
-pub struct Annihilator<T: Clone>(pub Msg<T>, pub AntiMsg);
-
-impl<T: Clone> Annihilator<T> {
-    /// conjure an annihilator pair
-    pub fn conjure(
-        creation_time: u64,
-        from_id: usize,
-        to_id: Option<usize>,
-        process_time: u64,
-        data: T,
-    ) -> Self {
-        let msg = Msg::new(data, creation_time, process_time, from_id, to_id);
-        let anti = AntiMsg::new(creation_time, process_time, from_id, to_id);
-        Self(msg, anti)
-    }
-}
-
 /// An object that can be transfered between `Planet` threads during optimistic execution
 #[derive(Debug, Clone, Copy)]
-pub enum Transfer<T: Pod + Zeroable + Clone> {
+pub(crate) enum Transfer<T: Pod + Zeroable + Clone> {
     Msg(Msg<T>),
     AntiMsg(AntiMsg),
 }
@@ -244,7 +226,7 @@ unsafe impl<T: Pod + Zeroable + Clone> Zeroable for Transfer<T> {}
 /// Inter-planetary `Mail` carry data of type `T` for optimistic execution environments
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
-pub struct Mail<T: Pod + Zeroable + Clone> {
+pub(crate) struct Mail<T: Pod + Zeroable + Clone> {
     pub transfer: Transfer<T>,
     pub to_world: Option<usize>,
     pub from_world: usize,
@@ -306,9 +288,9 @@ unsafe impl<const CLOCK_SLOTS: usize, const CLOCK_HEIGHT: usize, MessageType: Cl
 {
 }
 
-/// A scheduling action that an `Agent` or `ThreadedAgent` can take.
+/// A SchedulingTask that an `Agent` or `ThreadedAgent` can take.
 #[derive(Copy, Clone, Debug)]
-pub enum Action {
+pub enum SchedulingTask {
     Timeout(u64),
     Schedule(u64),
     Trigger { time: u64, idx: usize },
@@ -323,11 +305,11 @@ pub struct Event {
     pub time: u64,
     pub commit_time: u64,
     pub agent: usize,
-    pub yield_: Action,
+    pub yield_: SchedulingTask,
 }
 
 impl Event {
-    pub fn new(commit_time: u64, time: u64, agent: usize, yield_: Action) -> Self {
+    pub fn new(commit_time: u64, time: u64, agent: usize, yield_: SchedulingTask) -> Self {
         Self {
             commit_time,
             time,

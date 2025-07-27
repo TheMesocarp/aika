@@ -8,15 +8,15 @@ use std::{
 
 use bytemuck::{Pod, Zeroable};
 use mesocarp::{
-    comms::{spmc::Subscriber, spsc::BufferWheel},
+    comms::{mailbox::Message, spmc::Subscriber, spsc::BufferWheel},
     logging::journal::Journal,
     scheduling::Scheduleable,
 };
 
 use crate::{
-    agents::{PlanetContext, ThreadedAgent},
+    mt::agents::{PlanetContext, ThreadedAgent},
     mt::hybrid::{blocks::Block, galaxy::PlanetaryRegister},
-    objects::{Action, AntiMsg, Event, LocalEventSystem, LocalMailSystem, Mail, Msg, Transfer},
+    objects::{SchedulingTask, AntiMsg, Event, LocalEventSystem, LocalMailSystem, Mail, Msg, Transfer},
     AikaError,
 };
 
@@ -174,7 +174,7 @@ impl<
             return Err(AikaError::PastTerminal);
         }
         let now = self.now();
-        self.commit(Event::new(now, time, agent, Action::Wait));
+        self.commit(Event::new(now, time, agent, SchedulingTask::Wait));
         Ok(())
     }
 
@@ -306,6 +306,7 @@ impl<
         for msg in maybe.unwrap() {
             if let Some(to) = msg.to_world {
                 if to != self.context.world_id {
+                    println!("!!! PANIC !!! mail planet to ID: {to}, context ID {:?}. source agent {:?} on planet {:?}", self.context.world_id, msg.transfer.from(), msg.from_world);
                     return Err(AikaError::MismatchedDeliveryAddress);
                 }
             }
@@ -358,7 +359,7 @@ impl<
                 self.context.time = event.time;
                 let event = self.agents[event.agent].step(&mut self.context, event.agent);
                 match event.yield_ {
-                    Action::Timeout(time) => {
+                    SchedulingTask::Timeout(time) => {
                         if (self.now() + time) as f64 * self.timestep > self.terminal {
                             continue;
                         }
@@ -367,17 +368,17 @@ impl<
                             self.now(),
                             self.now() + time,
                             event.agent,
-                            Action::Wait,
+                            SchedulingTask::Wait,
                         ));
                     }
-                    Action::Schedule(time) => {
-                        self.commit(Event::new(self.now(), time, event.agent, Action::Wait));
+                    SchedulingTask::Schedule(time) => {
+                        self.commit(Event::new(self.now(), time, event.agent, SchedulingTask::Wait));
                     }
-                    Action::Trigger { time, idx } => {
-                        self.commit(Event::new(self.now(), time, idx, Action::Wait));
+                    SchedulingTask::Trigger { time, idx } => {
+                        self.commit(Event::new(self.now(), time, idx, SchedulingTask::Wait));
                     }
-                    Action::Wait => {}
-                    Action::Break => {
+                    SchedulingTask::Wait => {}
+                    SchedulingTask::Break => {
                         break;
                     }
                 }
@@ -496,7 +497,7 @@ mod planet_tests {
     use crate::{
         agents::{PlanetContext, ThreadedAgent},
         mt::hybrid::planet::Planet,
-        objects::{Action, Event, Mail, Msg},
+        objects::{SchedulingTask, Event, Mail, Msg},
     };
     use bytemuck::{Pod, Zeroable};
     use mesocarp::comms::{mailbox::ThreadedMessenger, spmc::Broadcast};
@@ -529,9 +530,9 @@ mod planet_tests {
             self.timeout_count += 1;
 
             if self.timeout_count < self.max_timeouts {
-                Event::new(time, time, agent_id, Action::Timeout(10))
+                Event::new(time, time, agent_id, SchedulingTask::Timeout(10))
             } else {
-                Event::new(time, time, agent_id, Action::Wait)
+                Event::new(time, time, agent_id, SchedulingTask::Wait)
             }
         }
 
@@ -562,13 +563,13 @@ mod planet_tests {
                     time,
                     time,
                     agent_id,
-                    Action::Trigger {
+                    SchedulingTask::Trigger {
                         time: self.trigger_time,
                         idx: self.target,
                     },
                 )
             } else {
-                Event::new(time, time, agent_id, Action::Timeout(5))
+                Event::new(time, time, agent_id, SchedulingTask::Timeout(5))
             }
         }
 

@@ -52,6 +52,7 @@ impl<const BLOCK_SLOTS: usize> Block<BLOCK_SLOTS> {
             self.recvs_from_previous[blocks] += 1;
             return Ok(());
         }
+        println!("Planet {:?}, block {:?}: recv counter now {:?}", self.block_id.0, self.block_id.1, self.recvs + 1);
         self.recvs += 1;
         Ok(())
     }

@@ -49,7 +49,7 @@ pub struct Galaxy<
     pub unmatched_sends: usize,
     pub(crate) gvtcomms: GVTComms<BLOCK_SLOTS, GVT_SLOTS>,
     // messenger
-    pub messenger: ThreadedMessenger<MSG_SLOTS, Mail<MessageType>>,
+    pub(crate) messenger: ThreadedMessenger<MSG_SLOTS, Mail<MessageType>>,
     // time things
     pub gvt: u64,
     pub checkpoint_hz: u64,
@@ -222,8 +222,8 @@ impl<
                     .zip(block.recvs_from_previous.iter())
                     .for_each(|(x, y)| *x += *y);
             }
-
-            let unmatched = sends - recvs;
+            println!("GVT Master: block number {:?}, sends {sends}, recvs {recvs}", self.block_counter);
+            let unmatched = sends.saturating_sub(recvs);
             println!(
                 "GVT Master: block number {:?}, found with {unmatched} unmatched messages.",
                 self.block_counter

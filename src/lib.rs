@@ -13,14 +13,12 @@
 use mesocarp::MesoError;
 use thiserror::Error;
 
-pub mod agents;
 pub mod mt;
 pub mod objects;
 pub mod st;
 
 pub mod prelude {
-    pub use crate::agents::{Agent, AgentSupport, PlanetContext, ThreadedAgent, WorldContext};
-    pub use crate::objects::{Action, AntiMsg, Event, Msg};
+    pub use crate::objects::{SchedulingTask, Event, Msg};
     pub use crate::AikaError;
     pub use bytemuck::{Pod, Zeroable};
 }
