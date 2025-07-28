@@ -1,14 +1,14 @@
 //! `hlocal` contains the infrastructure for `aika`'s hybrid synchronization model, configured to operate with a GVT Master thread.
-//! 
+//!
 //! `aika`'s hybrid model is inspired by [Local Time Warp](https://dl.acm.org/doi/abs/10.1145/158459.158474); where local "clusters",
 //! or in our case `Planet`, operate conservatively on a partition of the global state, while inter-cluster coordination,
-//! in otherwords `Galaxy`, synchronizes clusters optimistically. The GVT is computed asynchronously using a block-based message 
+//! in otherwords `Galaxy`, synchronizes clusters optimistically. The GVT is computed asynchronously using a block-based message
 //! counting algorithm, defined [here](https://docs.rs/mesocarp/latest/mesocarp/sync/gvt/aika/index.html). The block-based nature
-//! implies this is inherently a conservative GVT update: its accuracy is at a trade off with resource usage in the stack during runtime. 
-//! Additionally, the model supports a synchronization checkpointing system to help reduce the possibility and depth of rollback 
-//! cascades between clusters. 
-//! 
-//! This `hlocal` variant of aika's hybrid model is structured centrally around the `Galaxy` thread, which manage block update processing, 
+//! implies this is inherently a conservative GVT update: its accuracy is at a trade off with resource usage in the stack during runtime.
+//! Additionally, the model supports a synchronization checkpointing system to help reduce the possibility and depth of rollback
+//! cascades between clusters.
+//!
+//! This `hlocal` variant of aika's hybrid model is structured centrally around the `Galaxy` thread, which manage block update processing,
 //! GVT update broadcasts to clusters, and inter-cluster message passing via a message bus.
 use std::{
     cmp::{min, Reverse},
@@ -19,10 +19,10 @@ use std::{
 
 use bytemuck::{Pod, Zeroable};
 use mesocarp::{
+    sync::gvt::aika::{Block, BlockSpoke, Consensus},
     comms::mailbox::{Message, ThreadedMessenger, ThreadedMessengerUser},
     logging::journal::Journal,
     scheduling::Scheduleable,
-    sync::gvt::aika::{BlockSpoke, Consensus},
     MesoError,
 };
 
@@ -42,7 +42,7 @@ pub struct Galaxy<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod +
     /// The temporal consensus routine for an updted GVT computation.
     pub consensus: Consensus<BLOCK_BW>,
     pub(crate) interplanetary_messenger: ThreadedMessenger<MSG_BW, Mail<MessageType>>,
-    /// Current time information. 
+    /// Current time information.
     pub time: HTime,
     /// Maximum duration of a block. Also the expected length of a block unless the simulation terminates early.
     pub max_block_dur: u64,
@@ -54,8 +54,8 @@ pub struct Galaxy<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod +
 
 impl<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + Clone>
     Galaxy<BLOCK_BW, MSG_BW, MessageType>
-{   
-    /// Create a new `Galaxy` with `planet_count: usize` maximum number of clusters, and `block_batch_size` arena allocation sizing for block logging. 
+{
+    /// Create a new `Galaxy` with `planet_count: usize` maximum number of clusters, and `block_batch_size` arena allocation sizing for block logging.
     pub fn new(planet_count: usize, block_batch_size: usize) -> Result<Self, AikaError> {
         let mut planet_ids = Vec::new();
         for i in 0..planet_count {
@@ -113,7 +113,9 @@ impl<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + C
         let id = self.registered;
         self.registered += 1;
         let messenger_account = self.interplanetary_messenger.get_user(id)?;
-        let spoke = self.consensus.register_producer(None)?.unwrap();
+        let mut spoke = self.consensus.register_producer(None)?.unwrap();
+        spoke.block.max_dur = self.max_block_dur;
+        spoke.block.dur = self.max_block_dur;
         Planet::from_galaxy_registration(self.time, spoke, messenger_account, id)
     }
 
@@ -136,10 +138,12 @@ impl<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + C
 
     // Check if all clusters are at terminal time.
     fn check_all_terminal(&mut self) -> Result<bool, AikaError> {
+        //println!("GVT Master: checking terminal condition at time {:?}", self.time.gvt);
         if self.time.gvt as f64 * self.time.timestep >= self.time.terminal {
             return Ok(true);
         }
         let latest = self.consensus.fetch_latest_uncommited_blocks()?;
+        let any = latest.is_empty();
         let mut truth = true;
         for block in latest {
             if let Some(block) = block {
@@ -149,33 +153,44 @@ impl<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + C
             }
             return Ok(false);
         }
-        Ok(truth)
+        Ok(if !any { truth } else { false })
     }
 
-    /// Master loop. Polls and delivers the mail, then checks for block updates, 
+    /// Master loop. Polls and delivers the mail, then checks for block updates,
     /// and if theres a potential GVT update to send out. Will only break once all
-    /// blocks have been processed. 
-    pub fn master(&mut self) -> Result<(), AikaError> {
+    /// blocks have been processed.
+    pub fn master(mut self) -> Result<Self, AikaError> {
+        println!("Start block: {:?}", self.consensus.blocks.read_state::<Block<BLOCK_BW>>());
+        if self.time.terminal == f64::MAX {
+            return Err(AikaError::FailedToSetTerminalTime);
+        }
+        let mut counter = 0;
         loop {
+            self.time.gvt = self.consensus.safe_point;
             // mail
             //println!("GVT Master, GVT {:?}: delivering mail...", self.gvt);
+            if counter < 10 {
+                println!("GVT Master, GVT {:?}: polling blocks, updating time consensus...", self.time.gvt);
+            }
+            counter += 1;
             for _ in 0..10 {
                 self.deliver_the_mail()?;
                 self.consensus.poll_n_slot()?;
                 while let Some(new_gvt) = self.consensus.check_update_safe_point()? {
+                    println!("GVT Master: Broadcasting new safe point: {new_gvt}");
                     self.consensus.processor.broadcast_new_safe_point(new_gvt)?;
                 }
             }
-            //println!("GVT Master, GVT {:?}: polling blocks, updating time consensus...", self.gvt);
+            
             if self.check_all_terminal()? {
-                //println!("GVT Master, GVT {:?}: all planets are waiting", self.gvt);
+                println!("GVT Master, GVT {:?}: all planets are waiting", self.time.gvt);
                 if self.consensus.check_status() {
-                    //println!("GVT Master, GVT {:?}: GVT has caught up, consensus reached!", self.gvt);
+                    println!("GVT Master, GVT {:?}: GVT has caught up, consensus reached!", self.time.gvt);
                     break;
                 }
             }
         }
-        Ok(())
+        Ok(self)
     }
 }
 
@@ -188,9 +203,9 @@ unsafe impl<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroa
 {
 }
 
-/// A `Planet` is a local simulation cluster within a `Galaxy` system, owns a partition of global simulation state. 
-/// It operates conservative with respect to its local agents, but allows rollbacks from causality violations 
-/// triggered in inter-cluster messaging. 
+/// A `Planet` is a local simulation cluster within a `Galaxy` system, owns a partition of global simulation state.
+/// It operates conservative with respect to its local agents, but allows rollbacks from causality violations
+/// triggered in inter-cluster messaging.
 pub struct Planet<
     const BLOCK_BW: usize,
     const MSG_BW: usize,
@@ -450,7 +465,7 @@ impl<
                 Transfer::AntiMsg(anti_msg) => {
                     self.blocks.block.recv_anti(anti_msg.commit_time())?;
                     self.annihilate(anti_msg)
-                },
+                }
             }
         }
         Ok(())
@@ -479,7 +494,7 @@ impl<
             self.blocks
                 .submitter
                 .write(std::mem::take(&mut self.blocks.block))?;
-
+            println!("Planet {:?} Time {:?}: submitted block number {:?}, new safe time {end}", self.context.world_id, self.context.time - 1, new_id.1 - 1);
             self.blocks.block.block_nmb = new_id.1;
             self.blocks.block.producer_id = new_id.0;
             self.blocks.block.start = self.context.time;
@@ -504,12 +519,12 @@ impl<
             ));
         }
         if self.time.gvt as f64 * self.time.timestep < self.time.terminal
-            && self.context.time as f64 * self.time.timestep >= self.time.terminal
+            && self.context.time as f64 * self.time.timestep > self.time.terminal
         {
             return Err(AikaError::PastTerminalButGVTBehind);
         }
         if self.time.gvt as f64 * self.time.timestep >= self.time.terminal
-            && self.context.time as f64 * self.time.timestep >= self.time.terminal
+            && self.context.time as f64 * self.time.timestep > self.time.terminal
         {
             return Err(AikaError::PastTerminal);
         }
@@ -518,6 +533,7 @@ impl<
 
     // Take one step in local cluster time.
     pub(crate) fn step(&mut self) -> Result<(), AikaError> {
+        println!("Planet {:?}: step starting at time {:?}", self.context.world_id, self.now());
         if let Ok(msgs) = self.local_messages.schedule.tick() {
             for msg in msgs {
                 self.context.time = msg.time();
@@ -601,13 +617,17 @@ impl<
 
     /// Run the local cluster. Master loop polls the inter-cluster messenger, checks for GVT updates, then checks its time
     /// validity to proceed. If all is safe to proceed, step the simulation one time step, and check if we now meet the
-    /// termination requirements. If not, yield the thread and repeat. 
-    pub fn run(&mut self) -> Result<(), AikaError> {
+    /// termination requirements. If not, yield the thread and repeat.
+    pub fn run(mut self) -> Result<Self, AikaError> {
+        if self.time.terminal == f64::MAX {
+            return Err(AikaError::FailedToSetTerminalTime);
+        }
         loop {
             for _ in 0..8 {
                 self.poll_interplanetary_messenger()?;
             }
             if let Some(gvt) = self.blocks.subscriber.try_recv() {
+                //println!("Planet {:?}: new GVT found: {gvt}", self.context.world_id);
                 if gvt < self.time.gvt {
                     return Err(AikaError::GVTisDecreasing);
                 }
@@ -627,7 +647,6 @@ impl<
                     _ => return Err(err),
                 },
             }
-
             // if at a checkpoint or the throttle limit, busy-wait the thread
             if self.time.cp_hz != u64::MAX
                 && now
@@ -648,6 +667,243 @@ impl<
             }
             std::thread::yield_now();
         }
+        Ok(self)
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn run_debug<T: Pod + Zeroable + std::fmt::Debug>(&mut self) -> Result<(), AikaError> {
+        if self.time.terminal == f64::MAX {
+            return Err(AikaError::FailedToSetTerminalTime);
+        }
+        let mut counter = 0;
+        loop {
+            for _ in 0..8 {
+                self.poll_interplanetary_messenger()?;
+            }
+            if let Some(gvt) = self.blocks.subscriber.try_recv() {
+                //println!("Planet {:?}: new GVT found: {gvt}", self.context.world_id);
+                if gvt < self.time.gvt {
+                    return Err(AikaError::GVTisDecreasing);
+                }
+                self.time.gvt = gvt;
+            }
+            let now = self.now();
+            // make sure time is valid to proceed.
+            match self.check_time_validity() {
+                Ok(_) => {}
+                Err(err) => match err {
+                    AikaError::PastTerminalButGVTBehind => {
+                        if counter < 10 {
+                            println!("Planet {:?}: waiting for GVT to catch up, continuing to poll.", self.context.world_id);
+                        } else if counter == 10 {
+                            println!("Planet {:?}: waiting too long for GVT, going quiet.", self.context.world_id);
+                        }
+                        counter += 1;
+                        sleep(Duration::from_nanos(100));
+                        std::thread::yield_now();
+                        continue;
+                    }
+                    AikaError::PastTerminal => break,
+                    _ => return Err(err),
+                },
+            }
+            counter = 0;
+            // if at a checkpoint or the throttle limit, busy-wait the thread
+            if self.time.cp_hz != u64::MAX
+                && now
+                    == (self.time.cp_hz
+                        * self.blocks.block.max_dur
+                        * self.blocks.block.block_nmb as u64)
+                && now != (self.time.terminal / self.time.timestep) as u64
+                && self.time.gvt != now
+            {
+                //println!("Planet {:?}: checkpoint sleeping", self.context.world_id);
+                sleep(Duration::from_nanos(100));
+                std::thread::yield_now();
+                continue;
+            }
+            self.step()?;
+            if self.brakes {
+                break;
+            }
+            std::thread::yield_now();
+        }
+        let out = self.context.world_state.read_all::<T>();
+        println!("Planet {:?}: Terminated with local clock {:?}.", self.context.world_id, self.now());
+        println!("Planet {:?}: final global simulation state: {:?}", self.context.world_id, out);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use std::thread;
+
+    use super::*;
+    use crate::mt::agents::{PlanetContext, ThreadedAgent};
+    use crate::objects::{Event, Msg, SchedulingTask};
+    use bytemuck::{Pod, Zeroable};
+
+    const AGENTS: usize = 10;
+    const BLOCK_BANDWIDTH: usize = 16;
+    const MSG_BANDWIDTH: usize = 32;
+
+    #[derive(Copy, Clone, Debug)]
+    #[repr(C)]
+    struct TestMessage;
+
+    unsafe impl Pod for TestMessage {}
+    unsafe impl Zeroable for TestMessage {}
+
+    struct TestAgent {
+        _counter: usize,
+        _id: usize,
+    }
+
+    impl TestAgent {
+        pub fn new(id: usize) -> Self {
+            Self {
+                _counter: 0,
+                _id: id
+            }
+        }
+    }
+
+    impl ThreadedAgent<MSG_BANDWIDTH, TestMessage> for TestAgent {
+        fn step(
+            &mut self,
+            context: &mut PlanetContext<MSG_BANDWIDTH, TestMessage>,
+            agent_id: usize,
+        ) -> Event {
+            match context.world_state.read_state::<usize>() {
+                Ok(state) => {
+                    context.world_state.write(state + 1, context.time, None);
+                },
+                Err(err) => {
+                    if let MesoError::UninitializedState = err {
+                        context.world_state.write(1usize, context.time, None);
+                    }
+                }
+            }
+            Event::new(
+                context.time,
+                context.time + 1,
+                agent_id,
+                SchedulingTask::Timeout(1),
+            )
+        }
+
+        fn read_message(
+            &mut self,
+            _context: &mut PlanetContext<MSG_BANDWIDTH, TestMessage>,
+            _msg: Msg<TestMessage>,
+            _agent_id: usize,
+        ) {
+        }
+    }
+
+    fn create_setup<
+        const CLOCK_BW: usize,
+        const CLOCK_SCALES: usize,
+        MessageType: Pod + Zeroable + Clone,
+    >(terminal: f64, block_dur: u64) -> Result<
+        (
+            Galaxy<BLOCK_BANDWIDTH, MSG_BANDWIDTH, MessageType>,
+            Planet<BLOCK_BANDWIDTH, MSG_BANDWIDTH, CLOCK_BW, CLOCK_SCALES, MessageType>,
+        ),
+        AikaError,
+    > where TestAgent: ThreadedAgent<MSG_BANDWIDTH, MessageType> {
+        let mut galaxy = Galaxy::<BLOCK_BANDWIDTH, MSG_BANDWIDTH, MessageType>::new(6, 12)?;
+        galaxy.set_time_scale(1.0, terminal);
+        galaxy.with_block_duration(block_dur);
+        let mut planet = galaxy.spawn_planet::<CLOCK_BW, CLOCK_SCALES>()?;
+        for j in 0..AGENTS {
+            let agent = TestAgent::new(j);
+            planet.spawn_agent(Box::new(agent), 0);
+        }
+        Ok((galaxy, planet))
+    }
+
+    fn schedule_all<
+        const CLOCK_BW: usize,
+        const CLOCK_SCALES: usize,
+        MessageType: Pod + Zeroable + Clone,
+    >(planets: &mut Planet<BLOCK_BANDWIDTH, MSG_BANDWIDTH, CLOCK_BW, CLOCK_SCALES, MessageType>, time: u64) -> Result<(), AikaError> {
+        for i in 0..AGENTS {
+            planets.schedule(time, i)?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_simple_setup() {
+        let (galaxy, mut planets) = create_setup::<64, 2, TestMessage>(1.0, 1).unwrap();
+        schedule_all(&mut planets, 0).unwrap();
+        let ghandle = thread::spawn(move || {
+            galaxy.master()
+        });
+        let phandle = thread::spawn(move || {
+            planets.run_debug::<usize>()
+        });
+        
+        let galaxy_result = ghandle.join().expect("Galaxy thread panicked");
+        let planet_result = phandle.join().expect("Planet thread panicked");
+        
+        // Ensure both threads completed successfully
+        assert!(galaxy_result.is_ok());
+        assert!(planet_result.is_ok(), "Planet run loop failed: {:?}", planet_result);
+    }
+
+    #[test]
+    fn test_rollback_functionality() {
+        let mut galaxy: Galaxy<8, 8, TestMessage> = Galaxy::new(1, 1).unwrap();
+        let mut planet = galaxy.spawn_planet::<16, 2>().unwrap();
+        planet.increment().unwrap();
+        planet.increment().unwrap();
+        assert_eq!(planet.now(), 2);
+
+        let res = planet.rollback(1);
+        assert!(res.is_ok());
+        assert_eq!(planet.now(), 1);
+        assert_eq!(planet.context.time, 1);
+   
+        let res = planet.rollback(2);
+        assert!(res.is_err());
+        match res.err().unwrap() {
+            AikaError::TimeTravel => (),
+            _ => panic!("Expected TimeTravel error"),
+        }
+    }
+
+    #[test]
+    fn test_multiplanet_setup() {
+        let (mut galaxy, mut planet) = create_setup::<64, 2, TestMessage>(1.0, 1).unwrap();
+        schedule_all(&mut planet, 0).unwrap();
+        let mut planets = vec![planet];
+        for _ in 0..5 {
+            let mut planet = galaxy.spawn_planet::<64, 2>().unwrap();
+            for j in 0..AGENTS {
+                let agent = TestAgent::new(j);
+                planet.spawn_agent(Box::new(agent), 0);
+            }
+            planets.push(planet);
+        }
+        let ghandle = thread::spawn(move || {
+            galaxy.master()
+        });
+
+        let phandles = planets.into_iter().map(|mut x| thread::spawn(move || {
+            for i in 0..AGENTS {
+                x.schedule(1, i)?;
+            }
+            x.run_debug::<usize>()
+        })).collect::<Vec<_>>();
+        
+        let galaxy_result = ghandle.join().expect("Galaxy thread panicked");
+        let planet_result = phandles.into_iter().all(|x| x.join().expect("Planet thread panicked").is_ok());
+        
+        // Ensure both threads completed successfully
+        assert!(galaxy_result.is_ok(), "Galaxy master loop failed");
+        assert!(planet_result, "Planet run loop failed: {:?}", planet_result);
     }
 }

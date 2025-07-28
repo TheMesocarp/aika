@@ -61,4 +61,6 @@ pub enum AikaError {
     GVTPastLocalClock(usize, u64, u64),
     #[error("GVT is backtracking. Submitted blocks are decrementing in time.")]
     GVTisDecreasing,
+    #[error("Must set a terminal time or simulation will never terminate.")]
+    FailedToSetTerminalTime,
 }
