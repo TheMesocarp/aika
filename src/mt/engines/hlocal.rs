@@ -19,11 +19,7 @@ use std::{
 
 use bytemuck::{Pod, Zeroable};
 use mesocarp::{
-    sync::gvt::aika::{Block, BlockSpoke, Consensus},
-    comms::mailbox::{Message, ThreadedMessenger, ThreadedMessengerUser},
-    logging::journal::Journal,
-    scheduling::Scheduleable,
-    MesoError,
+    comms::mailbox::{Message, ThreadedMessenger, ThreadedMessengerUser}, logging::journal::Journal, scheduling::Scheduleable, sync::gvt::aika::{Block, BlockSpoke, Consensus}, MesoError
 };
 
 use crate::{
@@ -736,7 +732,7 @@ impl<
 }
 
 #[cfg(test)]
-mod test {
+mod unit_tests {
     use std::thread;
 
     use super::*;
@@ -746,7 +742,7 @@ mod test {
 
     const AGENTS: usize = 10;
     const BLOCK_BANDWIDTH: usize = 16;
-    const MSG_BANDWIDTH: usize = 32;
+    const MSG_BANDWIDTH: usize = 8;
 
     #[derive(Copy, Clone, Debug)]
     #[repr(C)]
@@ -855,27 +851,6 @@ mod test {
     }
 
     #[test]
-    fn test_rollback_functionality() {
-        let mut galaxy: Galaxy<8, 8, TestMessage> = Galaxy::new(1, 1).unwrap();
-        let mut planet = galaxy.spawn_planet::<16, 2>().unwrap();
-        planet.increment().unwrap();
-        planet.increment().unwrap();
-        assert_eq!(planet.now(), 2);
-
-        let res = planet.rollback(1);
-        assert!(res.is_ok());
-        assert_eq!(planet.now(), 1);
-        assert_eq!(planet.context.time, 1);
-   
-        let res = planet.rollback(2);
-        assert!(res.is_err());
-        match res.err().unwrap() {
-            AikaError::TimeTravel => (),
-            _ => panic!("Expected TimeTravel error"),
-        }
-    }
-
-    #[test]
     fn test_multiplanet_setup() {
         let (mut galaxy, mut planet) = create_setup::<64, 2, TestMessage>(1.0, 1).unwrap();
         schedule_all(&mut planet, 0).unwrap();
@@ -906,4 +881,42 @@ mod test {
         assert!(galaxy_result.is_ok(), "Galaxy master loop failed");
         assert!(planet_result, "Planet run loop failed: {:?}", planet_result);
     }
+
+    #[test]
+    fn test_rollback_direction_works() {
+        let mut galaxy: Galaxy<8, 8, TestMessage> = Galaxy::new(1, 1).unwrap();
+        let mut planet = galaxy.spawn_planet::<16, 2>().unwrap();
+        for i in 0..AGENTS {
+            planet.spawn_agent(Box::new(TestAgent::new(i)), 0);
+            planet.schedule(0, i).unwrap();
+        }
+        planet.step().unwrap();
+        println!("state {:?}", planet.context.world_state.read_all::<usize>());
+        planet.step().unwrap();
+        //println!("state {:?}", planet.context.world_state.read_state::<usize>().unwrap());
+        planet.step().unwrap();
+        //println!("state {:?}", planet.context.world_state.read_state::<usize>().unwrap());
+        assert_eq!(planet.now(), 3);
+
+        let current = planet.context.world_state.read_state::<usize>().unwrap();
+        assert_eq!(*current, 30);
+        let res = planet.rollback(1);
+        assert!(res.is_ok());
+        assert_eq!(planet.now(), 1);
+        assert_eq!(planet.context.time, 1);
+        let current = planet.context.world_state.read_state::<usize>().unwrap();
+        assert_eq!(*current, 10);
+   
+        let res = planet.rollback(2);
+        assert!(res.is_err());
+        match res.err().unwrap() {
+            AikaError::TimeTravel => (),
+            _ => panic!("Expected TimeTravel error"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod engine_tests {
+
 }
