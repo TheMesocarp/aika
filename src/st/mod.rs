@@ -6,8 +6,8 @@ use mesocarp::comms::mailbox::ThreadedMessenger;
 pub mod agents;
 
 use crate::{
+    objects::{Event, LocalEventSystem, Msg, SchedulingTask},
     st::agents::{Agent, AgentSupport, WorldContext},
-    objects::{SchedulingTask, Event, LocalEventSystem, Msg},
     AikaError,
 };
 
@@ -151,7 +151,12 @@ impl<
                             ));
                         }
                         SchedulingTask::Schedule(time) => {
-                            self.commit(Event::new(self.now(), time, event.agent, SchedulingTask::Wait));
+                            self.commit(Event::new(
+                                self.now(),
+                                time,
+                                event.agent,
+                                SchedulingTask::Wait,
+                            ));
                         }
                         SchedulingTask::Trigger { time, idx } => {
                             self.commit(Event::new(self.now(), time, idx, SchedulingTask::Wait));

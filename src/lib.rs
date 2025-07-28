@@ -5,10 +5,9 @@
 //!
 //! ## Architecture
 //!
-//! - [`st`] - Single-threaded discrete event simulation
-//! - [`mt::hybrid`] - Multi-threaded optimistic synchronization
-//! - [`agents`] - Agent traits and execution contexts
-//! - [`objects`] - Core simulation data structures
+//! - [`st`] - Single-threaded discrete event simulator.
+//! - [`mt`] - Multi-threaded discrete event simulators. Current contains a hybrid synchronization model.
+//! - [`objects`] - Internal simulation objects, like `Event` or `Msg`.
 
 use mesocarp::MesoError;
 use thiserror::Error;
@@ -18,7 +17,7 @@ pub mod objects;
 pub mod st;
 
 pub mod prelude {
-    pub use crate::objects::{SchedulingTask, Event, Msg};
+    pub use crate::objects::{Event, Msg, SchedulingTask};
     pub use crate::AikaError;
     pub use bytemuck::{Pod, Zeroable};
 }
@@ -32,7 +31,9 @@ pub enum AikaError {
     TimeTravel,
     #[error("Terminal time stamp hit, no more scheduling allowed.")]
     PastTerminal,
-    #[error("Terminal time stamp hit, no more scheduling allowed, though messages are still in transit")]
+    #[error(
+        "Terminal time stamp hit, no more scheduling allowed, though messages are still in transit"
+    )]
     PastTerminalButGVTBehind,
     #[error("Maximum number of agents already specified. If you want to add more agents, you need to configure the GVT to support more.")]
     MaximumAgentsAllowed,
@@ -59,5 +60,5 @@ pub enum AikaError {
     #[error("Planet {0} Time {1}: Rolled back past the GVT safe point at {2}. GVT is moving ahead too fast!")]
     GVTPastLocalClock(usize, u64, u64),
     #[error("GVT is backtracking. Submitted blocks are decrementing in time.")]
-    GVTisDecreasing
+    GVTisDecreasing,
 }

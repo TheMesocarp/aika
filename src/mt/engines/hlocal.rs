@@ -1,20 +1,61 @@
-use std::{cmp::{min, Reverse}, collections::{BTreeSet, BinaryHeap}, thread::sleep, time::Duration};
+//! `hlocal` contains the infrastructure for `aika`'s hybrid synchronization model, configured to operate with a GVT Master thread.
+//! 
+//! `aika`'s hybrid model is inspired by [Local Time Warp](https://dl.acm.org/doi/abs/10.1145/158459.158474); where local "clusters",
+//! or in our case `Planet`, operate conservatively on a partition of the global state, while inter-cluster coordination,
+//! in otherwords `Galaxy`, synchronizes clusters optimistically. The GVT is computed asynchronously using a block-based message 
+//! counting algorithm, defined [here](https://docs.rs/mesocarp/latest/mesocarp/sync/gvt/aika/index.html). The block-based nature
+//! implies this is inherently a conservative GVT update: its accuracy is at a trade off with resource usage in the stack during runtime. 
+//! Additionally, the model supports a synchronization checkpointing system to help reduce the possibility and depth of rollback 
+//! cascades between clusters. 
+//! 
+//! This `hlocal` variant of aika's hybrid model is structured centrally around the `Galaxy` thread, which manage block update processing, 
+//! GVT update broadcasts to clusters, and inter-cluster message passing via a message bus.
+use std::{
+    cmp::{min, Reverse},
+    collections::{BTreeSet, BinaryHeap},
+    thread::sleep,
+    time::Duration,
+};
 
 use bytemuck::{Pod, Zeroable};
-use mesocarp::{comms::mailbox::{Message, ThreadedMessenger, ThreadedMessengerUser}, logging::journal::Journal, scheduling::Scheduleable, sync::gvt::aika::{BlockSpoke, Consensus}, MesoError};
+use mesocarp::{
+    comms::mailbox::{Message, ThreadedMessenger, ThreadedMessengerUser},
+    logging::journal::Journal,
+    scheduling::Scheduleable,
+    sync::gvt::aika::{BlockSpoke, Consensus},
+    MesoError,
+};
 
-use crate::{mt::{agents::{PlanetContext, ThreadedAgent}, fast::Time}, objects::{AntiMsg, Event, LocalEventSystem, LocalMailSystem, Mail, Msg, SchedulingTask, Transfer}, AikaError};
+use crate::{
+    mt::{
+        agents::{PlanetContext, ThreadedAgent},
+        engines::HTime,
+    },
+    objects::{
+        AntiMsg, Event, LocalEventSystem, LocalMailSystem, Mail, Msg, SchedulingTask, Transfer,
+    },
+    AikaError,
+};
 
+/// A `Galaxy` is an inter-cluster message bus and GVT updater, intended to own its own thread.
 pub struct Galaxy<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + Clone> {
+    /// The temporal consensus routine for an updted GVT computation.
     pub consensus: Consensus<BLOCK_BW>,
     pub(crate) interplanetary_messenger: ThreadedMessenger<MSG_BW, Mail<MessageType>>,
-    pub time: Time,
+    /// Current time information. 
+    pub time: HTime,
+    /// Maximum duration of a block. Also the expected length of a block unless the simulation terminates early.
     pub max_block_dur: u64,
+    /// Current count of registered clusters.
     pub registered: usize,
+    /// Maximum number of allowed clusters.
     pub planet_count: usize,
 }
 
-impl<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + Clone> Galaxy<BLOCK_BW, MSG_BW, MessageType> {
+impl<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + Clone>
+    Galaxy<BLOCK_BW, MSG_BW, MessageType>
+{   
+    /// Create a new `Galaxy` with `planet_count: usize` maximum number of clusters, and `block_batch_size` arena allocation sizing for block logging. 
     pub fn new(planet_count: usize, block_batch_size: usize) -> Result<Self, AikaError> {
         let mut planet_ids = Vec::new();
         for i in 0..planet_count {
@@ -23,33 +64,49 @@ impl<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + C
         let messenger = ThreadedMessenger::new(planet_ids)?;
 
         Ok(Self {
-            consensus: Consensus::new(mesocarp::sync::gvt::ComputeLayout::HubSpoke, block_batch_size)?,
+            consensus: Consensus::new(
+                mesocarp::sync::gvt::ComputeLayout::HubSpoke,
+                block_batch_size,
+            )?,
             interplanetary_messenger: messenger,
-            time: Time { gvt: 0, cp_hz: u64::MAX, throttle: u64::MAX, terminal: f64::MAX, timestep: 1.0 },
+            time: HTime {
+                gvt: 0,
+                cp_hz: u64::MAX,
+                throttle: u64::MAX,
+                terminal: f64::MAX,
+                timestep: 1.0,
+            },
             max_block_dur: 64,
             registered: 0,
-            planet_count
+            planet_count,
         })
     }
 
+    /// Set the time scale of the simulation (its time step size, and the latest time of termination).
     pub fn set_time_scale(&mut self, timestep: f64, terminal: f64) {
         self.time.terminal = terminal;
         self.time.timestep = timestep
     }
 
+    /// Set the throttle limit for each cluster.
     pub fn throttle(&mut self, throttle: u64) {
         self.time.throttle = throttle
     }
 
+    /// Set the synchronization checkpoint frequency.
     pub fn checkpoints(&mut self, frequency: u64) {
         self.time.cp_hz = frequency
     }
 
+    /// Set the duration of a block within the simulation.
     pub fn with_block_duration(&mut self, duration: u64) {
         self.max_block_dur = duration;
     }
 
-    pub fn spawn_planet<const CLOCK_BW: usize, const CLOCK_SCALES: usize>(&mut self) -> Result<Planet<BLOCK_BW, MSG_BW, CLOCK_BW, CLOCK_SCALES, MessageType>, AikaError> {
+    /// Spawn a new simulation cluster on this `Galaxy`'s coordination infrastructure.
+    pub fn spawn_planet<const CLOCK_BW: usize, const CLOCK_SCALES: usize>(
+        &mut self,
+    ) -> Result<Planet<BLOCK_BW, MSG_BW, CLOCK_BW, CLOCK_SCALES, MessageType>, AikaError> {
         if self.registered == self.planet_count {
             return Err(AikaError::MaximumAgentsAllowed);
         }
@@ -60,6 +117,7 @@ impl<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + C
         Planet::from_galaxy_registration(self.time, spoke, messenger_account, id)
     }
 
+    // Poll and and deliver the mail to the appropriate cluster ID if found.
     fn deliver_the_mail(&mut self) -> Result<(), AikaError> {
         match self.interplanetary_messenger.poll() {
             Ok(msgs) => {
@@ -76,6 +134,7 @@ impl<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + C
         }
     }
 
+    // Check if all clusters are at terminal time.
     fn check_all_terminal(&mut self) -> Result<bool, AikaError> {
         if self.time.gvt as f64 * self.time.timestep >= self.time.terminal {
             return Ok(true);
@@ -84,7 +143,8 @@ impl<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + C
         let mut truth = true;
         for block in latest {
             if let Some(block) = block {
-                truth = ((block.start + block.dur) as f64 * self.time.timestep) >= self.time.terminal;
+                truth =
+                    ((block.start + block.dur) as f64 * self.time.timestep) >= self.time.terminal;
                 continue;
             }
             return Ok(false);
@@ -92,6 +152,9 @@ impl<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + C
         Ok(truth)
     }
 
+    /// Master loop. Polls and delivers the mail, then checks for block updates, 
+    /// and if theres a potential GVT update to send out. Will only break once all
+    /// blocks have been processed. 
     pub fn master(&mut self) -> Result<(), AikaError> {
         loop {
             // mail
@@ -116,25 +179,71 @@ impl<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + C
     }
 }
 
-unsafe impl<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + Clone> Send for Galaxy<BLOCK_BW, MSG_BW, MessageType> {}
-unsafe impl<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + Clone> Sync for Galaxy<BLOCK_BW, MSG_BW, MessageType> {}
+unsafe impl<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + Clone> Send
+    for Galaxy<BLOCK_BW, MSG_BW, MessageType>
+{
+}
+unsafe impl<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + Clone> Sync
+    for Galaxy<BLOCK_BW, MSG_BW, MessageType>
+{
+}
 
-pub struct Planet<const BLOCK_BW: usize, const MSG_BW: usize, const CLOCK_BW: usize, const CLOCK_SCALES: usize, MessageType: Pod + Zeroable + Clone> {
+/// A `Planet` is a local simulation cluster within a `Galaxy` system, owns a partition of global simulation state. 
+/// It operates conservative with respect to its local agents, but allows rollbacks from causality violations 
+/// triggered in inter-cluster messaging. 
+pub struct Planet<
+    const BLOCK_BW: usize,
+    const MSG_BW: usize,
+    const CLOCK_BW: usize,
+    const CLOCK_SCALES: usize,
+    MessageType: Pod + Zeroable + Clone,
+> {
+    /// Collection of agents contributing to this cluster.
     pub agents: Vec<Box<dyn ThreadedAgent<MSG_BW, MessageType>>>,
+    /// Cluster's context. cluster and local agent states live here.
     pub context: PlanetContext<MSG_BW, MessageType>,
     event_system: LocalEventSystem<CLOCK_BW, CLOCK_SCALES>,
     local_messages: LocalMailSystem<CLOCK_BW, CLOCK_SCALES, MessageType>,
     message_user: ThreadedMessengerUser<MSG_BW, Mail<MessageType>>,
     blocks: BlockSpoke<BLOCK_BW>,
-    pub time: Time,
-    brakes: bool
+    /// Current time information of the simulation. these should always be the same across simulation clusters in the same `Galaxy`.
+    pub time: HTime,
+    brakes: bool,
 }
 
-unsafe impl<const BLOCK_BW: usize, const MSG_BW: usize, const CLOCK_BW: usize, const CLOCK_SCALES: usize, MessageType: Pod + Zeroable + Clone> Send for Planet<BLOCK_BW, MSG_BW, CLOCK_BW, CLOCK_SCALES, MessageType> {}
-unsafe impl<const BLOCK_BW: usize, const MSG_BW: usize, const CLOCK_BW: usize, const CLOCK_SCALES: usize, MessageType: Pod + Zeroable + Clone> Sync for Planet<BLOCK_BW, MSG_BW, CLOCK_BW, CLOCK_SCALES, MessageType> {}
+unsafe impl<
+        const BLOCK_BW: usize,
+        const MSG_BW: usize,
+        const CLOCK_BW: usize,
+        const CLOCK_SCALES: usize,
+        MessageType: Pod + Zeroable + Clone,
+    > Send for Planet<BLOCK_BW, MSG_BW, CLOCK_BW, CLOCK_SCALES, MessageType>
+{
+}
+unsafe impl<
+        const BLOCK_BW: usize,
+        const MSG_BW: usize,
+        const CLOCK_BW: usize,
+        const CLOCK_SCALES: usize,
+        MessageType: Pod + Zeroable + Clone,
+    > Sync for Planet<BLOCK_BW, MSG_BW, CLOCK_BW, CLOCK_SCALES, MessageType>
+{
+}
 
-impl<const BLOCK_BW: usize, const MSG_BW: usize, const CLOCK_BW: usize, const CLOCK_SCALES: usize, MessageType: Pod + Zeroable + Clone> Planet<BLOCK_BW, MSG_BW, CLOCK_BW, CLOCK_SCALES, MessageType> {
-    pub(crate) fn from_galaxy_registration(time: Time, blocks: BlockSpoke<BLOCK_BW>, message_user: ThreadedMessengerUser<MSG_BW, Mail<MessageType>>, id: usize) -> Result<Self, AikaError> {
+impl<
+        const BLOCK_BW: usize,
+        const MSG_BW: usize,
+        const CLOCK_BW: usize,
+        const CLOCK_SCALES: usize,
+        MessageType: Pod + Zeroable + Clone,
+    > Planet<BLOCK_BW, MSG_BW, CLOCK_BW, CLOCK_SCALES, MessageType>
+{
+    pub(crate) fn from_galaxy_registration(
+        time: HTime,
+        blocks: BlockSpoke<BLOCK_BW>,
+        message_user: ThreadedMessengerUser<MSG_BW, Mail<MessageType>>,
+        id: usize,
+    ) -> Result<Self, AikaError> {
         Ok(Self {
             agents: Vec::new(),
             context: PlanetContext::new(32 * 1024, 16 * 1024, id),
@@ -143,7 +252,7 @@ impl<const BLOCK_BW: usize, const MSG_BW: usize, const CLOCK_BW: usize, const CL
             message_user,
             blocks,
             time,
-            brakes: false
+            brakes: false,
         })
     }
 
@@ -178,6 +287,7 @@ impl<const BLOCK_BW: usize, const MSG_BW: usize, const CLOCK_BW: usize, const CL
         self.event_system.local_clock.time
     }
 
+    /// Spawn a new `ThreadedAgent` on this cluster. Specify the arena size for its state allocator.
     pub fn spawn_agent(
         &mut self,
         agent: Box<dyn ThreadedAgent<MSG_BW, MessageType>>,
@@ -233,7 +343,8 @@ impl<const BLOCK_BW: usize, const MSG_BW: usize, const CLOCK_BW: usize, const CL
                 self.message_user.send(anti)?;
             }
             if anti_time < self.blocks.block.start {
-                let blocks_past = ((self.blocks.block.start - anti_time - 1) / self.blocks.block.max_dur) as usize;
+                let blocks_past = ((self.blocks.block.start - anti_time - 1)
+                    / self.blocks.block.max_dur) as usize;
                 if blocks_past >= BLOCK_BW {
                     return Err(AikaError::MesoError(MesoError::DistantBlocks(blocks_past)));
                 }
@@ -266,10 +377,7 @@ impl<const BLOCK_BW: usize, const MSG_BW: usize, const CLOCK_BW: usize, const CL
             let startidx = ((CLOCK_BW).pow(1 + k as u32) - CLOCK_BW) / (CLOCK_BW - 1); // start index for each level
             let endidx = ((CLOCK_BW).pow(2 + k as u32) - CLOCK_BW) / (CLOCK_BW - 1) - 1; // end index for each level
             if diff >= startidx {
-                if diff
-                    >= (((CLOCK_BW).pow(1 + CLOCK_SCALES as u32) - CLOCK_BW)
-                        / (CLOCK_BW - 1))
-                {
+                if diff >= (((CLOCK_BW).pow(1 + CLOCK_SCALES as u32) - CLOCK_BW) / (CLOCK_BW - 1)) {
                     break;
                 }
                 if diff > endidx {
@@ -304,6 +412,7 @@ impl<const BLOCK_BW: usize, const MSG_BW: usize, const CLOCK_BW: usize, const CL
         self.local_messages.overflow = BinaryHeap::from_iter(vec);
     }
 
+    // Poll for inter-cluster messages and slot appropriately or rollback if necessary. Count the receives.
     fn poll_interplanetary_messenger(&mut self) -> Result<(), AikaError> {
         let maybe = self.message_user.poll();
         if maybe.is_none() {
@@ -332,15 +441,22 @@ impl<const BLOCK_BW: usize, const MSG_BW: usize, const CLOCK_BW: usize, const CL
 
             match msg.open_letter() {
                 Transfer::Msg(msg) => {
-                    self.blocks.block.recv(msg.commit_time(), msg.commit_time() < self.blocks.block.start)?;
+                    self.blocks.block.recv(
+                        msg.commit_time(),
+                        msg.commit_time() < self.blocks.block.start,
+                    )?;
                     self.commit_mail(msg)
                 }
-                Transfer::AntiMsg(anti_msg) => self.annihilate(anti_msg),
+                Transfer::AntiMsg(anti_msg) => {
+                    self.blocks.block.recv_anti(anti_msg.commit_time())?;
+                    self.annihilate(anti_msg)
+                },
             }
         }
         Ok(())
     }
 
+    // Increment the local clock one step and submit the current block if there is a turnover.
     fn increment(&mut self) -> Result<(), AikaError> {
         self.event_system
             .local_clock
@@ -360,37 +476,47 @@ impl<const BLOCK_BW: usize, const MSG_BW: usize, const CLOCK_BW: usize, const CL
             let mut new_id = self.blocks.block.block_id();
             new_id.1 += 1;
 
-            self.blocks.submitter
+            self.blocks
+                .submitter
                 .write(std::mem::take(&mut self.blocks.block))?;
 
             self.blocks.block.block_nmb = new_id.1;
             self.blocks.block.producer_id = new_id.0;
             self.blocks.block.start = self.context.time;
-            self.blocks.block.dur = min(
-                dur,
-                (self.time.terminal / self.time.timestep) as u64,
-            );
+            self.blocks.block.dur = min(dur, (self.time.terminal / self.time.timestep) as u64);
             self.blocks.block.max_dur = dur;
         }
         Ok(())
     }
 
+    // Check the synchronization of all clocks, and ensure GVT is acting as it should, and we are not at terminal time yet.
     fn check_time_validity(&self) -> Result<(), AikaError> {
-        if self.context.time != self.local_messages.schedule.time || self.local_messages.schedule.time != self.event_system.local_clock.time {
-            return Err(AikaError::ClockSyncIssue)
+        if self.context.time != self.local_messages.schedule.time
+            || self.local_messages.schedule.time != self.event_system.local_clock.time
+        {
+            return Err(AikaError::ClockSyncIssue);
         }
         if self.time.gvt > self.context.time {
-            return Err(AikaError::GVTPastLocalClock(self.context.world_id, self.context.time, self.time.gvt))
+            return Err(AikaError::GVTPastLocalClock(
+                self.context.world_id,
+                self.context.time,
+                self.time.gvt,
+            ));
         }
-        if !(self.time.gvt as f64 * self.time.timestep >= self.time.terminal) && self.context.time as f64 * self.time.timestep >= self.time.terminal {
-            return Err(AikaError::PastTerminalButGVTBehind)
+        if self.time.gvt as f64 * self.time.timestep < self.time.terminal
+            && self.context.time as f64 * self.time.timestep >= self.time.terminal
+        {
+            return Err(AikaError::PastTerminalButGVTBehind);
         }
-        if self.time.gvt as f64 * self.time.timestep >= self.time.terminal && self.context.time as f64 * self.time.timestep >= self.time.terminal {
-            return Err(AikaError::PastTerminal)
+        if self.time.gvt as f64 * self.time.timestep >= self.time.terminal
+            && self.context.time as f64 * self.time.timestep >= self.time.terminal
+        {
+            return Err(AikaError::PastTerminal);
         }
         Ok(())
     }
 
+    // Take one step in local cluster time.
     pub(crate) fn step(&mut self) -> Result<(), AikaError> {
         if let Ok(msgs) = self.local_messages.schedule.tick() {
             for msg in msgs {
@@ -425,7 +551,12 @@ impl<const BLOCK_BW: usize, const MSG_BW: usize, const CLOCK_BW: usize, const CL
                         ));
                     }
                     SchedulingTask::Schedule(time) => {
-                        self.commit(Event::new(self.now(), time, event.agent, SchedulingTask::Wait));
+                        self.commit(Event::new(
+                            self.now(),
+                            time,
+                            event.agent,
+                            SchedulingTask::Wait,
+                        ));
                     }
                     SchedulingTask::Trigger { time, idx } => {
                         self.commit(Event::new(self.now(), time, idx, SchedulingTask::Wait));
@@ -445,16 +576,15 @@ impl<const BLOCK_BW: usize, const MSG_BW: usize, const CLOCK_BW: usize, const CL
         for mail in sends {
             if Some(self.context.world_id) == mail.to_world {
                 match mail.open_letter() {
-                    Transfer::Msg(msg) => {
-                        self.commit_mail(msg)
-                    }
+                    Transfer::Msg(msg) => self.commit_mail(msg),
                     Transfer::AntiMsg(anti_msg) => self.annihilate(anti_msg),
                 }
             } else {
                 self.message_user.send(mail)?;
             }
             if now < self.blocks.block.start {
-                let blocks_past = ((self.blocks.block.start - now - 1) / self.blocks.block.max_dur) as usize;
+                let blocks_past =
+                    ((self.blocks.block.start - now - 1) / self.blocks.block.max_dur) as usize;
                 if blocks_past >= BLOCK_BW {
                     return Err(AikaError::MesoError(MesoError::DistantBlocks(blocks_past)));
                 }
@@ -469,6 +599,9 @@ impl<const BLOCK_BW: usize, const MSG_BW: usize, const CLOCK_BW: usize, const CL
         Ok(())
     }
 
+    /// Run the local cluster. Master loop polls the inter-cluster messenger, checks for GVT updates, then checks its time
+    /// validity to proceed. If all is safe to proceed, step the simulation one time step, and check if we now meet the
+    /// termination requirements. If not, yield the thread and repeat. 
     pub fn run(&mut self) -> Result<(), AikaError> {
         loop {
             for _ in 0..8 {
@@ -483,23 +616,24 @@ impl<const BLOCK_BW: usize, const MSG_BW: usize, const CLOCK_BW: usize, const CL
             let now = self.now();
             // make sure time is valid to proceed.
             match self.check_time_validity() {
-                Ok(_) => {},
-                Err(err) => {
-                    match err {
-                        AikaError::PastTerminalButGVTBehind => {
-                            sleep(Duration::from_nanos(100));
-                            std::thread::yield_now();
-                            continue;
-                        },
-                        AikaError::PastTerminal => break,
-                        _ => return Err(err)
+                Ok(_) => {}
+                Err(err) => match err {
+                    AikaError::PastTerminalButGVTBehind => {
+                        sleep(Duration::from_nanos(100));
+                        std::thread::yield_now();
+                        continue;
                     }
-                }
+                    AikaError::PastTerminal => break,
+                    _ => return Err(err),
+                },
             }
 
             // if at a checkpoint or the throttle limit, busy-wait the thread
             if self.time.cp_hz != u64::MAX
-                && now == (self.time.cp_hz * self.blocks.block.max_dur * self.blocks.block.block_nmb as u64)
+                && now
+                    == (self.time.cp_hz
+                        * self.blocks.block.max_dur
+                        * self.blocks.block.block_nmb as u64)
                 && now != (self.time.terminal / self.time.timestep) as u64
                 && self.time.gvt != now
             {

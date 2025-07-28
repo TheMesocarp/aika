@@ -1,6 +1,6 @@
 use aika::{
+    objects::{Event, Msg, SchedulingTask},
     st::agents::{Agent, WorldContext},
-    objects::{SchedulingTask, Event, Msg},
     st::LonePlanet,
 };
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
@@ -92,7 +92,8 @@ fn bench_event_throughput_fixed_time(c: &mut Criterion) {
             |b, &num_agents| {
                 b.iter_with_setup(
                     || {
-                        let mut world = LonePlanet::<8, 128, 1, ()>::init(sim_time, 1.0, 0).unwrap();
+                        let mut world =
+                            LonePlanet::<8, 128, 1, ()>::init(sim_time, 1.0, 0).unwrap();
 
                         for i in 0..num_agents {
                             let agent = ThroughputAgent::new(i, sim_time as usize);
@@ -131,7 +132,8 @@ fn bench_single_agent_long_run(c: &mut Criterion) {
             |b, &sim_time| {
                 b.iter_with_setup(
                     || {
-                        let mut world = LonePlanet::<8, 128, 1, ()>::init(sim_time, 1.0, 0).unwrap();
+                        let mut world =
+                            LonePlanet::<8, 128, 1, ()>::init(sim_time, 1.0, 0).unwrap();
                         let agent = ThroughputAgent::new(0, sim_time as usize);
                         world.spawn_agent(Box::new(agent));
                         world.init_support_layers(None).unwrap();
@@ -170,7 +172,8 @@ fn bench_events_per_second(c: &mut Criterion) {
                 b.iter_with_setup(
                     || {
                         // The setup remains the same
-                        let mut world = LonePlanet::<8, 128, 1, ()>::init(sim_time, 1.0, 0).unwrap();
+                        let mut world =
+                            LonePlanet::<8, 128, 1, ()>::init(sim_time, 1.0, 0).unwrap();
                         for i in 0..num_agents {
                             let agent = ThroughputAgent::new(i, sim_time as usize);
                             world.spawn_agent(Box::new(agent));

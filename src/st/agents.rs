@@ -1,4 +1,7 @@
-use mesocarp::{comms::mailbox::{Message, ThreadedMessengerUser}, logging::journal::Journal};
+use mesocarp::{
+    comms::mailbox::{Message, ThreadedMessengerUser},
+    logging::journal::Journal,
+};
 
 use crate::objects::Event;
 

@@ -3,9 +3,7 @@
 //! along with their respective context structures that manage state and inter-agent communication.
 
 use bytemuck::{Pod, Zeroable};
-use mesocarp::{
-    logging::journal::Journal,
-};
+use mesocarp::logging::journal::Journal;
 
 use crate::{
     objects::{AntiMsg, Event, Mail, Msg, Transfer},
@@ -33,11 +31,7 @@ impl<const INTER_SLOTS: usize, MessageType: Pod + Zeroable + Clone>
     PlanetContext<INTER_SLOTS, MessageType>
 {
     /// Spawn a new context environment for a `Planet`.
-    pub fn new(
-        world_arena_size: usize,
-        anti_msg_arena_size: usize,
-        world_id: usize,
-    ) -> Self {
+    pub fn new(world_arena_size: usize, anti_msg_arena_size: usize, world_id: usize) -> Self {
         Self {
             agent_states: Vec::new(),
             world_state: Journal::init(world_arena_size),
