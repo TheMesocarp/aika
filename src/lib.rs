@@ -64,5 +64,5 @@ pub enum AikaError {
     #[error("Must set a terminal time or simulation will never terminate. Try calling `Galaxy::set_time_scale(terminal, timestep)` before spawning clusters.")]
     MustSetTerminalTime,
     #[error("Must set a block duration for multi-threaded hybrid simulations. Try calling `Galaxy::with_block_duration(dur)` before spawning clusters.")]
-    MustSetBlockDuration
+    MustSetBlockDuration,
 }
