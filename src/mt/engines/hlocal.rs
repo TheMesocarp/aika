@@ -576,7 +576,7 @@ impl<
         // check-process block now
         self.context.time += 1;
         let end = self.blocks.block.start + self.blocks.block.dur;
-        if self.context.time > end {
+        if self.context.time == end {
             //println!(
             //    "Planet {:?}, Time {:?}: submitting local block #{:?} with end time {:?}",
             //    self.context.world_id, self.context.time, self.blocks.block.block_nmb, end
