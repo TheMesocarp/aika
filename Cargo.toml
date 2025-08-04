@@ -26,8 +26,9 @@ opt-level = 3
 [dependencies]
 bytemuck = "1.23.0"
 thiserror = "2.0.12"
+downcast-rs = "2.0.1"
 
-mesocarp = "0.9.3"
+mesocarp = "0.9.4"
 
 
 [dev-dependencies]

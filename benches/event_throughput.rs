@@ -1,7 +1,5 @@
 use aika::{
-    objects::{Event, Msg, SchedulingTask},
-    st::agents::{Agent, WorldContext},
-    st::LonePlanet,
+    actors::{Actor, Context}, env::Stateless, objects::{Event, SchedulingTask}, st::LonePlanet, AikaError
 };
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use std::hint::black_box;
@@ -21,17 +19,17 @@ impl ThroughputAgent {
     }
 }
 
-impl Agent<8, Msg<()>> for ThroughputAgent {
-    fn step(&mut self, context: &mut WorldContext<8, Msg<()>>, id: usize) -> Event {
+impl Actor<()> for ThroughputAgent {
+    fn step(&mut self, context: &mut Context<()>, id: usize) -> Result<Event, AikaError> {
         let time = context.time;
 
         if self.remaining_steps > 0 {
             self.remaining_steps -= 1;
             // Just timeout for 1 step - minimal work
-            Event::new(time, time, id, SchedulingTask::Timeout(1))
+            Ok(Event::new(time, time, id, SchedulingTask::Timeout(1)))
         } else {
             // Stop scheduling once we've done enough steps
-            Event::new(time, time, id, SchedulingTask::Wait)
+            Ok(Event::new(time, time, id, SchedulingTask::Wait))
         }
     }
 }
@@ -48,17 +46,13 @@ fn bench_event_throughput(c: &mut Criterion) {
                 b.iter_with_setup(
                     || {
                         // Setup: Create world and agents
-                        let mut world = LonePlanet::<8, 128, 1, ()>::init(1000.0, 1.0, 0).unwrap();
+                        let mut world = LonePlanet::<128, 1, ()>::init(Stateless, 1000.0, 1.0).unwrap();
 
                         // Spawn agents
                         for i in 0..num_agents {
                             let agent = ThroughputAgent::new(i, 1000);
-                            world.spawn_agent(Box::new(agent));
+                            world.spawn_actor(Box::new(agent));
                         }
-
-                        // Initialize support layers (mailbox, etc)
-                        world.init_support_layers(None).unwrap();
-
                         // Schedule initial events for all agents
                         for i in 0..num_agents {
                             world.schedule(1, i).unwrap();
@@ -93,14 +87,12 @@ fn bench_event_throughput_fixed_time(c: &mut Criterion) {
                 b.iter_with_setup(
                     || {
                         let mut world =
-                            LonePlanet::<8, 128, 1, ()>::init(sim_time, 1.0, 0).unwrap();
+                            LonePlanet::<128, 1, ()>::init(Stateless, sim_time, 1.0).unwrap();
 
                         for i in 0..num_agents {
                             let agent = ThroughputAgent::new(i, sim_time as usize);
-                            world.spawn_agent(Box::new(agent));
+                            world.spawn_actor(Box::new(agent));
                         }
-
-                        world.init_support_layers(None).unwrap();
 
                         for i in 0..num_agents {
                             world.schedule(1, i).unwrap();
@@ -133,10 +125,9 @@ fn bench_single_agent_long_run(c: &mut Criterion) {
                 b.iter_with_setup(
                     || {
                         let mut world =
-                            LonePlanet::<8, 128, 1, ()>::init(sim_time, 1.0, 0).unwrap();
+                            LonePlanet::<128, 1, ()>::init(Stateless, sim_time, 1.0).unwrap();
                         let agent = ThroughputAgent::new(0, sim_time as usize);
-                        world.spawn_agent(Box::new(agent));
-                        world.init_support_layers(None).unwrap();
+                        world.spawn_actor(Box::new(agent));
                         world.schedule(1, 0).unwrap();
                         world
                     },
@@ -173,12 +164,11 @@ fn bench_events_per_second(c: &mut Criterion) {
                     || {
                         // The setup remains the same
                         let mut world =
-                            LonePlanet::<8, 128, 1, ()>::init(sim_time, 1.0, 0).unwrap();
+                            LonePlanet::<128, 1, ()>::init(Stateless, sim_time, 1.0).unwrap();
                         for i in 0..num_agents {
                             let agent = ThroughputAgent::new(i, sim_time as usize);
-                            world.spawn_agent(Box::new(agent));
+                            world.spawn_actor(Box::new(agent));
                         }
-                        world.init_support_layers(None).unwrap();
                         for i in 0..num_agents {
                             world.schedule(1, i).unwrap();
                         }

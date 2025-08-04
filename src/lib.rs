@@ -8,12 +8,14 @@
 //! - [`st`] - Single-threaded discrete event simulator.
 //! - [`mt`] - Multi-threaded discrete event simulators. Current contains a hybrid synchronization model.
 //! - [`objects`] - Internal simulation objects, like `Event` or `Msg`.
-
+//! - [`actors`] - Actor traits and context.
 use mesocarp::MesoError;
 use thiserror::Error;
 
 pub mod mt;
 pub mod objects;
+pub mod actors;
+pub mod env;
 pub mod st;
 
 pub mod prelude {
@@ -23,7 +25,7 @@ pub mod prelude {
 }
 
 /// Error enum for provide feedback on simulation errors
-#[derive(Debug, Error)]
+#[derive(Debug, Error, PartialEq)]
 pub enum AikaError {
     #[error(
         "Attempted to process an event whos execution timestamp doesn't match simulation time."
@@ -65,4 +67,8 @@ pub enum AikaError {
     MustSetTerminalTime,
     #[error("Must set a block duration for multi-threaded hybrid simulations. Try calling `Galaxy::with_block_duration(dur)` before spawning clusters.")]
     MustSetBlockDuration,
+    #[error("Attempt to message an actor that doesnt have messaging implemented")]
+    MessagedAnUnreachableActor,
+    #[error("Attempt to message an actor at an ID that doesnt exist! max ID: {0}, attempted: {1}")]
+    MessagedNonExistent(usize, usize)
 }

@@ -85,6 +85,7 @@ impl<T: Clone> Ord for Msg<T> {
 }
 
 #[derive(Debug, Copy, Clone)]
+#[repr(C)]
 /// An `AntiMsg` allows you to directly cancel messages with the same metadata in an optimistic execution environment
 pub(crate) struct AntiMsg {
     pub(crate) sent: u64,
@@ -260,34 +261,6 @@ impl<T: Pod + Zeroable + Clone> Message for Mail<T> {
 unsafe impl<T: Pod + Zeroable + Clone> Pod for Mail<T> {}
 unsafe impl<T: Pod + Zeroable + Clone> Zeroable for Mail<T> {}
 
-pub(crate) struct LocalMailSystem<
-    const CLOCK_SLOTS: usize,
-    const CLOCK_HEIGHT: usize,
-    MessageType: Clone,
-> {
-    pub(crate) overflow: BinaryHeap<Reverse<Msg<MessageType>>>,
-    pub(crate) schedule: Clock<Msg<MessageType>, CLOCK_SLOTS, CLOCK_HEIGHT>,
-}
-
-impl<const CLOCK_SLOTS: usize, const CLOCK_HEIGHT: usize, MessageType: Clone>
-    LocalMailSystem<CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>
-{
-    pub(crate) fn new() -> Result<Self, AikaError> {
-        let overflow = BinaryHeap::new();
-        let schedule = Clock::new()?;
-        Ok(Self { overflow, schedule })
-    }
-}
-
-unsafe impl<const CLOCK_SLOTS: usize, const CLOCK_HEIGHT: usize, MessageType: Clone> Send
-    for LocalMailSystem<CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>
-{
-}
-unsafe impl<const CLOCK_SLOTS: usize, const CLOCK_HEIGHT: usize, MessageType: Clone> Sync
-    for LocalMailSystem<CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>
-{
-}
-
 /// A SchedulingTask that an `Agent` or `ThreadedAgent` can take.
 #[derive(Copy, Clone, Debug)]
 pub enum SchedulingTask {
@@ -356,37 +329,52 @@ unsafe impl Pod for Event {}
 unsafe impl Send for Event {}
 unsafe impl Sync for Event {}
 
-pub(crate) struct LocalEventSystem<const CLOCK_SLOTS: usize, const CLOCK_HEIGHT: usize> {
-    pub(crate) overflow: BinaryHeap<Reverse<Event>>,
-    pub(crate) local_clock: Clock<Event, CLOCK_SLOTS, CLOCK_HEIGHT>,
+
+pub struct LocalScheduler<const CLOCK_BW: usize, const CLOCK_SCALES: usize, T: Scheduleable> {
+    pub(crate) overflow: BinaryHeap<Reverse<T>>,
+    pub(crate) clock: Clock<T, CLOCK_BW, CLOCK_SCALES>,
 }
 
-impl<const CLOCK_SLOTS: usize, const CLOCK_HEIGHT: usize>
-    LocalEventSystem<CLOCK_SLOTS, CLOCK_HEIGHT>
-{
-    pub(crate) fn new() -> Result<Self, AikaError> {
+impl<const CLOCK_BW: usize, const CLOCK_SCALES: usize, T: Scheduleable> LocalScheduler<CLOCK_BW, CLOCK_SCALES, T> {
+    pub fn new() -> Result<Self, AikaError> {
         let overflow = BinaryHeap::new();
-        let local_clock = Clock::new()?;
+        let clock = Clock::new()?;
         Ok(Self {
             overflow,
-            local_clock,
+            clock,
         })
     }
 
-    pub(crate) fn insert(&mut self, event: Event) {
-        let possible_overflow = self.local_clock.insert(event);
+    pub fn insert(&mut self, object: T) {
+        let possible_overflow = self.clock.insert(object);
         if possible_overflow.is_err() {
-            let event = possible_overflow.err().unwrap();
-            self.overflow.push(Reverse(event));
+            let object = possible_overflow.err().unwrap();
+            self.overflow.push(Reverse(object));
         }
+    }
+
+    pub fn now(&self) -> u64 {
+        self.clock.time
+    }
+
+    pub fn increment(&mut self) {
+        self.clock.increment(&mut self.overflow)
+    }
+
+    pub fn tick(&mut self) -> Result<Vec<T>, AikaError> {
+        Ok(self.clock.tick()?)
+    }
+
+    pub fn rollback(&mut self, time: u64) {
+        self.clock.rollback(&mut self.overflow, time)
     }
 }
 
-unsafe impl<const CLOCK_SLOTS: usize, const CLOCK_HEIGHT: usize> Send
-    for LocalEventSystem<CLOCK_SLOTS, CLOCK_HEIGHT>
+unsafe impl<const CLOCK_SLOTS: usize, const CLOCK_HEIGHT: usize, T: Scheduleable> Send
+    for LocalScheduler<CLOCK_SLOTS, CLOCK_HEIGHT, T>
 {
 }
-unsafe impl<const CLOCK_SLOTS: usize, const CLOCK_HEIGHT: usize> Sync
-    for LocalEventSystem<CLOCK_SLOTS, CLOCK_HEIGHT>
+unsafe impl<const CLOCK_SLOTS: usize, const CLOCK_HEIGHT: usize, T: Scheduleable> Sync
+    for LocalScheduler<CLOCK_SLOTS, CLOCK_HEIGHT, T>
 {
 }
