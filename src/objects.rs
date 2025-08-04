@@ -1,5 +1,5 @@
 //! Core data structures for simulation including messages, events, and scheduling primitives.
-//! Contains `Msg` for inter-agent communication, `Event` for agent scheduling, `AntiMsg` for
+//! Contains `Msg` for inter-actor communication, `Event` for actor scheduling, `AntiMsg` for
 //! optimistic rollback, and local event/mail systems for efficient time-based scheduling.
 use std::{
     cmp::{Ordering, Reverse},
@@ -261,7 +261,7 @@ impl<T: Pod + Zeroable + Clone> Message for Mail<T> {
 unsafe impl<T: Pod + Zeroable + Clone> Pod for Mail<T> {}
 unsafe impl<T: Pod + Zeroable + Clone> Zeroable for Mail<T> {}
 
-/// A SchedulingTask that an `Agent` or `ThreadedAgent` can take.
+/// A SchedulingTask that an `Actor` or `ConnectedActor` can take.
 #[derive(Copy, Clone, Debug)]
 pub enum SchedulingTask {
     Timeout(u64),
@@ -271,23 +271,23 @@ pub enum SchedulingTask {
     Break,
 }
 
-/// An event that can be scheduled in a simulation. This is used to trigger an agent, or schedule another event.
+/// An event that can be scheduled in a simulation. This is used to trigger an actor, or schedule another event.
 #[derive(Copy, Clone, Debug)]
 #[repr(C)]
 pub struct Event {
     pub time: u64,
     pub commit_time: u64,
-    pub agent: usize,
-    pub yield_: SchedulingTask,
+    pub actor: usize,
+    pub task: SchedulingTask,
 }
 
 impl Event {
-    pub fn new(commit_time: u64, time: u64, agent: usize, yield_: SchedulingTask) -> Self {
+    pub fn new(commit_time: u64, time: u64, actor: usize, task: SchedulingTask) -> Self {
         Self {
             commit_time,
             time,
-            agent,
-            yield_,
+            actor,
+            task,
         }
     }
 
@@ -329,6 +329,7 @@ unsafe impl Pod for Event {}
 unsafe impl Send for Event {}
 unsafe impl Sync for Event {}
 
+/// Thread-local scheduler of a single object type in simulation time.
 pub struct LocalScheduler<const CLOCK_BW: usize, const CLOCK_SCALES: usize, T: Scheduleable> {
     pub(crate) overflow: BinaryHeap<Reverse<T>>,
     pub(crate) clock: Clock<T, CLOCK_BW, CLOCK_SCALES>,

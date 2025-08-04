@@ -62,6 +62,11 @@ impl<MessageType: Pod + Zeroable + Clone> Context<MessageType> {
                 Mail::write_letter(Transfer::AntiMsg(anti), self.cluster_id, Some(to_cluster));
             self.anti_msgs.write(stays, self.time, None);
         }
+        let to_cluster = if self.connected {
+            to_cluster
+        } else {
+            self.cluster_id
+        };
         let outgoing = Mail::write_letter(Transfer::Msg(msg), self.cluster_id, Some(to_cluster));
         self.outbox.push(outgoing);
         Ok(())
@@ -82,4 +87,22 @@ pub trait ConnectedActor<MessageType: Pod + Zeroable + Clone>: Actor<MessageType
         msg: Msg<MessageType>,
         actor_id: usize,
     );
+}
+
+pub enum ActorType<MessageType: Pod + Zeroable + Clone> {
+    Basic(Box<dyn Actor<MessageType>>),
+    Connected(Box<dyn ConnectedActor<MessageType>>),
+}
+
+impl<MessageType: Pod + Zeroable + Clone> ActorType<MessageType> {
+    pub fn step(
+        &mut self,
+        env: &mut Context<MessageType>,
+        actor_id: usize,
+    ) -> Result<Event, AikaError> {
+        match self {
+            ActorType::Basic(actor) => actor.step(env, actor_id),
+            ActorType::Connected(connected_actor) => connected_actor.step(env, actor_id),
+        }
+    }
 }

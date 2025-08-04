@@ -1,33 +1,25 @@
-//! Single-threaded simulation world supporting multiple agents with message passing capabilities.
-//! Provides a `LonePlanet` struct that manages agent execution, event scheduling, and local message
+//! Single-threaded simulation world supporting multiple actors with message passing capabilities.
+//! Provides a `LonePlanet` struct that manages actor execution, event scheduling, and local message
 //! delivery in a deterministic single-threaded environment with configurable time bounds.
 use bytemuck::{Pod, Zeroable};
 
 use crate::{
-    actors::{Actor, ConnectedActor, Context},
+    actors::{Actor, ActorType, ConnectedActor, Context},
     env::Environment,
     objects::{Event, LocalScheduler, Msg, SchedulingTask, Transfer},
     AikaError,
 };
 
-pub(crate) struct TimeInfo {
-    pub timestep: f64,
-    pub terminal: f64,
-}
-
-/// A world that can contain multiple agents and run a simulation.
+/// A world that can contain multiple actors and run a simulation.
 pub struct LonePlanet<
     const CLOCK_SLOTS: usize,
     const CLOCK_HEIGHT: usize,
     MessageType: Pod + Zeroable + Clone,
 > {
-    pub actors: Vec<Box<dyn Actor<MessageType>>>,
-    pub connected_actors: Vec<Box<dyn ConnectedActor<MessageType>>>,
+    pub actors: Vec<ActorType<MessageType>>,
     pub env: Context<MessageType>,
     event_scheduler: LocalScheduler<CLOCK_SLOTS, CLOCK_HEIGHT, Event>,
     mail_scheduler: LocalScheduler<CLOCK_SLOTS, CLOCK_HEIGHT, Msg<MessageType>>,
-    time_info: TimeInfo,
-    connected: Vec<(bool, usize)>,
 }
 
 unsafe impl<const CLOCK_SLOTS: usize, const CLOCK_HEIGHT: usize, MessageType: Pod + Zeroable + Clone>
@@ -43,36 +35,35 @@ impl<const CLOCK_SLOTS: usize, const CLOCK_HEIGHT: usize, MessageType: Pod + Zer
     LonePlanet<CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>
 {
     /// Initialize a new world with the provided time information and world state arena allocation size
-    pub fn init(
-        env: impl Environment + 'static,
-        terminal: f64,
-        timestep: f64,
-    ) -> Result<Self, AikaError> {
+    pub fn init(env: impl Environment + 'static) -> Result<Self, AikaError> {
         let mail_scheduler = LocalScheduler::new()?;
         let event_scheduler = LocalScheduler::new()?;
-        let term = (terminal / timestep) as u64;
         Ok(Self {
             actors: Vec::new(),
-            connected_actors: Vec::new(),
-            env: Context::new(env, false, 0, term),
+            env: Context::new(env, false, 0, u64::MAX),
             mail_scheduler,
             event_scheduler,
-            time_info: TimeInfo { timestep, terminal },
-            connected: Vec::new(),
         })
     }
 
-    pub fn spawn_connected_actor(&mut self, agent: Box<dyn ConnectedActor<MessageType>>) -> usize {
-        self.connected_actors.push(agent);
-        self.connected.push((true, self.connected_actors.len() - 1));
-        self.actors.len() + self.connected_actors.len() - 1
+    pub fn set_terminal_time(&mut self, terminal: u64) {
+        self.env.terminal = terminal;
+    }
+
+    pub fn spawn_receiver_actor(
+        &mut self,
+        actor: impl ConnectedActor<MessageType> + 'static,
+    ) -> usize {
+        let actor = ActorType::Connected(Box::new(actor));
+        self.actors.push(actor);
+        self.actors.len() - 1
     }
 
     /// Spawn a new `Agent` to the `LonePlanet`.
-    pub fn spawn_actor(&mut self, agent: Box<dyn Actor<MessageType>>) -> usize {
-        self.actors.push(agent);
-        self.connected.push((false, self.actors.len() - 1));
-        self.actors.len() + self.connected_actors.len() - 1
+    pub fn spawn_actor(&mut self, actor: impl Actor<MessageType> + 'static) -> usize {
+        let actor = ActorType::Basic(Box::new(actor));
+        self.actors.push(actor);
+        self.actors.len() - 1
     }
 
     fn commit(&mut self, event: Event) {
@@ -90,76 +81,82 @@ impl<const CLOCK_SLOTS: usize, const CLOCK_HEIGHT: usize, MessageType: Pod + Zer
     }
 
     /// Get the time information of the simulation.
-    pub fn time_info(&self) -> (f64, f64) {
-        (self.time_info.timestep, self.time_info.terminal)
+    pub fn terminal(&self) -> u64 {
+        self.env.terminal
     }
 
-    /// Schedule an event for an agent at a given time.
-    pub fn schedule(&mut self, time: u64, agent: usize) -> Result<(), AikaError> {
+    /// Schedule an event for an actor at a given time.
+    pub fn schedule(&mut self, time: u64, actor: usize) -> Result<(), AikaError> {
         if time < self.now() {
             return Err(AikaError::TimeTravel);
-        } else if time as f64 * self.time_info.timestep > self.time_info.terminal {
+        } else if time > self.env.terminal {
             return Err(AikaError::PastTerminal);
         }
         let now = self.now();
-        self.commit(Event::new(now, time, agent, SchedulingTask::Wait));
+        self.commit(Event::new(now, time, actor, SchedulingTask::Wait));
         Ok(())
     }
 
     /// Run the simulation.
     pub fn run(&mut self) -> Result<(), AikaError> {
         loop {
-            if (self.now() + 1) as f64 * self.time_info.timestep > self.time_info.terminal {
+            if (self.now() + 1) > self.env.terminal {
                 break;
             }
             if let Ok(msgs) = self.mail_scheduler.tick() {
                 for msg in msgs {
                     let id = msg.to;
                     if id.is_none() {
-                        let count = self.connected_actors.len();
-                        for i in 0..count {
-                            self.connected_actors[i].read_message(&mut self.env, msg, i);
+                        for i in 0..self.actors.len() {
+                            match &mut self.actors[i] {
+                                ActorType::Basic(_) => {}
+                                ActorType::Connected(connected_actor) => {
+                                    connected_actor.read_message(&mut self.env, msg, i);
+                                }
+                            }
                         }
                         continue;
                     }
                     let id = id.unwrap();
-                    if self.connected.len() <= id {
-                        return Err(AikaError::MessagedNonExistent(self.connected.len(), id));
+                    if self.actors.len() <= id {
+                        return Err(AikaError::MessagedNonExistent(self.actors.len(), id));
                     }
-                    let status = self.connected[id];
-                    if status.0 {
-                        self.connected_actors[status.1].read_message(&mut self.env, msg, id);
-                    } else {
-                        return Err(AikaError::MessagedAnUnreachableActor);
+                    match &mut self.actors[id] {
+                        ActorType::Basic(_) => {
+                            return Err(AikaError::MessagedNonReceiver);
+                        }
+                        ActorType::Connected(connected_actor) => {
+                            connected_actor.read_message(&mut self.env, msg, id);
+                        }
                     }
                 }
             }
             if let Ok(events) = self.event_scheduler.tick() {
                 for event in events {
-                    if event.time as f64 * self.time_info.timestep > self.time_info.terminal {
+                    if event.time > self.env.terminal {
                         break;
                     }
 
                     let env = &mut self.env;
-                    let id = event.agent;
-                    let status = self.connected[id];
-                    let event = if status.0 {
-                        self.connected_actors[status.1].step(env, id)?
-                    } else {
-                        self.actors[status.1].step(env, id)?
-                    };
-                    match event.yield_ {
+                    let id = event.actor;
+                    if self.actors.len() <= id {
+                        return Err(AikaError::InvalidActorId(
+                            self.actors.len(),
+                            self.env.cluster_id,
+                            id,
+                        ));
+                    }
+                    let event = self.actors[id].step(env, id)?;
+                    match event.task {
                         SchedulingTask::Timeout(time) => {
-                            if (self.now() + time) as f64 * self.time_info.timestep
-                                > self.time_info.terminal
-                            {
+                            if (self.now() + time) > self.env.terminal {
                                 continue;
                             }
 
                             self.commit(Event::new(
                                 self.now(),
                                 self.now() + time,
-                                event.agent,
+                                event.actor,
                                 SchedulingTask::Wait,
                             ));
                         }
@@ -167,7 +164,7 @@ impl<const CLOCK_SLOTS: usize, const CLOCK_HEIGHT: usize, MessageType: Pod + Zer
                             self.commit(Event::new(
                                 self.now(),
                                 time,
-                                event.agent,
+                                event.actor,
                                 SchedulingTask::Wait,
                             ));
                         }
@@ -217,7 +214,7 @@ mod tests {
     use std::cell::RefCell;
     use std::rc::Rc;
 
-    // Simple agent that just schedules timeouts
+    // Simple actor that just schedules timeouts
     pub struct TestAgent {
         pub _id: usize,
     }
@@ -353,7 +350,7 @@ mod tests {
         }
     }
 
-    // Agent that triggers other agents
+    // Agent that triggers other actors
     pub struct TriggeringAgent {
         pub _id: usize,
         pub target: usize,
@@ -397,26 +394,28 @@ mod tests {
 
     #[test]
     fn test_run() {
-        let mut world = LonePlanet::<128, 1, u8>::init(Stateless, 400000.0, 1.0).unwrap();
-        let agent_test = TestAgent::new(0);
-        world.spawn_actor(Box::new(agent_test));
+        let mut world = LonePlanet::<128, 1, u8>::init(Stateless).unwrap();
+        world.set_terminal_time(400000);
+        let actor_test = TestAgent::new(0);
+        world.spawn_actor(actor_test);
         world.schedule(1, 0).unwrap();
         world.run().unwrap();
     }
 
     #[test]
     fn test_simple_message_passing() {
-        let mut world = LonePlanet::<128, 1, u8>::init(Stateless, 100.0, 1.0).unwrap();
+        let mut world = LonePlanet::<128, 1, u8>::init(Stateless).unwrap();
+        world.set_terminal_time(100);
 
         // Create sender and receiver
         let sender = SendingAgent::new(0, 1, 3);
         let receiver = ReceivingAgent::new(1);
         let received_messages = receiver.messages_received.clone();
 
-        world.spawn_actor(Box::new(sender));
-        world.spawn_connected_actor(Box::new(receiver));
+        world.spawn_actor(sender);
+        world.spawn_receiver_actor(receiver);
 
-        // Schedule both agents to start
+        // Schedule both actors to start
         world.schedule(1, 0).unwrap();
         world.schedule(1, 1).unwrap();
 
@@ -434,8 +433,8 @@ mod tests {
 
     #[test]
     fn test_broadcast_messages() {
-        let mut world = LonePlanet::<128, 1, u8>::init(Stateless, 100.0, 1.0).unwrap();
-
+        let mut world = LonePlanet::<128, 1, u8>::init(Stateless).unwrap();
+        world.set_terminal_time(100);
         // Create one broadcaster and two receivers
         let broadcaster = BroadcastingAgent::new(0, 2);
         let receiver1 = ReceivingAgent::new(1);
@@ -444,11 +443,11 @@ mod tests {
         let received1 = receiver1.messages_received.clone();
         let received2 = receiver2.messages_received.clone();
 
-        world.spawn_actor(Box::new(broadcaster));
-        world.spawn_connected_actor(Box::new(receiver1));
-        world.spawn_connected_actor(Box::new(receiver2));
+        world.spawn_actor(broadcaster);
+        world.spawn_receiver_actor(receiver1);
+        world.spawn_receiver_actor(receiver2);
 
-        // Schedule all agents
+        // Schedule all actors
         world.schedule(1, 0).unwrap();
         world.schedule(1, 1).unwrap();
         world.schedule(1, 2).unwrap();
@@ -471,33 +470,33 @@ mod tests {
     }
 
     #[test]
-    fn test_agent_triggering() {
-        let mut world = LonePlanet::<128, 1, u8>::init(Stateless, 100.0, 1.0).unwrap();
-
-        // Create a triggering agent that will trigger agent 1 at specific times
+    fn test_actor_triggering() {
+        let mut world = LonePlanet::<128, 1, u8>::init(Stateless).unwrap();
+        world.set_terminal_time(100);
+        // Create a triggering actor that will trigger actor 1 at specific times
         let trigger_times = vec![10, 20, 30];
         let triggerer = TriggeringAgent::new(0, 1, trigger_times);
 
-        // Create a simple agent that will be triggered
+        // Create a simple actor that will be triggered
         let triggered = TestAgent::new(1);
 
-        world.spawn_actor(Box::new(triggerer));
-        world.spawn_actor(Box::new(triggered));
+        world.spawn_actor(triggerer);
+        world.spawn_actor(triggered);
 
         // Only schedule the triggerer initially
         world.schedule(1, 0).unwrap();
 
         world.run().unwrap();
 
-        // The triggered agent should have run at times 10, 20, and 30
+        // The triggered actor should have run at times 10, 20, and 30
         // We can verify this by checking the clock time advanced past 30
         assert!(world.now() >= 30);
     }
 
     #[test]
     fn test_multiple_simultaneous_messages() {
-        let mut world = LonePlanet::<128, 1, u8>::init(Stateless, 50.0, 1.0).unwrap();
-
+        let mut world = LonePlanet::<128, 1, u8>::init(Stateless).unwrap();
+        world.set_terminal_time(50);
         // Create multiple senders all targeting the same receiver
         let sender1 = SendingAgent::new(0, 3, 2);
         let sender2 = SendingAgent::new(1, 3, 2);
@@ -506,12 +505,12 @@ mod tests {
 
         let received = receiver.messages_received.clone();
 
-        world.spawn_actor(Box::new(sender1));
-        world.spawn_actor(Box::new(sender2));
-        world.spawn_actor(Box::new(sender3));
-        world.spawn_connected_actor(Box::new(receiver));
+        world.spawn_actor(sender1);
+        world.spawn_actor(sender2);
+        world.spawn_actor(sender3);
+        world.spawn_receiver_actor(receiver);
 
-        // Schedule all agents
+        // Schedule all actors
         for i in 0..4 {
             world.schedule(1, i as usize).unwrap();
         }
@@ -542,9 +541,9 @@ mod tests {
 
     #[test]
     fn test_invalid_target_handling() {
-        let mut world = LonePlanet::<128, 1, u8>::init(Stateless, 50.0, 1.0).unwrap();
-
-        // Agent that tries to send to non-existent agent
+        let mut world = LonePlanet::<128, 1, u8>::init(Stateless).unwrap();
+        world.set_terminal_time(50);
+        // Agent that tries to send to non-existent actor
         pub struct InvalidTargetAgent {
             _id: usize,
             attempted: bool,
@@ -566,7 +565,7 @@ mod tests {
             attempted: false,
         };
 
-        world.spawn_actor(Box::new(sender));
+        world.spawn_actor(sender);
         world.schedule(1, 0).unwrap();
 
         // This should run without panicking

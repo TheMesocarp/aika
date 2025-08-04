@@ -12,7 +12,5 @@ pub struct HTime {
     /// Throttle window size in block count.
     pub throttle: u64,
     /// Latest terminal time of the simulation.
-    pub terminal: f64,
-    /// Time step size of the simulation, for checking with respect to terminal.
-    pub timestep: f64,
+    pub terminal: u64,
 }

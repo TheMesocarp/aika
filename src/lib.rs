@@ -37,10 +37,10 @@ pub enum AikaError {
         "Terminal time stamp hit, no more scheduling allowed, though messages are still in transit"
     )]
     PastTerminalButGVTBehind,
-    #[error("Maximum number of agents already specified. If you want to add more agents, you need to configure the GVT to support more.")]
-    MaximumAgentsAllowed,
-    #[error("Cannot start parallel simulation, not all specified agents have been configured or provided.")]
-    NotAllAgentsRegistered,
+    #[error("Maximum number of clusters already specified. If you want to add more clusters, you need to change your configuration.")]
+    MaximumClustersAllowed,
+    #[error("Cannot start parallel simulation, not all specified clusters have been configured or provided.")]
+    NotAllClustersRegistered,
     #[error("Thread panicked!")]
     ThreadPanic,
     #[error("Mail delivered to the wrong address, fire the mail man.")]
@@ -49,16 +49,10 @@ pub enum AikaError {
     MesoError(#[from] MesoError),
     #[error("Local clocks on a `Planet` were out of sync.")]
     ClockSyncIssue,
-    #[error("Invalid world ID: {0}")]
-    InvalidWorldId(usize),
-    #[error("Configuration error: {0}")]
-    ConfigError(String),
-    #[error("current processor is receiving messages from {0} blocks; too far in the past! Messaging is lagging somewhere")]
-    DistantBlocks(usize),
-    #[error("Mismatched block sizes for block number {0}")]
-    MismatchBlockSizes(usize),
-    #[error("Mismatched block time stamps for block number {0}, start {1}, end {2}")]
-    MismatchBlockTimeStamps(usize, u64, u64),
+    #[error("Invalid cluster ID! Only {0} clusters, but ID provided is {1}.")]
+    InvalidClusterId(usize, usize),
+    #[error("Invalid actor ID! Only {0} actors, on cluster {1} but ID provided is {2}.")]
+    InvalidActorId(usize, usize, usize),
     #[error("Planet {0} Time {1}: Rolled back past the GVT safe point at {2}. GVT is moving ahead too fast!")]
     GVTPastLocalClock(usize, u64, u64),
     #[error("GVT is backtracking. Submitted blocks are decrementing in time.")]
@@ -68,7 +62,11 @@ pub enum AikaError {
     #[error("Must set a block duration for multi-threaded hybrid simulations. Try calling `Galaxy::with_block_duration(dur)` before spawning clusters.")]
     MustSetBlockDuration,
     #[error("Attempt to message an actor that doesnt have messaging implemented")]
-    MessagedAnUnreachableActor,
+    MessagedNonReceiver,
     #[error("Attempt to message an actor at an ID that doesnt exist! max ID: {0}, attempted: {1}")]
     MessagedNonExistent(usize, usize),
+    #[error("Stager must be configured before spawning execution clusters.")]
+    UnconfiguredStager,
+    #[error("No actors have been added to cluster {0}! Aika will not start a wasteful sim.")]
+    NoActors(usize),
 }
