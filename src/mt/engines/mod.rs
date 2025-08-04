@@ -9,8 +9,6 @@ pub struct HTime {
     pub gvt: u64,
     /// Checkpoint frequency in block count.
     pub cp_hz: u64,
-    /// Throttle window size in block count.
-    pub throttle: u64,
     /// Latest terminal time of the simulation.
     pub terminal: u64,
 }

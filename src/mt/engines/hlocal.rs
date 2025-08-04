@@ -39,7 +39,24 @@ pub struct Config {
     pub block_duration: u64,
     pub terminal: u64,
     pub checkpoint_frequency: u64,
-    pub throttle: u64,
+}
+
+impl Config {
+    pub fn new(
+        clusters: usize,
+        batch_size: usize,
+        block_duration: u64,
+        terminal: u64,
+        checkpoint_frequency: u64,
+    ) -> Self {
+        Self {
+            clusters,
+            batch_size,
+            block_duration,
+            terminal,
+            checkpoint_frequency,
+        }
+    }
 }
 
 /// A `Galaxy` is an inter-cluster message bus and GVT updater, intended to own its own thread.
@@ -79,7 +96,6 @@ impl<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + C
             time: HTime {
                 gvt: 0,
                 cp_hz: u64::MAX,
-                throttle: u64::MAX,
                 terminal: u64::MAX,
             },
             max_block_dur: 64,
@@ -92,11 +108,6 @@ impl<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + C
     /// Set the time scale of the simulation (its time step size, and the latest time of termination).
     pub fn set_time_scale(&mut self, terminal: u64) {
         self.time.terminal = terminal;
-    }
-
-    /// Set the throttle limit for each cluster.
-    pub fn throttle(&mut self, throttle: u64) {
-        self.time.throttle = throttle
     }
 
     /// Set the synchronization checkpoint frequency.
@@ -651,7 +662,7 @@ impl<
                     _ => return Err(err),
                 },
             }
-            // if at a checkpoint or the throttle limit, busy-wait the thread
+            // if at a checkpoint limit, busy-wait the thread until the GVT catches up
             if self.time.cp_hz != u64::MAX
                 && now
                     == (self.time.cp_hz
@@ -761,8 +772,8 @@ pub struct Stager<
     const CLOCK_SCALES: usize,
     MessageType: Pod + Zeroable + Clone,
 > {
-    galaxy: Option<Galaxy<BLOCK_BW, MSG_BW, MessageType>>,
-    planets: Vec<Planet<BLOCK_BW, MSG_BW, CLOCK_BW, CLOCK_SCALES, MessageType>>,
+    pub galaxy: Option<Galaxy<BLOCK_BW, MSG_BW, MessageType>>,
+    pub planets: Vec<Planet<BLOCK_BW, MSG_BW, CLOCK_BW, CLOCK_SCALES, MessageType>>,
     configured: bool,
 }
 
@@ -787,7 +798,6 @@ impl<
         galaxy.set_time_scale(config.terminal);
         galaxy.with_block_duration(config.block_duration);
         galaxy.checkpoints(config.checkpoint_frequency);
-        galaxy.throttle(config.throttle);
         self.galaxy = Some(galaxy);
         self.configured = true;
         Ok(())
@@ -1083,43 +1093,38 @@ mod unit_tests {
 
     #[test]
     fn test_multiplanet_setup() {
-        let (mut galaxy, mut planet) = create_setup::<64, 2, TestMessage>(1, 1).unwrap();
-        schedule_all(&mut planet, 0).unwrap();
-        let mut planets = vec![planet];
-        for _ in 0..5 {
-            let mut planet = galaxy
-                .spawn_planet::<64, 2>(SimpleUnified {
-                    inner: Journal::init(1024),
-                })
-                .unwrap();
+        const CLUSTERS: usize = 6;
+        let mut stager =
+            Stager::<BLOCK_BANDWIDTH, MSG_BANDWIDTH, 64, 2, TestMessage>::new().unwrap();
+
+        let config = Config {
+            clusters: CLUSTERS,
+            batch_size: 12,
+            block_duration: 1,
+            terminal: 2,
+            checkpoint_frequency: u64::MAX,
+        };
+        stager.config(config).unwrap();
+
+        for i in 0..CLUSTERS {
+            let env = SimpleUnified {
+                inner: Journal::init(1024),
+            };
+            stager.create_cluster(env).unwrap();
             for j in 0..AGENTS {
                 let actor = TestAgent::new(j);
-                planet.spawn_actor(actor);
+                stager.spawn_actor_on_cluster(i, actor).unwrap();
             }
-            planets.push(planet);
         }
-        let ghandle = thread::spawn(move || galaxy.master());
+        stager.schedule_all(1).unwrap();
 
-        let phandles = planets
-            .into_iter()
-            .map(|mut x| {
-                thread::spawn(move || {
-                    for i in 0..AGENTS {
-                        x.schedule(1, i)?;
-                    }
-                    x.run_debug()
-                })
-            })
-            .collect::<Vec<_>>();
+        let run_result = stager.run();
 
-        let galaxy_result = ghandle.join().expect("Galaxy thread panicked");
-        let planet_result = phandles
-            .into_iter()
-            .all(|x| x.join().expect("Planet thread panicked").is_ok());
-
-        // Ensure both threads completed successfully
-        assert!(galaxy_result.is_ok(), "Galaxy master loop failed");
-        assert!(planet_result, "Planet run loop failed: {planet_result:?}");
+        assert!(
+            run_result.is_ok(),
+            "Stager run loop failed: {:?}",
+            run_result.err()
+        );
     }
 
     #[test]
@@ -1189,7 +1194,6 @@ mod unit_tests {
             planets.step().unwrap();
         }
         planets.rollback(25).unwrap();
-        // clock rollback deletes anything with commit after rollback time by nature so this just makes sure were disposing of the antimessages properly
         assert_eq!(
             planets
                 .context
