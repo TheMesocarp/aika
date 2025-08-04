@@ -268,6 +268,7 @@ mod tests {
                         Some(self.target),
                     );
                 env.send_mail(msg, 0)?;
+                self.messages_sent += 1;
             }
 
             // Continue sending every 5 time units
@@ -341,6 +342,7 @@ mod tests {
                         None, // None means broadcast
                     );
                 context.send_mail(msg, 0)?;
+                self.broadcasts_sent += 1;
             }
 
             if self.broadcasts_sent < self.broadcast_count {
