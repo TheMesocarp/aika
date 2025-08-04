@@ -916,8 +916,7 @@ mod unit_tests {
         assert!(galaxy_result.is_ok());
         assert!(
             planet_result.is_ok(),
-            "Planet run loop failed: {:?}",
-            planet_result
+            "Planet run loop failed: {planet_result:?}"
         );
     }
 
