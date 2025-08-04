@@ -15,7 +15,7 @@ impl Environment for Stateless {
 
 #[derive(Debug)]
 pub struct SimpleUnified {
-    pub inner: Journal
+    pub inner: Journal,
 }
 
 impl Environment for SimpleUnified {

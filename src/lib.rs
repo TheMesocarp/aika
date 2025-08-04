@@ -12,10 +12,10 @@
 use mesocarp::MesoError;
 use thiserror::Error;
 
-pub mod mt;
-pub mod objects;
 pub mod actors;
 pub mod env;
+pub mod mt;
+pub mod objects;
 pub mod st;
 
 pub mod prelude {
@@ -70,5 +70,5 @@ pub enum AikaError {
     #[error("Attempt to message an actor that doesnt have messaging implemented")]
     MessagedAnUnreachableActor,
     #[error("Attempt to message an actor at an ID that doesnt exist! max ID: {0}, attempted: {1}")]
-    MessagedNonExistent(usize, usize)
+    MessagedNonExistent(usize, usize),
 }

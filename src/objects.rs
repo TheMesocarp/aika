@@ -329,20 +329,18 @@ unsafe impl Pod for Event {}
 unsafe impl Send for Event {}
 unsafe impl Sync for Event {}
 
-
 pub struct LocalScheduler<const CLOCK_BW: usize, const CLOCK_SCALES: usize, T: Scheduleable> {
     pub(crate) overflow: BinaryHeap<Reverse<T>>,
     pub(crate) clock: Clock<T, CLOCK_BW, CLOCK_SCALES>,
 }
 
-impl<const CLOCK_BW: usize, const CLOCK_SCALES: usize, T: Scheduleable> LocalScheduler<CLOCK_BW, CLOCK_SCALES, T> {
+impl<const CLOCK_BW: usize, const CLOCK_SCALES: usize, T: Scheduleable>
+    LocalScheduler<CLOCK_BW, CLOCK_SCALES, T>
+{
     pub fn new() -> Result<Self, AikaError> {
         let overflow = BinaryHeap::new();
         let clock = Clock::new()?;
-        Ok(Self {
-            overflow,
-            clock,
-        })
+        Ok(Self { overflow, clock })
     }
 
     pub fn insert(&mut self, object: T) {

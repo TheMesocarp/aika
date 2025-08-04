@@ -1,5 +1,9 @@
 use aika::{
-    actors::{Actor, Context}, env::Stateless, objects::{Event, SchedulingTask}, st::LonePlanet, AikaError
+    actors::{Actor, Context},
+    env::Stateless,
+    objects::{Event, SchedulingTask},
+    st::LonePlanet,
+    AikaError,
 };
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use std::hint::black_box;
@@ -46,7 +50,8 @@ fn bench_event_throughput(c: &mut Criterion) {
                 b.iter_with_setup(
                     || {
                         // Setup: Create world and agents
-                        let mut world = LonePlanet::<128, 1, ()>::init(Stateless, 1000.0, 1.0).unwrap();
+                        let mut world =
+                            LonePlanet::<128, 1, ()>::init(Stateless, 1000.0, 1.0).unwrap();
 
                         // Spawn agents
                         for i in 0..num_agents {

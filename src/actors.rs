@@ -5,7 +5,9 @@ use bytemuck::{Pod, Zeroable};
 use mesocarp::logging::journal::Journal;
 
 use crate::{
-    env::Environment, objects::{AntiMsg, Event, Mail, Msg, Transfer}, AikaError
+    env::Environment,
+    objects::{AntiMsg, Event, Mail, Msg, Transfer},
+    AikaError,
 };
 
 /// Shared context local `ThreadedAgents` mutate within a `Planet` thread
@@ -26,9 +28,7 @@ pub struct Context<MessageType: Pod + Zeroable + Clone> {
     pub(crate) outbox: Vec<Mail<MessageType>>,
 }
 
-impl<MessageType: Pod + Zeroable + Clone>
-    Context<MessageType>
-{
+impl<MessageType: Pod + Zeroable + Clone> Context<MessageType> {
     /// Spawn a new context environment for a `Planet`.
     pub fn new(
         env: impl Environment + 'static,
@@ -69,9 +69,9 @@ impl<MessageType: Pod + Zeroable + Clone>
 }
 
 pub trait Actor<MessageType: Clone + Pod + Zeroable> {
-    fn step(&mut self, env: &mut Context<MessageType>, actor_id: usize) -> Result<Event, AikaError>;
+    fn step(&mut self, env: &mut Context<MessageType>, actor_id: usize)
+        -> Result<Event, AikaError>;
 }
-
 
 /// A `ThreadedAgent` is an independent logical process that belongs to a `Planet` and can schedule events,
 /// send messages, and interact with that `Planet`'s `PlanetContext`.

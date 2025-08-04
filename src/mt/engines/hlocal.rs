@@ -13,32 +13,24 @@
 use std::{
     cmp::{min, Reverse},
     collections::{BTreeSet, BinaryHeap},
-    sync::Arc,
     thread::sleep,
     time::Duration,
 };
 
 use bytemuck::{Pod, Zeroable};
 use mesocarp::{
-    comms::{
-        mailbox::{Message, ThreadedMessenger, ThreadedMessengerUser},
-        spmc::{Broadcast, Subscriber},
-        spsc::BufferWheel,
-    },
+    comms::mailbox::{Message, ThreadedMessenger, ThreadedMessengerUser},
     scheduling::Scheduleable,
     sync::gvt::aika::{Block, BlockSpoke, Consensus},
     MesoError,
 };
 
 use crate::{
-    actors::{Context, ConnectedActor},
-    mt::{
-        engines::HTime,
-    },
-    objects::{
-        AntiMsg, Event, LocalScheduler, Mail, Msg, SchedulingTask, Transfer,
-    },
-    AikaError, env::Environment,
+    actors::{ConnectedActor, Context},
+    env::Environment,
+    mt::engines::HTime,
+    objects::{AntiMsg, Event, LocalScheduler, Mail, Msg, SchedulingTask, Transfer},
+    AikaError,
 };
 
 /// A `Galaxy` is an inter-cluster message bus and GVT updater, intended to own its own thread.
@@ -56,9 +48,6 @@ pub struct Galaxy<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod +
     pub planet_count: usize,
     /// The GVT thread is waiting for in flight messages to arrive before closing
     pub close: (bool, bool),
-    channels: Vec<Arc<BufferWheel<BLOCK_BW, isize>>>,
-    wrapup: Arc<Broadcast<1, bool>>,
-    final_counter: isize,
 }
 
 impl<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + Clone>
@@ -89,9 +78,6 @@ impl<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + C
             registered: 0,
             planet_count,
             close: (false, false),
-            channels: Vec::new(),
-            wrapup: Arc::new(Broadcast::new()?),
-            final_counter: 0,
         })
     }
 
@@ -126,9 +112,6 @@ impl<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + C
         }
         let id = self.registered;
         self.registered += 1;
-        let wheel = Arc::new(BufferWheel::new());
-        let cloned = Arc::clone(&wheel);
-        self.channels.push(wheel);
         let messenger_account = self.interplanetary_messenger.get_user(id)?;
         let mut spoke = self.consensus.register_producer(None)?.unwrap();
         spoke.block.max_dur = self.max_block_dur;
@@ -138,8 +121,6 @@ impl<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + C
             self.time,
             spoke,
             messenger_account,
-            self.wrapup.register_subscriber(),
-            cloned,
             id,
         )
     }
@@ -159,24 +140,6 @@ impl<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + C
                 }
             }
         }
-    }
-
-    fn poll_sends(&mut self) -> Result<isize, AikaError> {
-        let mut total = 0;
-        for i in &self.channels {
-            match i.read() {
-                Ok(size) => {
-                    total += size;
-                }
-                Err(e) => {
-                    if let MesoError::NoPendingUpdates = e {
-                        continue;
-                    }
-                    return Err(AikaError::MesoError(e));
-                }
-            }
-        }
-        Ok(total)
     }
 
     // Check if all clusters are at terminal time.
@@ -227,36 +190,12 @@ impl<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + C
                     self.deliver_the_mail()?;
                 }
                 self.consensus.poll_n_slot()?;
-                if !self.close.0 {
-                    while let Some(new_gvt) = self.consensus.check_update_safe_point()? {
-                        if new_gvt == self.time.gvt {
-                            break;
-                        }
-                        println!("GVT Master: Broadcasting new safe point: {new_gvt}");
-                        self.consensus.processor.broadcast_new_safe_point(new_gvt)?;
+                while let Some(new_gvt) = self.consensus.check_update_safe_point()? {
+                    if new_gvt == self.time.gvt {
+                        break;
                     }
-                } else {
-                    if !self.close.1 {
-                        while let Some(res) = self.consensus.cusp_return_sends()? {
-                            match res {
-                                Ok(gvt) => {
-                                    if gvt == self.time.gvt {
-                                        break;
-                                    }
-                                    println!("GVT Master: Broadcasting new safe point: {gvt}");
-                                    self.consensus.processor.broadcast_new_safe_point(gvt)?;
-                                }
-                                Err(sends) => {
-                                    self.final_counter += self.poll_sends()?;
-                                    if sends + self.final_counter == 0 {
-                                        self.close.1 = true;
-                                        self.wrapup.broadcast(true);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    // else do some final block polling.
+                    println!("GVT Master: Broadcasting new safe point: {new_gvt}");
+                    self.consensus.processor.broadcast_new_safe_point(new_gvt)?;
                 }
             }
 
@@ -312,8 +251,6 @@ pub struct Planet<
     /// Current time information of the simulation. these should always be the same across simulation clusters in the same `Galaxy`.
     pub time: HTime,
     brakes: bool,
-    wrapup: Subscriber<1, bool>,
-    send_comms: Arc<BufferWheel<BLOCK_BW, isize>>,
 }
 
 unsafe impl<
@@ -348,8 +285,6 @@ impl<
         time: HTime,
         blocks: BlockSpoke<BLOCK_BW>,
         message_user: ThreadedMessengerUser<MSG_BW, Mail<MessageType>>,
-        wrapup: Subscriber<1, bool>,
-        wheel: Arc<BufferWheel<BLOCK_BW, isize>>,
         id: usize,
     ) -> Result<Self, AikaError> {
         let terminal = (time.terminal / time.timestep) as u64;
@@ -362,8 +297,6 @@ impl<
             blocks,
             time,
             brakes: false,
-            wrapup,
-            send_comms: wheel,
         })
     }
 
@@ -394,10 +327,7 @@ impl<
     }
 
     /// Spawn a new `ThreadedAgent` on this cluster. Specify the arena size for its state allocator.
-    pub fn spawn_agent(
-        &mut self,
-        agent: Box<dyn ConnectedActor<MessageType>>,
-    ) -> usize {
+    pub fn spawn_agent(&mut self, agent: Box<dyn ConnectedActor<MessageType>>) -> usize {
         self.agents.push(agent);
         self.agents.len() - 1
     }
@@ -411,8 +341,7 @@ impl<
         // rollback world and agent states
         self.context.env.rollback(time);
         // rollback local message scheduler
-        self.local_messages
-            .rollback(time);
+        self.local_messages.rollback(time);
         // rollback and claim all the anti messages produced after the rollback time
         let anti_msgs: Vec<(Mail<MessageType>, u64)> = self.context.anti_msgs.rollback_return(time);
 
@@ -444,8 +373,7 @@ impl<
         }
 
         // rollback local event scheduling system.
-        self.event_system
-            .rollback(time);
+        self.event_system.rollback(time);
         // reset context time
         self.context.time = time;
 
@@ -750,7 +678,7 @@ impl<
     }
 
     #[allow(dead_code)]
-    pub(crate) fn run_debug<T: Pod + Zeroable + std::fmt::Debug>(
+    pub(crate) fn run_debug(
         &mut self,
     ) -> Result<(), AikaError> {
         if self.time.terminal == f64::MAX {
@@ -777,16 +705,20 @@ impl<
                 Ok(_) => {}
                 Err(err) => match err {
                     AikaError::PastTerminalButGVTBehind => {
-                        if counter < 10 {
-                            println!(
-                                "Planet {:?}: waiting for GVT to catch up, continuing to poll.",
-                                self.context.cluster_id
-                            );
-                        } else if counter == 10 {
-                            println!(
-                                "Planet {:?}: waiting too long for GVT, going quiet.",
-                                self.context.cluster_id
-                            );
+                        match counter.cmp(&10) {
+                            std::cmp::Ordering::Less => {
+                                println!(
+                                    "Planet {:?}: waiting for GVT to catch up, continuing to poll.",
+                                    self.context.cluster_id
+                                );
+                            },
+                            std::cmp::Ordering::Equal => {
+                                println!(
+                                    "Planet {:?}: waiting too long for GVT, going quiet.",
+                                    self.context.cluster_id
+                                );
+                            },
+                            _ => {}
                         }
                         counter += 1;
                         sleep(Duration::from_nanos(100));
@@ -833,7 +765,7 @@ mod unit_tests {
 
     use super::*;
     use crate::actors::{Actor, ConnectedActor, Context};
-    use crate::env::{SimpleUnified, Stateless};
+    use crate::env::SimpleUnified;
     use crate::objects::{Event, Msg, SchedulingTask};
     use bytemuck::{Pod, Zeroable};
     use mesocarp::logging::journal::Journal;
@@ -890,7 +822,6 @@ mod unit_tests {
     }
 
     impl ConnectedActor<TestMessage> for TestAgent {
-
         fn read_message(
             &mut self,
             _context: &mut Context<TestMessage>,
@@ -900,6 +831,7 @@ mod unit_tests {
         }
     }
 
+    #[allow(dead_code)]
     #[derive(Copy, Clone, Debug)]
     #[repr(C)]
     struct MsgAgent;
@@ -924,12 +856,11 @@ mod unit_tests {
     }
 
     impl ConnectedActor<TestMessage> for MsgAgent {
-
         fn read_message(
             &mut self,
             context: &mut Context<TestMessage>,
             msg: Msg<TestMessage>,
-            agent_id: usize,
+            _agent_id: usize,
         ) {
             assert_eq!(context.time, msg.recv);
         }
@@ -955,7 +886,9 @@ mod unit_tests {
         let mut galaxy = Galaxy::<BLOCK_BANDWIDTH, MSG_BANDWIDTH, MessageType>::new(6, 12)?;
         galaxy.set_time_scale(1.0, terminal);
         galaxy.with_block_duration(block_dur);
-        let mut planet = galaxy.spawn_planet::<CLOCK_BW, CLOCK_SCALES>(Stateless)?;
+        let mut planet = galaxy.spawn_planet::<CLOCK_BW, CLOCK_SCALES>(SimpleUnified {
+            inner: Journal::init(1024),
+        })?;
         for j in 0..AGENTS {
             let agent = TestAgent::new(j);
             planet.spawn_agent(Box::new(agent));
@@ -982,7 +915,7 @@ mod unit_tests {
         let (galaxy, mut planets) = create_setup::<64, 2, TestMessage>(1.0, 1).unwrap();
         schedule_all(&mut planets, 0).unwrap();
         let ghandle = thread::spawn(move || galaxy.master());
-        let phandle = thread::spawn(move || planets.run_debug::<usize>());
+        let phandle = thread::spawn(move || planets.run_debug());
 
         let galaxy_result = ghandle.join().expect("Galaxy thread panicked");
         let planet_result = phandle.join().expect("Planet thread panicked");
@@ -1002,7 +935,11 @@ mod unit_tests {
         schedule_all(&mut planet, 0).unwrap();
         let mut planets = vec![planet];
         for _ in 0..5 {
-            let mut planet = galaxy.spawn_planet::<64, 2>(SimpleUnified { inner: Journal::init(1024) }).unwrap();
+            let mut planet = galaxy
+                .spawn_planet::<64, 2>(SimpleUnified {
+                    inner: Journal::init(1024),
+                })
+                .unwrap();
             for j in 0..AGENTS {
                 let agent = TestAgent::new(j);
                 planet.spawn_agent(Box::new(agent));
@@ -1018,7 +955,7 @@ mod unit_tests {
                     for i in 0..AGENTS {
                         x.schedule(1, i)?;
                     }
-                    x.run_debug::<usize>()
+                    x.run_debug()
                 })
             })
             .collect::<Vec<_>>();
@@ -1036,7 +973,11 @@ mod unit_tests {
     #[test]
     fn test_rollback_accounting() {
         let mut galaxy: Galaxy<8, 8, TestMessage> = Galaxy::new(1, 1).unwrap();
-        let mut planet = galaxy.spawn_planet::<16, 2>(SimpleUnified { inner: Journal::init(1024) }).unwrap();
+        let mut planet = galaxy
+            .spawn_planet::<16, 2>(SimpleUnified {
+                inner: Journal::init(1024),
+            })
+            .unwrap();
         for i in 0..AGENTS {
             planet.spawn_agent(Box::new(TestAgent::new(i)));
             planet.schedule(0, i).unwrap();
@@ -1049,11 +990,21 @@ mod unit_tests {
         //println!("state {:?}", planet.context.world_state.read_state::<usize>().unwrap());
         assert_eq!(planet.now(), 3);
 
-        let state = &planet.context.env.downcast_ref::<SimpleUnified>().unwrap().inner;
+        let state = &planet
+            .context
+            .env
+            .downcast_ref::<SimpleUnified>()
+            .unwrap()
+            .inner;
         let current = state.read_state::<usize>().unwrap();
         assert_eq!(*current, 30);
         let res = planet.rollback(1);
-        let state = &planet.context.env.downcast_ref::<SimpleUnified>().unwrap().inner;
+        let state = &planet
+            .context
+            .env
+            .downcast_ref::<SimpleUnified>()
+            .unwrap()
+            .inner;
         assert!(res.is_ok());
         assert_eq!(planet.now(), 1);
         assert_eq!(planet.context.time, 1);
