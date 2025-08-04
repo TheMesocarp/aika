@@ -116,13 +116,7 @@ impl<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + C
         let mut spoke = self.consensus.register_producer(None)?.unwrap();
         spoke.block.max_dur = self.max_block_dur;
         spoke.block.dur = self.max_block_dur;
-        Planet::from_galaxy_registration(
-            env,
-            self.time,
-            spoke,
-            messenger_account,
-            id,
-        )
+        Planet::from_galaxy_registration(env, self.time, spoke, messenger_account, id)
     }
 
     // Poll and and deliver the mail to the appropriate cluster ID if found.
@@ -678,9 +672,7 @@ impl<
     }
 
     #[allow(dead_code)]
-    pub(crate) fn run_debug(
-        &mut self,
-    ) -> Result<(), AikaError> {
+    pub(crate) fn run_debug(&mut self) -> Result<(), AikaError> {
         if self.time.terminal == f64::MAX {
             return Err(AikaError::MustSetTerminalTime);
         }
@@ -711,13 +703,13 @@ impl<
                                     "Planet {:?}: waiting for GVT to catch up, continuing to poll.",
                                     self.context.cluster_id
                                 );
-                            },
+                            }
                             std::cmp::Ordering::Equal => {
                                 println!(
                                     "Planet {:?}: waiting too long for GVT, going quiet.",
                                     self.context.cluster_id
                                 );
-                            },
+                            }
                             _ => {}
                         }
                         counter += 1;
@@ -967,7 +959,7 @@ mod unit_tests {
 
         // Ensure both threads completed successfully
         assert!(galaxy_result.is_ok(), "Galaxy master loop failed");
-        assert!(planet_result, "Planet run loop failed: {:?}", planet_result);
+        assert!(planet_result, "Planet run loop failed: {planet_result:?}");
     }
 
     #[test]
