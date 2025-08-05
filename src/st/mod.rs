@@ -111,7 +111,7 @@ impl<const CLOCK_SLOTS: usize, const CLOCK_HEIGHT: usize, MessageType: Pod + Zer
                             match &mut self.actors[i] {
                                 ActorType::Basic(_) => {}
                                 ActorType::Connected(connected_actor) => {
-                                    connected_actor.read_message(&mut self.env, msg, i);
+                                    connected_actor.read_message(&mut self.env, msg, i)?;
                                 }
                             }
                         }
@@ -126,7 +126,7 @@ impl<const CLOCK_SLOTS: usize, const CLOCK_HEIGHT: usize, MessageType: Pod + Zer
                             return Err(AikaError::MessagedNonReceiver);
                         }
                         ActorType::Connected(connected_actor) => {
-                            connected_actor.read_message(&mut self.env, msg, id);
+                            connected_actor.read_message(&mut self.env, msg, id)?;
                         }
                     }
                 }
@@ -214,6 +214,7 @@ mod tests {
     use std::cell::RefCell;
     use std::rc::Rc;
 
+    #[derive(Debug)]
     // Simple actor that just schedules timeouts
     pub struct TestAgent {
         pub _id: usize,
@@ -232,6 +233,7 @@ mod tests {
         }
     }
 
+    #[derive(Debug)]
     // Agent that sends messages
     pub struct SendingAgent {
         pub id: usize,
@@ -277,6 +279,7 @@ mod tests {
         }
     }
 
+    #[derive(Debug)]
     // Agent that receives and counts messages
     pub struct ReceivingAgent {
         pub _id: usize,
@@ -304,11 +307,18 @@ mod tests {
     }
 
     impl ConnectedActor<u8> for ReceivingAgent {
-        fn read_message(&mut self, _env: &mut Context<u8>, msg: Msg<u8>, _actor_id: usize) {
+        fn read_message(
+            &mut self,
+            _env: &mut Context<u8>,
+            msg: Msg<u8>,
+            _actor_id: usize,
+        ) -> Result<(), AikaError> {
             self.messages_received.borrow_mut().push(msg);
+            Ok(())
         }
     }
 
+    #[derive(Debug)]
     // Agent that broadcasts messages
     pub struct BroadcastingAgent {
         pub id: usize,
@@ -350,6 +360,7 @@ mod tests {
         }
     }
 
+    #[derive(Debug)]
     // Agent that triggers other actors
     pub struct TriggeringAgent {
         pub _id: usize,
@@ -544,6 +555,7 @@ mod tests {
         let mut world = LonePlanet::<128, 1, u8>::init(Stateless).unwrap();
         world.set_terminal_time(50);
         // Agent that tries to send to non-existent actor
+        #[derive(Debug)]
         pub struct InvalidTargetAgent {
             _id: usize,
             attempted: bool,

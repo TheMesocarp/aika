@@ -6,7 +6,7 @@
 //! ## Architecture
 //!
 //! - [`st`] - Single-threaded discrete event simulator.
-//! - [`mt`] - Multi-threaded discrete event simulators. Current contains a hybrid synchronization model.
+//! - [`mt`] - Multi-threaded discrete event simulators. Currently a hybrid synchronization model is under construction.
 //! - [`objects`] - Internal simulation objects, like `Event` or `Msg`.
 //! - [`actors`] - Actor traits and context.
 use mesocarp::MesoError;
@@ -14,7 +14,8 @@ use thiserror::Error;
 
 pub mod actors;
 pub mod env;
-pub mod mt;
+#[allow(dead_code)]
+mod mt;
 pub mod objects;
 pub mod st;
 
@@ -69,4 +70,8 @@ pub enum AikaError {
     UnconfiguredStager,
     #[error("No actors have been added to cluster {0}! Aika will not start a wasteful sim.")]
     NoActors(usize),
+    #[error("Failed to initialize the logging files for set up.")]
+    LoggingSetupFailure,
+    #[error("Write to log failed.")]
+    LoggingWriteError,
 }

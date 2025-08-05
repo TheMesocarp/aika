@@ -10,6 +10,7 @@ use crate::{
     AikaError,
 };
 
+#[derive(Debug)]
 /// Shared context local `ThreadedAgents` mutate within a `Planet` thread
 pub struct Context<MessageType: Pod + Zeroable + Clone> {
     /// state of each `ThreadedAgent` on the `Planet`
@@ -73,20 +74,21 @@ impl<MessageType: Pod + Zeroable + Clone> Context<MessageType> {
     }
 }
 
-pub trait Actor<MessageType: Clone + Pod + Zeroable> {
+/// An `Actor` is an independent logical process that belongs to a `Planet` and can schedule events.
+pub trait Actor<MessageType: Clone + Pod + Zeroable>: std::fmt::Debug {
     fn step(&mut self, env: &mut Context<MessageType>, actor_id: usize)
         -> Result<Event, AikaError>;
 }
 
-/// A `ThreadedAgent` is an independent logical process that belongs to a `Planet` and can schedule events,
-/// send messages, and interact with that `Planet`'s `PlanetContext`.
+/// A `ConnectedActor` is an independent logical process that belongs to a `Planet` and can schedule events,
+/// send messages, and interact with that `Planet`'s `Context`.
 pub trait ConnectedActor<MessageType: Pod + Zeroable + Clone>: Actor<MessageType> {
     fn read_message(
         &mut self,
         env: &mut Context<MessageType>,
         msg: Msg<MessageType>,
         actor_id: usize,
-    );
+    ) -> Result<(), AikaError>;
 }
 
 pub enum ActorType<MessageType: Pod + Zeroable + Clone> {

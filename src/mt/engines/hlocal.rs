@@ -10,9 +10,11 @@
 //!
 //! This `hlocal` variant of aika's hybrid model is structured centrally around the `Galaxy` thread, which manage block update processing,
 //! GVT update broadcasts to clusters, and inter-cluster message passing via a message bus.
+use std::io::Write;
 use std::{
     cmp::{min, Reverse},
     collections::{BTreeSet, BinaryHeap},
+    fs::File,
     thread::sleep,
     time::Duration,
 };
@@ -28,11 +30,12 @@ use mesocarp::{
 use crate::{
     actors::{ConnectedActor, Context},
     env::Environment,
-    mt::engines::HTime,
+    mt::{engines::HTime, logging::setup_hlocal_logging, RunMode},
     objects::{AntiMsg, Event, LocalScheduler, Mail, Msg, SchedulingTask, Transfer},
     AikaError,
 };
 
+#[derive(Debug, Copy, Clone)]
 pub struct Config {
     pub clusters: usize,
     pub batch_size: usize,
@@ -59,6 +62,7 @@ impl Config {
     }
 }
 
+#[derive(Debug)]
 /// A `Galaxy` is an inter-cluster message bus and GVT updater, intended to own its own thread.
 pub struct Galaxy<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + Clone> {
     /// The temporal consensus routine for an updted GVT computation.
@@ -74,6 +78,8 @@ pub struct Galaxy<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod +
     pub planet_count: usize,
     /// The GVT thread is waiting for in flight messages to arrive before closing
     pub close: (bool, bool),
+    /// Log file for the last run.
+    pub log: Option<File>,
 }
 
 impl<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + Clone>
@@ -102,6 +108,7 @@ impl<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + C
             registered: 0,
             planet_count,
             close: (false, false),
+            log: None,
         })
     }
 
@@ -135,6 +142,11 @@ impl<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + C
         spoke.block.max_dur = self.max_block_dur;
         spoke.block.dur = self.max_block_dur;
         Planet::from_galaxy_registration(env, self.time, spoke, messenger_account, id)
+    }
+
+    // Sets the log file
+    fn set_log(&mut self, file: File) {
+        self.log = Some(file);
     }
 
     // Poll and and deliver the mail to the appropriate cluster ID if found.
@@ -177,25 +189,12 @@ impl<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + C
     /// and if theres a potential GVT update to send out. Will only break once all
     /// blocks have been processed.
     pub fn master(mut self) -> Result<Self, AikaError> {
-        println!(
-            "Start block: {:?}",
-            self.consensus.blocks.read_state::<Block<BLOCK_BW>>()
-        );
         if self.time.terminal == u64::MAX {
             return Err(AikaError::MustSetTerminalTime);
         }
-        let mut counter = 0;
         loop {
             self.time.gvt = self.consensus.safe_point;
             // mail
-            //println!("GVT Master, GVT {:?}: delivering mail...", self.gvt);
-            if counter < 10 {
-                println!(
-                    "GVT Master, GVT {:?}: polling blocks, updating time consensus...",
-                    self.time.gvt
-                );
-            }
-            counter += 1;
             for _ in 0..10 {
                 if !self.close.1 {
                     self.deliver_the_mail()?;
@@ -205,21 +204,82 @@ impl<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + C
                     if new_gvt == self.time.gvt {
                         break;
                     }
-                    println!("GVT Master: Broadcasting new safe point: {new_gvt}");
                     self.consensus.processor.broadcast_new_safe_point(new_gvt)?;
                 }
             }
 
             if self.check_all_terminal()? {
-                println!(
-                    "GVT Master, GVT {:?}: all planets are waiting",
-                    self.time.gvt
-                );
                 if self.consensus.check_status() {
-                    println!(
-                        "GVT Master, GVT {:?}: GVT has caught up, consensus reached!",
+                    break;
+                }
+                let terminal = self.time.terminal;
+                if self.consensus.all_producers_at_terminal(terminal) {
+                    self.close.0 = true;
+                }
+            }
+        }
+        Ok(self)
+    }
+
+    /// Master loop. Polls and delivers the mail, then checks for block updates,
+    /// and if theres a potential GVT update to send out. Will only break once all
+    /// blocks have been processed.
+    pub fn master_debug(mut self) -> Result<Self, AikaError> {
+        writeln!(
+            self.log.as_mut().unwrap(),
+            "[{}] Start block: {:?}",
+            chrono::Utc::now().format("%m:%s.9f"),
+            self.consensus.blocks.read_state::<Block<BLOCK_BW>>()
+        )
+        .map_err(|_| AikaError::LoggingWriteError)?;
+        if self.time.terminal == u64::MAX {
+            return Err(AikaError::MustSetTerminalTime);
+        }
+        loop {
+            self.time.gvt = self.consensus.safe_point;
+            // mail
+            writeln!(
+                self.log.as_mut().unwrap(),
+                "[{}] GVT {:?}: delivering mail and polling new blocks...",
+                chrono::Utc::now().format("%m:%s.9f"),
+                self.time.gvt
+            )
+            .map_err(|_| AikaError::LoggingWriteError)?;
+            for _ in 0..10 {
+                if !self.close.1 {
+                    self.deliver_the_mail()?;
+                }
+                self.consensus.poll_n_slot()?;
+                while let Some(new_gvt) = self.consensus.check_update_safe_point()? {
+                    if new_gvt == self.time.gvt {
+                        break;
+                    }
+                    writeln!(
+                        self.log.as_mut().unwrap(),
+                        "[{}] GVT Master: Broadcasting new safe point: {new_gvt}",
+                        chrono::Utc::now().format("%m:%s.9f")
+                    )
+                    .map_err(|_| AikaError::LoggingWriteError)?;
+                    self.consensus.processor.broadcast_new_safe_point(new_gvt)?;
+                }
+            }
+
+            if self.check_all_terminal()? {
+                writeln!(
+                    self.log.as_mut().unwrap(),
+                    "[{}] GVT Master, GVT {:?}: all planets are waiting",
+                    chrono::Utc::now().format("%m:%s.9f"),
+                    self.time.gvt
+                )
+                .map_err(|_| AikaError::LoggingWriteError)?;
+                if self.consensus.check_status() {
+                    writeln!(
+                        self.log.as_mut().unwrap(),
+                        "[{}] GVT {:?}: GVT has caught up, consensus reached!",
+                        chrono::Utc::now().format("%m:%s.9f"),
                         self.time.gvt
-                    );
+                    )
+                    .map_err(|_| AikaError::LoggingWriteError)?;
                     break;
                 }
                 let terminal = self.time.terminal;
@@ -241,6 +301,7 @@ unsafe impl<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroa
 {
 }
 
+#[derive(Debug)]
 /// A `Planet` is a local simulation cluster within a `Galaxy` system, owns a partition of global simulation state.
 /// It operates conservative with respect to its local actors, but allows rollbacks from causality violations
 /// triggered in inter-cluster messaging.
@@ -262,6 +323,7 @@ pub struct Planet<
     /// Current time information of the simulation. these should always be the same across simulation clusters in the same `Galaxy`.
     pub time: HTime,
     brakes: bool,
+    log: Option<File>,
 }
 
 unsafe impl<
@@ -308,6 +370,7 @@ impl<
             blocks,
             time,
             brakes: false,
+            log: None,
         })
     }
 
@@ -342,6 +405,11 @@ impl<
         let actor = Box::new(actor);
         self.actors.push(actor);
         self.actors.len() - 1
+    }
+
+    // Sets the log file
+    fn set_log(&mut self, file: File) {
+        self.log = Some(file);
     }
 
     // NEED TO REVIEW
@@ -389,10 +457,14 @@ impl<
         // reset context time
         self.context.time = time;
 
-        println!(
-            "Planet {:?}, Time {now}: ROLLBACK!!!!! rolling back to {time}",
-            self.context.cluster_id
-        );
+        if let Some(file) = &mut self.log {
+            writeln!(
+                file,
+                "[{}] Time {now}: ROLLBACK!!!!! rolling back to {time}",
+                chrono::Utc::now().format("%m:%s.9f"),
+            )
+            .map_err(|_| AikaError::LoggingWriteError)?;
+        }
         Ok(())
     }
 
@@ -442,6 +514,7 @@ impl<
 
     // Poll for inter-cluster messages and slot appropriately or rollback if necessary. Count the receives.
     fn poll_interplanetary_messenger(&mut self) -> Result<(), AikaError> {
+        let now = self.now();
         let maybe = self.message_user.poll();
         if maybe.is_none() {
             return Ok(());
@@ -449,7 +522,16 @@ impl<
         for msg in maybe.unwrap() {
             if let Some(to) = msg.to_world {
                 if to != self.context.cluster_id {
-                    println!("!!! PANIC !!! mail planet to ID: {to}, context ID {:?}. source actor {:?} on planet {:?}", self.context.cluster_id, msg.transfer.from(), msg.from_world);
+                    if let Some(file) = &mut self.log {
+                        writeln!(
+                            file,
+                            "[{}] !!! PANIC !!! Mismatched delivery addresses. Was meant for cluster No. {to}, received by cluster No. {:?}. source actor {:?} on planet {:?}", 
+                            chrono::Utc::now().format("%m:%s.9f"), 
+                            self.context.cluster_id,
+                            msg.transfer.from(),
+                            msg.from_world
+                        ).map_err(|_| AikaError::LoggingWriteError)?;
+                    }
                     return Err(AikaError::MismatchedDeliveryAddress);
                 }
             }
@@ -458,12 +540,15 @@ impl<
             //     "Planet {:?}: opening mail with recieve time {time}",
             //     self.context.cluster_id
             // );
-            if time < self.now() {
-                println!(
-                    "Planet {:?}, Time {:?}: found old message in poll with recieve time {time}",
-                    self.context.cluster_id,
-                    self.now()
-                );
+            if time < now {
+                if let Some(file) = &mut self.log {
+                    writeln!(
+                        file,
+                        "[{}] Local virtual time {:?}: found old message in poll with recieve time {time}.",
+                        chrono::Utc::now().format("%m:%s.9f"),
+                        now
+                    ).map_err(|_| AikaError::LoggingWriteError)?;
+                }
                 self.rollback(time)?;
             }
 
@@ -492,23 +577,28 @@ impl<
         self.context.time += 1;
         let end = self.blocks.block.start + self.blocks.block.dur;
         if self.context.time == end {
-            //println!(
-            //    "Planet {:?}, Time {:?}: submitting local block #{:?} with end time {:?}",
-            //    self.context.cluster_id, self.context.time, self.blocks.block.block_nmb, end
-            //);
             let dur = self.blocks.block.max_dur;
             let mut new_id = self.blocks.block.block_id();
             new_id.1 += 1;
-
+            if let Some(file) = &mut self.log {
+                writeln!(
+                    file,
+                    "[{}] Local virtual time {:?}: submitted block number {:?}, new proposed safe virtual time {end}",
+                    chrono::Utc::now().format("%m:%s.9f"),
+                    self.context.time - 1,
+                    new_id.1 - 1
+                ).map_err(|_| AikaError::LoggingWriteError)?;
+                writeln!(
+                    file,
+                    "[{}] Block: {:?}",
+                    chrono::Utc::now().format("%m:%s.9f"),
+                    self.blocks.block
+                )
+                .map_err(|_| AikaError::LoggingWriteError)?;
+            }
             self.blocks
                 .submitter
                 .write(std::mem::take(&mut self.blocks.block))?;
-            println!(
-                "Planet {:?} Time {:?}: submitted block number {:?}, new safe time {end}",
-                self.context.cluster_id,
-                self.context.time - 1,
-                new_id.1 - 1
-            );
             self.blocks.block.block_nmb = new_id.1;
             self.blocks.block.producer_id = new_id.0;
             self.blocks.block.start = self.context.time;
@@ -543,22 +633,27 @@ impl<
 
     // Take one step in local cluster time.
     pub(crate) fn step(&mut self) -> Result<(), AikaError> {
-        println!(
-            "Planet {:?}: step starting at time {:?}",
-            self.context.cluster_id,
-            self.now()
-        );
+        let now = self.now();
+        if let Some(file) = &mut self.log {
+            writeln!(
+                file,
+                "[{}] step starting at time {:?}",
+                chrono::Utc::now().format("%m:%s.9f"),
+                now
+            )
+            .map_err(|_| AikaError::LoggingWriteError)?;
+        }
         if let Ok(msgs) = self.local_messages.clock.tick() {
             for msg in msgs {
                 let id = msg.to;
                 if id.is_none() {
                     for i in 0..self.actors.len() {
-                        self.actors[i].read_message(&mut self.context, msg, i);
+                        self.actors[i].read_message(&mut self.context, msg, i)?;
                     }
                     continue;
                 }
                 let id = id.unwrap();
-                self.actors[id].read_message(&mut self.context, msg, id);
+                self.actors[id].read_message(&mut self.context, msg, id)?;
             }
         }
         // process events at the next time step
@@ -602,11 +697,13 @@ impl<
         let now = self.now();
         let sends = std::mem::take(&mut self.context.outbox);
         for mail in sends {
+            let mut local = false;
             if Some(self.context.cluster_id) == mail.to_world {
                 match mail.open_letter() {
                     Transfer::Msg(msg) => self.commit_mail(msg),
                     Transfer::AntiMsg(anti_msg) => self.annihilate(anti_msg),
                 }
+                local = true;
             } else {
                 self.message_user.send(mail)?;
             }
@@ -619,7 +716,9 @@ impl<
                 self.blocks.block.delayed_corrections[blocks_past - 1] += 1;
                 continue;
             }
-            self.blocks.block.sends += 1;
+            if !local {
+                self.blocks.block.sends += 1;
+            }
         }
 
         // increment the clock to the next step
@@ -642,7 +741,6 @@ impl<
                 self.poll_interplanetary_messenger()?;
             }
             if let Some(gvt) = self.blocks.subscriber.try_recv() {
-                //println!("Planet {:?}: new GVT found: {gvt}", self.context.cluster_id);
                 if gvt < self.time.gvt {
                     return Err(AikaError::GVTisDecreasing);
                 }
@@ -671,7 +769,6 @@ impl<
                 && now != self.time.terminal
                 && self.time.gvt != now
             {
-                //println!("Planet {:?}: checkpoint sleeping", self.context.cluster_id);
                 sleep(Duration::from_nanos(100));
                 std::thread::yield_now();
                 continue;
@@ -686,7 +783,7 @@ impl<
     }
 
     #[allow(dead_code)]
-    pub(crate) fn run_debug(&mut self) -> Result<(), AikaError> {
+    pub(crate) fn run_debug(mut self) -> Result<Self, AikaError> {
         if self.time.terminal == u64::MAX {
             return Err(AikaError::MustSetTerminalTime);
         }
@@ -699,7 +796,12 @@ impl<
                 self.poll_interplanetary_messenger()?;
             }
             if let Some(gvt) = self.blocks.subscriber.try_recv() {
-                //println!("Planet {:?}: new GVT found: {gvt}", self.context.cluster_id);
+                writeln!(
+                    self.log.as_mut().unwrap(),
+                    "[{}] new GVT found: {gvt}",
+                    chrono::Utc::now().format("%m:%s.9f")
+                )
+                .map_err(|_| AikaError::LoggingWriteError)?;
                 if gvt < self.time.gvt {
                     return Err(AikaError::GVTisDecreasing);
                 }
@@ -713,16 +815,20 @@ impl<
                     AikaError::PastTerminalButGVTBehind => {
                         match counter.cmp(&10) {
                             std::cmp::Ordering::Less => {
-                                println!(
-                                    "Planet {:?}: waiting for GVT to catch up, continuing to poll.",
-                                    self.context.cluster_id
-                                );
+                                writeln!(
+                                    self.log.as_mut().unwrap(),
+                                    "[{}]: waiting for GVT to catch up, continuing to poll.",
+                                    chrono::Utc::now().format("%m:%s.9f"),
+                                )
+                                .map_err(|_| AikaError::LoggingWriteError)?;
                             }
                             std::cmp::Ordering::Equal => {
-                                println!(
-                                    "Planet {:?}: waiting too long for GVT, going quiet.",
-                                    self.context.cluster_id
-                                );
+                                writeln!(
+                                    self.log.as_mut().unwrap(),
+                                    "[{}]: waiting too long for GVT, going quiet.",
+                                    chrono::Utc::now().format("%m:%s.9f"),
+                                )
+                                .map_err(|_| AikaError::LoggingWriteError)?;
                             }
                             _ => {}
                         }
@@ -745,7 +851,12 @@ impl<
                 && now != self.time.terminal
                 && self.time.gvt != now
             {
-                //println!("Planet {:?}: checkpoint sleeping", self.context.cluster_id);
+                writeln!(
+                    self.log.as_mut().unwrap(),
+                    "[{}] checkpoint sleeping",
+                    chrono::Utc::now().format("%m:%s.9f")
+                )
+                .map_err(|_| AikaError::LoggingWriteError)?;
                 sleep(Duration::from_nanos(100));
                 std::thread::yield_now();
                 continue;
@@ -756,12 +867,15 @@ impl<
             }
             std::thread::yield_now();
         }
-        println!(
-            "Planet {:?}: Terminated with local clock {:?}.",
-            self.context.cluster_id,
-            self.now()
-        );
-        Ok(())
+        let time = self.now();
+        writeln!(
+            self.log.as_mut().unwrap(),
+            "[{}] Terminated with local clock {:?}.",
+            chrono::Utc::now().format("%m:%s.9f"),
+            time
+        )
+        .map_err(|_| AikaError::LoggingWriteError)?;
+        Ok(self)
     }
 }
 
@@ -861,7 +975,7 @@ impl<
         Ok(())
     }
 
-    pub fn run(self) -> Result<Self, AikaError> {
+    pub fn run(self, mode: RunMode) -> Result<Self, AikaError> {
         match self.check_ready() {
             Ok(_) => {}
             Err(err) => match err {
@@ -871,24 +985,58 @@ impl<
                 Some(i) => return Err(AikaError::NoActors(i)),
             },
         }
+        let mut pfiles = vec![];
+        let mut gfile = None;
+        if RunMode::Debug == mode {
+            let mut files = setup_hlocal_logging(self.planets.len())
+                .map_err(|_| AikaError::LoggingSetupFailure)?;
+            gfile = files.pop();
+            pfiles = files;
+        }
 
-        let galaxy = self.galaxy.unwrap();
+        let mut galaxy = self.galaxy.unwrap();
         let planets = self.planets;
-
-        let phandles = planets
-            .into_iter()
-            .map(|planet| {
-                std::thread::spawn(move || {
-                    let planet = planet.run()?;
-                    Ok::<Planet<BLOCK_BW, MSG_BW, CLOCK_BW, CLOCK_SCALES, MessageType>, AikaError>(
-                        planet,
-                    )
-                })
-            })
-            .collect::<Vec<_>>();
+        let phandles =
+            match mode {
+                RunMode::Fast => planets
+                    .into_iter()
+                    .map(|planet| {
+                        std::thread::spawn(move || {
+                            let planet = planet.run_debug()?;
+                            Ok::<
+                                Planet<BLOCK_BW, MSG_BW, CLOCK_BW, CLOCK_SCALES, MessageType>,
+                                AikaError,
+                            >(planet)
+                        })
+                    })
+                    .collect::<Vec<_>>(),
+                RunMode::Debug => {
+                    let planets = planets.into_iter().zip(pfiles).collect::<Vec<_>>();
+                    planets
+                        .into_iter()
+                        .map(|(mut planet, file)| {
+                            planet.set_log(file);
+                            std::thread::spawn(move || {
+                                let planet = planet.run_debug()?;
+                                Ok::<
+                                    Planet<BLOCK_BW, MSG_BW, CLOCK_BW, CLOCK_SCALES, MessageType>,
+                                    AikaError,
+                                >(planet)
+                            })
+                        })
+                        .collect::<Vec<_>>()
+                }
+            };
 
         let ghandle = std::thread::spawn(move || {
-            let galaxy = galaxy.master()?;
+            let galaxy = match mode {
+                RunMode::Fast => galaxy.master()?,
+                RunMode::Debug => {
+                    let gfile = gfile.unwrap();
+                    galaxy.set_log(gfile);
+                    galaxy.master_debug()?
+                }
+            };
             Ok::<Galaxy<BLOCK_BW, MSG_BW, MessageType>, AikaError>(galaxy)
         });
 
@@ -944,6 +1092,7 @@ mod unit_tests {
     unsafe impl Pod for TestMessage {}
     unsafe impl Zeroable for TestMessage {}
 
+    #[derive(Debug)]
     struct TestAgent {
         _counter: usize,
         _id: usize,
@@ -990,7 +1139,8 @@ mod unit_tests {
             _context: &mut Context<TestMessage>,
             _msg: Msg<TestMessage>,
             _actor_id: usize,
-        ) {
+        ) -> Result<(), AikaError> {
+            Ok(())
         }
     }
 
@@ -1024,8 +1174,9 @@ mod unit_tests {
             context: &mut Context<TestMessage>,
             msg: Msg<TestMessage>,
             _actor_id: usize,
-        ) {
+        ) -> Result<(), AikaError> {
             assert_eq!(context.time, msg.recv);
+            Ok(())
         }
     }
 
@@ -1078,7 +1229,7 @@ mod unit_tests {
         let (galaxy, mut planets) = create_setup::<64, 2, TestMessage>(1, 1).unwrap();
         schedule_all(&mut planets, 0).unwrap();
         let ghandle = thread::spawn(move || galaxy.master());
-        let phandle = thread::spawn(move || planets.run_debug());
+        let phandle = thread::spawn(move || planets.run());
 
         let galaxy_result = ghandle.join().expect("Galaxy thread panicked");
         let planet_result = phandle.join().expect("Planet thread panicked");
@@ -1101,7 +1252,7 @@ mod unit_tests {
             clusters: CLUSTERS,
             batch_size: 12,
             block_duration: 1,
-            terminal: 2,
+            terminal: 20,
             checkpoint_frequency: u64::MAX,
         };
         stager.config(config).unwrap();
@@ -1118,7 +1269,7 @@ mod unit_tests {
         }
         stager.schedule_all(1).unwrap();
 
-        let run_result = stager.run();
+        let run_result = stager.run(RunMode::Debug);
 
         assert!(
             run_result.is_ok(),
@@ -1212,5 +1363,115 @@ mod unit_tests {
                 .commit_time(),
             24
         )
+    }
+}
+
+#[cfg(test)]
+mod messaging_tests {
+    use bytemuck::{Pod, Zeroable};
+
+    use crate::{
+        actors::{Actor, ConnectedActor},
+        env::Stateless,
+        mt::{
+            engines::hlocal::{Config, Stager},
+            RunMode,
+        },
+        objects::{Event, Msg},
+        AikaError,
+    };
+
+    const BLOCK_BW: usize = 8;
+    const MSG_BW: usize = 32;
+    const CLOCK_BW: usize = 128;
+    const CLOCK_SCALES: usize = 1;
+
+    #[derive(Debug, Copy, Clone)]
+    struct Message;
+
+    unsafe impl Pod for Message {}
+    unsafe impl Zeroable for Message {}
+
+    #[derive(Debug)]
+    struct MessagingActor {
+        recieved: usize,
+        sent: usize,
+        target: Option<usize>,
+        delay1: u64,
+        delay2: u64,
+    }
+
+    impl MessagingActor {
+        fn new(target: Option<usize>, delay1: u64, delay2: u64) -> Self {
+            Self {
+                recieved: 0,
+                sent: 0,
+                target,
+                delay1,
+                delay2,
+            }
+        }
+    }
+
+    impl Actor<Message> for MessagingActor {
+        fn step(
+            &mut self,
+            env: &mut crate::actors::Context<Message>,
+            actor_id: usize,
+        ) -> Result<crate::prelude::Event, crate::AikaError> {
+            let time = env.time;
+            let msg = Msg::new(Message, time, time + self.delay1, actor_id, self.target);
+            env.send_mail(msg, env.cluster_id)?;
+            self.sent += 1;
+            Ok(Event::new(
+                time,
+                time,
+                actor_id,
+                crate::objects::SchedulingTask::Wait,
+            ))
+        }
+    }
+
+    impl ConnectedActor<Message> for MessagingActor {
+        fn read_message(
+            &mut self,
+            env: &mut crate::actors::Context<Message>,
+            msg: crate::prelude::Msg<Message>,
+            actor_id: usize,
+        ) -> Result<(), AikaError> {
+            self.recieved += 1;
+            let time = env.time;
+            if self.target != Some(msg.from) {
+                let msg = Msg::new(Message, time, time + self.delay2, actor_id, Some(msg.from));
+                env.send_mail(msg, env.cluster_id)?;
+                self.sent += 1;
+            } else {
+                let _ = self.step(env, actor_id)?;
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn test_simple_fast_messaging() {
+        let mut stager: Stager<BLOCK_BW, MSG_BW, CLOCK_BW, CLOCK_SCALES, Message> =
+            Stager::new().unwrap();
+
+        let config = Config::new(1, 128, 20, 2048, 10000000);
+        stager.config(config).unwrap();
+
+        // Simple two agents back and forth first, for various delays and block configurations. Should terminate with proper GVT updates.
+        stager.create_cluster(Stateless).unwrap();
+
+        stager
+            .spawn_actor_on_cluster(0, MessagingActor::new(Some(1), 5, 1))
+            .unwrap();
+        stager
+            .spawn_actor_on_cluster(0, MessagingActor::new(Some(0), 5, 1))
+            .unwrap();
+
+        stager.schedule_cluster(0, 1).unwrap();
+
+        stager.run(RunMode::Debug).unwrap();
     }
 }

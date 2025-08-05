@@ -329,6 +329,7 @@ unsafe impl Pod for Event {}
 unsafe impl Send for Event {}
 unsafe impl Sync for Event {}
 
+#[derive(Debug)]
 /// Thread-local scheduler of a single object type in simulation time.
 pub struct LocalScheduler<const CLOCK_BW: usize, const CLOCK_SCALES: usize, T: Scheduleable> {
     pub(crate) overflow: BinaryHeap<Reverse<T>>,

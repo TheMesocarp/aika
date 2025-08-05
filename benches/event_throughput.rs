@@ -8,6 +8,7 @@ use aika::{
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use std::hint::black_box;
 
+#[derive(Debug)]
 // Minimal agent that just schedules timeout events
 struct ThroughputAgent {
     _id: usize,

@@ -15,7 +15,7 @@ license = "LGPL-2.1"
 name = "aika"
 readme = "README.md"
 repository = "https://github.com/TheMesocarp/aika"
-version = "0.1.0"
+version = "0.2.0"
 
 
 [profile.release]
@@ -27,8 +27,9 @@ opt-level = 3
 bytemuck = "1.23.0"
 thiserror = "2.0.12"
 downcast-rs = "2.0.1"
+chrono = { version = "0.4.41", features = ["serde"] }
 
-mesocarp = "0.9.4"
+mesocarp = "0.9.6"
 
 
 [dev-dependencies]
