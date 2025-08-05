@@ -602,7 +602,8 @@ impl<
             self.blocks.block.block_nmb = new_id.1;
             self.blocks.block.producer_id = new_id.0;
             self.blocks.block.start = self.context.time;
-            self.blocks.block.dur = min(dur, self.time.terminal);
+            let diff = self.time.terminal - self.now();
+            self.blocks.block.dur = min(dur, diff);
             self.blocks.block.max_dur = dur;
         }
         Ok(())

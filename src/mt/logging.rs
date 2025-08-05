@@ -31,12 +31,12 @@ pub(crate) fn setup_hlocal_logging(
     clusters: usize,
 ) -> Result<Vec<File>, Box<dyn std::error::Error>> {
     let timestamp = chrono::Utc::now().format("%Y-%m-%d_%H:%M:%S");
-    let folder_name = format!("logs/{}", timestamp);
+    let folder_name = format!("logs/{timestamp}");
 
     let mut files = vec![];
 
     for i in 0..clusters {
-        let log_file_name = format!("cluster{}.log", i);
+        let log_file_name = format!("cluster{i}.log");
         files.push(init_log_file(&folder_name, &log_file_name)?);
     }
 
