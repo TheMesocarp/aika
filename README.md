@@ -4,20 +4,19 @@
 
 A Rust-native coordination layer for multi-agent systems, with support for single-threaded, multi-threaded, and distributed execution. Finnish for "Time". Built entirely from systems theory first developed in the mid '80s through early '90s.
 
-> Do Not Use `mt::hybrid` Yet! Changes Unstable
+> Use `aika::mt` engines at own risk, many features are still being tested.
 
 ## Roadmap
 
-In its current state, the framework supports single-threaded and multi-threaded hybrid execution, with both point-to-point and broadcast messaging support. The aim is to continue expanding into conservative synchronization support as well. A near term list of goals can be seen below:
+In its current state, the framework supports single-threaded and multi-threaded hybrid execution, with both point-to-point and broadcast messaging support. The aim is to continue expanding into conservative synchronization support as well. A long term list of goals can be seen below:
 
-- [x] single-threaded world (found in `st::World`) execution with messaging support via lock-free shared buffers. 
-- [x] bench single-threaded `st::World` on more complex and distant scheduling tasks.
-- [x] multi-threaded support via hybrid synchronization via a modified [Clustered Time Warp](https://dl.acm.org/doi/abs/10.1145/214283.214317) architecture for multi-threaded execution (found in `mt::hybrid`).
-- [ ] scheduling overhead benchmark and *PHOLD* benchmark for `mt::hybrid::HybridEngine` (**in progress**).
-- [ ] add direct support for multi-socket systems for the `HybridEngine` and `Journal`.
+- [x] single-threaded world (found in `st::LonePlanet`) execution with messaging support via lock-free shared buffers. 
+- [x] bench single-threaded `st::LonePlanet` on more complex and distant scheduling tasks.
+- [x] multi-threaded support via hybrid synchronization via a modified [Clustered Time Warp](https://dl.acm.org/doi/abs/10.1145/214283.214317) architecture for multi-threaded execution (found in `mt::engines::hlocal`). (**In Progress**)
+- [ ] scheduling overhead benchmark and *PHOLD* benchmark for `mt::engines::hlocal`.
+- [ ] implement `mt::engines::hdist`, the variant of aika's hybrid model that uses decentralized GVT computation and message passing, instead of a central coordinator thread.
 - [ ] conservative synchronization via a [Chandy-Misra-Bryant](https://dl.acm.org/doi/10.1145/130611.130613) (CMB) inspired architecture for multi-threaded execution (soon to be found in `mt::conservative`). 
 - [ ] *PHOLD* benches for conservative multi-threaded execution scheme.
-- [ ] (eventually) shift to MPI-like communication interface over a shared memory abstraction for real direct comms support.
 
 ## Usage
 

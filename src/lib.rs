@@ -16,8 +16,7 @@ use crate::mt::consensus::ComputeLayout;
 
 pub mod actors;
 pub mod env;
-#[allow(dead_code)]
-mod mt;
+pub mod mt;
 pub mod objects;
 pub mod st;
 
@@ -78,4 +77,6 @@ pub enum AikaError {
     LoggingWriteError,
     #[error("Attempted to register a compute producer that expected one layout, but another was found: {0}")]
     ComputeLayoutExpectationMismatch(ComputeLayout),
+    #[error("Received a message from too distant in the past, GVT safe point is no longer safe.")]
+    DistantBlocks(usize)
 }
