@@ -28,6 +28,7 @@ use mesocarp::{
     MesoError,
 };
 
+use crate::mt::consensus::ComputeLayout;
 use crate::{
     actors::{ConnectedActor, Context},
     env::Environment,
@@ -99,7 +100,7 @@ impl<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + C
 
         Ok(Self {
             consensus: Consensus::new(
-                mesocarp::sync::gvt::ComputeLayout::HubSpoke,
+                ComputeLayout::HubSpoke,
                 block_batch_size,
             )?,
             interplanetary_messenger: messenger,

@@ -12,6 +12,8 @@
 use mesocarp::MesoError;
 use thiserror::Error;
 
+use crate::mt::consensus::ComputeLayout;
+
 pub mod actors;
 pub mod env;
 #[allow(dead_code)]
@@ -74,4 +76,6 @@ pub enum AikaError {
     LoggingSetupFailure,
     #[error("Write to log failed.")]
     LoggingWriteError,
+    #[error("Attempted to register a compute producer that expected one layout, but another was found: {0}")]
+    ComputeLayoutExpectationMismatch(ComputeLayout)
 }

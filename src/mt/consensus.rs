@@ -7,7 +7,7 @@
 //!
 //! In this way, this is a *conservative* asynchronous GVT, and its accuracy will
 //! depend on the block and messaging dynamics.
-use std::{fs::File, io::Write, sync::Arc, time::Instant};
+use std::{fmt::Display, fs::File, io::Write, sync::Arc, time::Instant};
 
 use bytemuck::{Pod, Zeroable};
 
@@ -17,9 +17,28 @@ use mesocarp::{
         spsc::BufferWheel,
     },
     logging::journal::Journal,
-    sync::gvt::ComputeLayout,
     MesoError,
 };
+
+use crate::AikaError;
+
+/// Specifies the multi-threaded system arrangement for hybrid GVT schemes that can manage multiple topologies.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum ComputeLayout {
+    /// HubSpoke for systems with a GVT Master thread for handling all the computation and broadcasting updates.
+    HubSpoke,
+    /// Local GVT updates by thr producers themselves, producers send blocks to each other.
+    Decentralized,
+}
+
+impl Display for ComputeLayout {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ComputeLayout::HubSpoke => write!(f, "Centralized/Master Channel"),
+            ComputeLayout::Decentralized => write!(f, "Decentralized"),
+        }
+    }
+}
 
 /// A `Block` represents a package of data for a given time range containing the counters for
 /// reads and writes for all (anti) messages processed within that block, as well as a block number,
@@ -181,9 +200,9 @@ impl<const BANDWIDTH: usize> BlockProcessor<BANDWIDTH> {
     }
 
     /// Register a producer in the GVT Master / Hub n' Spoke layout. Will be rejected if the layout mode is not set correctly.
-    pub fn register_centralized_producer(&mut self) -> Result<BlockSpoke<BANDWIDTH>, MesoError> {
+    pub fn register_centralized_producer(&mut self) -> Result<BlockSpoke<BANDWIDTH>, AikaError> {
         if self.mode != ComputeLayout::HubSpoke {
-            return Err(MesoError::ComputeLayoutExpectationMismatch(self.mode));
+            return Err(AikaError::ComputeLayoutExpectationMismatch(self.mode));
         }
         let wheel = Arc::new(BufferWheel::new());
         let cloned = Arc::clone(&wheel);
@@ -208,9 +227,9 @@ impl<const BANDWIDTH: usize> BlockProcessor<BANDWIDTH> {
     pub fn register_decentralized_producer(
         &mut self,
         sub: Subscriber<BANDWIDTH, Block<BANDWIDTH>>,
-    ) -> Result<(), MesoError> {
+    ) -> Result<(), AikaError> {
         if self.mode != ComputeLayout::Decentralized {
-            return Err(MesoError::ComputeLayoutExpectationMismatch(self.mode));
+            return Err(AikaError::ComputeLayoutExpectationMismatch(self.mode));
         }
         self.block_receiver_decentralized
             .as_mut()
@@ -223,11 +242,11 @@ impl<const BANDWIDTH: usize> BlockProcessor<BANDWIDTH> {
     pub fn register_producer(
         &mut self,
         sub: Option<Subscriber<BANDWIDTH, Block<BANDWIDTH>>>,
-    ) -> Result<Option<BlockSpoke<BANDWIDTH>>, MesoError> {
+    ) -> Result<Option<BlockSpoke<BANDWIDTH>>, AikaError> {
         match self.mode {
             ComputeLayout::HubSpoke => Ok(Some(self.register_centralized_producer()?)),
             ComputeLayout::Decentralized => {
-                let sub = sub.ok_or(MesoError::ComputeLayoutExpectationMismatch(self.mode))?;
+                let sub = sub.ok_or(AikaError::ComputeLayoutExpectationMismatch(self.mode))?;
                 self.register_decentralized_producer(sub)?;
                 Ok(None)
             }
@@ -268,9 +287,9 @@ impl<const BANDWIDTH: usize> BlockProcessor<BANDWIDTH> {
     }
 
     /// Broadcast a new safe point in the GVT Master / Hub n' Spoke layout. Will be rejected if the wrong layout mode is set.
-    pub fn broadcast_new_safe_point(&mut self, gvt: u64) -> Result<(), MesoError> {
+    pub fn broadcast_new_safe_point(&mut self, gvt: u64) -> Result<(), AikaError> {
         if self.mode != ComputeLayout::HubSpoke {
-            return Err(MesoError::ComputeLayoutExpectationMismatch(self.mode));
+            return Err(AikaError::ComputeLayoutExpectationMismatch(self.mode));
         }
         self.safe_point_centralized.as_mut().unwrap().broadcast(gvt);
         Ok(())
@@ -313,7 +332,7 @@ impl<const BANDWIDTH: usize> Consensus<BANDWIDTH> {
     pub fn register_producer(
         &mut self,
         sub: Option<Subscriber<BANDWIDTH, Block<BANDWIDTH>>>,
-    ) -> Result<Option<BlockSpoke<BANDWIDTH>>, MesoError> {
+    ) -> Result<Option<BlockSpoke<BANDWIDTH>>, AikaError> {
         let out = self.processor.register_producer(sub)?;
         self.queue.push([None; BANDWIDTH]);
         self.next.push(None);
@@ -616,7 +635,7 @@ mod unit_tests {
     };
 
     use super::*;
-    use mesocarp::sync::gvt::ComputeLayout;
+    use super::ComputeLayout;
 
     const BANDWIDTH: usize = 16;
     const NUM_PRODUCERS: usize = 2;
