@@ -3,6 +3,7 @@
 //! parallel discrete event simulation across multiple threads.
 
 pub mod engines;
+pub mod consensus;
 pub(crate) mod logging;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]

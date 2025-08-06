@@ -14,13 +14,11 @@ pub(crate) fn init_log_file(
 
     writeln!(
         log_file,
-        "[{}] Log file initialized",
-        chrono::Utc::now().format("%d %H:%M:%S")
+        "[+] Log file initialized",
     )?;
     writeln!(
         log_file,
-        "[{}] Application started",
-        chrono::Utc::now().format("%d %H:%M:%S")
+        "[+] Application started",
     )?;
 
     println!("Log setup complete: {}", log_path.display());
