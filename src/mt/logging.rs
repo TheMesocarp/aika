@@ -12,14 +12,8 @@ pub(crate) fn init_log_file(
 
     let mut log_file = fs::File::create(&log_path)?;
 
-    writeln!(
-        log_file,
-        "[+] Log file initialized",
-    )?;
-    writeln!(
-        log_file,
-        "[+] Application started",
-    )?;
+    writeln!(log_file, "[+] Log file initialized",)?;
+    writeln!(log_file, "[+] Application started",)?;
 
     println!("Log setup complete: {}", log_path.display());
     Ok(log_file)

@@ -2,8 +2,8 @@
 //! Currently implements hybrid synchronization based on Clustered Time Warp architecture for
 //! parallel discrete event simulation across multiple threads.
 
-pub mod engines;
 pub mod consensus;
+pub mod engines;
 pub(crate) mod logging;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]

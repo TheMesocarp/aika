@@ -458,7 +458,11 @@ impl<const BANDWIDTH: usize> Consensus<BANDWIDTH> {
 
     /// Check if all of the next row is received and if its safe to commit a new block or not.
     /// Output the new global time if there is any.
-    pub fn cusp_debug(&mut self, file: &mut File, instant: Instant) -> Result<Option<u64>, MesoError> {
+    pub fn cusp_debug(
+        &mut self,
+        file: &mut File,
+        instant: Instant,
+    ) -> Result<Option<u64>, MesoError> {
         if !self.next.iter().all(|x| x.is_some()) {
             return Ok(None);
         }
@@ -634,8 +638,8 @@ mod unit_tests {
         time::Duration,
     };
 
-    use super::*;
     use super::ComputeLayout;
+    use super::*;
 
     const BANDWIDTH: usize = 16;
     const NUM_PRODUCERS: usize = 2;

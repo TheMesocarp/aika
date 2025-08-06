@@ -77,5 +77,5 @@ pub enum AikaError {
     #[error("Write to log failed.")]
     LoggingWriteError,
     #[error("Attempted to register a compute producer that expected one layout, but another was found: {0}")]
-    ComputeLayoutExpectationMismatch(ComputeLayout)
+    ComputeLayoutExpectationMismatch(ComputeLayout),
 }

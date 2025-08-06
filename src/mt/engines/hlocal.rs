@@ -32,7 +32,12 @@ use crate::mt::consensus::ComputeLayout;
 use crate::{
     actors::{ConnectedActor, Context},
     env::Environment,
-    mt::{engines::HTime, logging::setup_hlocal_logging, consensus::{Block, BlockSpoke, Consensus}, RunMode},
+    mt::{
+        consensus::{Block, BlockSpoke, Consensus},
+        engines::HTime,
+        logging::setup_hlocal_logging,
+        RunMode,
+    },
     objects::{AntiMsg, Event, LocalScheduler, Mail, Msg, SchedulingTask, Transfer},
     AikaError,
 };
@@ -83,7 +88,7 @@ pub struct Galaxy<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod +
     /// Log file for the last run.
     log: Option<File>,
     /// start Instant of the simulation, for debug tracking.
-    start: Instant
+    start: Instant,
 }
 
 impl<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + Clone>
@@ -99,10 +104,7 @@ impl<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + C
         let messenger = ThreadedMessenger::new(planet_ids)?;
 
         Ok(Self {
-            consensus: Consensus::new(
-                ComputeLayout::HubSpoke,
-                block_batch_size,
-            )?,
+            consensus: Consensus::new(ComputeLayout::HubSpoke, block_batch_size)?,
             interplanetary_messenger: messenger,
             time: HTime {
                 gvt: 0,
@@ -114,7 +116,7 @@ impl<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + C
             planet_count,
             close: (false, false),
             log: None,
-            start
+            start,
         })
     }
 
@@ -165,7 +167,8 @@ impl<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + C
                         "[{}] Found {:?} messages in-transit.",
                         self.start.elapsed().as_micros(),
                         msgs.len()
-                    ).map_err(|_| AikaError::LoggingWriteError)?;
+                    )
+                    .map_err(|_| AikaError::LoggingWriteError)?;
                 }
                 self.interplanetary_messenger.deliver(msgs)?;
                 Ok(())
@@ -264,7 +267,10 @@ impl<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + C
                     self.deliver_the_mail()?;
                 }
                 self.consensus.poll_n_slot()?;
-                while let Some(new_gvt) = self.consensus.cusp_debug(self.log.as_mut().unwrap(), self.start)? {
+                while let Some(new_gvt) = self
+                    .consensus
+                    .cusp_debug(self.log.as_mut().unwrap(), self.start)?
+                {
                     if new_gvt == self.time.gvt {
                         break;
                     }
@@ -339,7 +345,7 @@ pub struct Planet<
     rollback_active: bool,
     brakes: bool,
     log: Option<File>,
-    start: Instant
+    start: Instant,
 }
 
 unsafe impl<
@@ -389,7 +395,7 @@ impl<
             rollback_active: false,
             brakes: false,
             log: None,
-            start
+            start,
         })
     }
 
@@ -547,7 +553,7 @@ impl<
                         writeln!(
                             file,
                             "[{}] !!! PANIC !!! Mismatched delivery addresses. Was meant for cluster No. {to}, received by cluster No. {:?}. source actor {:?} on planet {:?}", 
-                            self.start.elapsed().as_micros(), 
+                            self.start.elapsed().as_micros(),
                             self.context.cluster_id,
                             msg.transfer.from(),
                             msg.from_world
@@ -864,8 +870,8 @@ impl<
                             self.start.elapsed().as_micros(),
                         )
                         .map_err(|_| AikaError::LoggingWriteError)?;
-                        break
-                    },
+                        break;
+                    }
                     _ => return Err(err),
                 },
             }
@@ -1029,33 +1035,37 @@ impl<
 
         let mut galaxy = self.galaxy.unwrap();
         let planets = self.planets;
-        let phandles =
-            match mode {
-                RunMode::Fast => planets
-                    .into_iter()
-                    .enumerate()
-                    .map(|(i, planet)| {
-                        let barrier_clone = Arc::clone(&barrier);
-                        std::thread::Builder::new().name(format!("Cluster {i}")).spawn(move || {
+        let phandles = match mode {
+            RunMode::Fast => planets
+                .into_iter()
+                .enumerate()
+                .map(|(i, planet)| {
+                    let barrier_clone = Arc::clone(&barrier);
+                    std::thread::Builder::new()
+                        .name(format!("Cluster {i}"))
+                        .spawn(move || {
                             barrier_clone.wait();
                             let planet = planet.run_debug()?;
                             Ok::<
                                 Planet<BLOCK_BW, MSG_BW, CLOCK_BW, CLOCK_SCALES, MessageType>,
                                 AikaError,
                             >(planet)
-                        }).map_err(|_| AikaError::ThreadPanic)
-                    })
-                    .collect::<Result<Vec<_>, _>>(),
-                RunMode::Debug => {
-                    let planets = planets.into_iter().zip(pfiles).collect::<Vec<_>>();
-                    planets
-                        .into_iter()
-                        .enumerate()
-                        .map(|(i, (mut planet, file))| {
-                            let barrier_clone = Arc::clone(&barrier);
-                            let start_time_clone = Arc::clone(&start_time);
-                            planet.set_log(file);
-                            std::thread::Builder::new().name(format!("Cluster {i}")).spawn(move || {
+                        })
+                        .map_err(|_| AikaError::ThreadPanic)
+                })
+                .collect::<Result<Vec<_>, _>>(),
+            RunMode::Debug => {
+                let planets = planets.into_iter().zip(pfiles).collect::<Vec<_>>();
+                planets
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, (mut planet, file))| {
+                        let barrier_clone = Arc::clone(&barrier);
+                        let start_time_clone = Arc::clone(&start_time);
+                        planet.set_log(file);
+                        std::thread::Builder::new()
+                            .name(format!("Cluster {i}"))
+                            .spawn(move || {
                                 if i == 0 {
                                     let mut start = start_time_clone.lock().unwrap();
                                     *start = Some(Instant::now());
@@ -1066,27 +1076,31 @@ impl<
                                     Planet<BLOCK_BW, MSG_BW, CLOCK_BW, CLOCK_SCALES, MessageType>,
                                     AikaError,
                                 >(planet)
-                            }).map_err( |_| AikaError::ThreadPanic)
-                        })
-                        .collect::<Result<Vec<_>, _>>()
-                }
-            }?;
+                            })
+                            .map_err(|_| AikaError::ThreadPanic)
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+            }
+        }?;
 
-        let ghandle = std::thread::Builder::new().name("Galaxy".to_owned()).spawn(move || {
-            let galaxy = match mode {
-                RunMode::Fast => {
-                    barrier.wait();
-                    galaxy.master()?
-                },
-                RunMode::Debug => {
-                    let gfile = gfile.unwrap();
-                    galaxy.set_log(gfile);
-                    barrier.wait();
-                    galaxy.master_debug()?
-                }
-            };
-            Ok::<Galaxy<BLOCK_BW, MSG_BW, MessageType>, AikaError>(galaxy)
-        }).map_err(|_| AikaError::ThreadPanic)?;
+        let ghandle = std::thread::Builder::new()
+            .name("Galaxy".to_owned())
+            .spawn(move || {
+                let galaxy = match mode {
+                    RunMode::Fast => {
+                        barrier.wait();
+                        galaxy.master()?
+                    }
+                    RunMode::Debug => {
+                        let gfile = gfile.unwrap();
+                        galaxy.set_log(gfile);
+                        barrier.wait();
+                        galaxy.master_debug()?
+                    }
+                };
+                Ok::<Galaxy<BLOCK_BW, MSG_BW, MessageType>, AikaError>(galaxy)
+            })
+            .map_err(|_| AikaError::ThreadPanic)?;
 
         let mut planets = Vec::new();
         for handle in phandles {
@@ -1123,6 +1137,89 @@ impl<
         }
         Ok(())
     }
+}
+
+#[macro_export]
+macro_rules! stager {
+    // Just the message type - use all defaults
+    ($msg_type:ty) => {
+        $crate::mt::engines::hlocal::Stager::<32, 128, 128, 2, $msg_type>::new()
+    };
+
+    // With BLOCK_BW only
+    ($msg_type:ty, BLOCK_BW = $block_bw:expr) => {
+        $crate::mt::engines::hlocal::Stager::<$block_bw, 128, 128, 2, $msg_type>::new()
+    };
+
+    // With MSG_BW only
+    ($msg_type:ty, MSG_BW = $msg_bw:expr) => {
+        $crate::mt::engines::hlocal::Stager::<32, $msg_bw, 128, 2, $msg_type>::new()
+    };
+
+    // With CLOCK_BW only
+    ($msg_type:ty, CLOCK_BW = $clock_bw:expr) => {
+        $crate::mt::engines::hlocal::Stager::<32, 128, $clock_bw, 2, $msg_type>::new()
+    };
+
+    // With CLOCK_SCALES only
+    ($msg_type:ty, CLOCK_SCALES = $clock_scales:expr) => {
+        $crate::mt::engines::hlocal::Stager::<32, 128, 128, $clock_scales, $msg_type>::new()
+    };
+
+    // With BLOCK_BW and MSG_BW
+    ($msg_type:ty, BLOCK_BW = $block_bw:expr, MSG_BW = $msg_bw:expr) => {
+        $crate::mt::engines::hlocal::Stager::<$block_bw, $msg_bw, 128, 2, $msg_type>::new()
+    };
+
+    // With BLOCK_BW and CLOCK_BW
+    ($msg_type:ty, BLOCK_BW = $block_bw:expr, CLOCK_BW = $clock_bw:expr) => {
+        $crate::mt::engines::hlocal::Stager::<$block_bw, 32, $clock_bw, 2, $msg_type>::new()
+    };
+
+    // With BLOCK_BW and CLOCK_SCALES
+    ($msg_type:ty, BLOCK_BW = $block_bw:expr, CLOCK_SCALES = $clock_scales:expr) => {
+        $crate::mt::engines::hlocal::Stager::<$block_bw, 128, 128, $clock_scales, $msg_type>::new()
+    };
+
+    // With MSG_BW and CLOCK_BW
+    ($msg_type:ty, MSG_BW = $msg_bw:expr, CLOCK_BW = $clock_bw:expr) => {
+        $crate::mt::engines::hlocal::Stager::<32, $msg_bw, $clock_bw, 2, $msg_type>::new()
+    };
+
+    // With MSG_BW and CLOCK_SCALES
+    ($msg_type:ty, MSG_BW = $msg_bw:expr, CLOCK_SCALES = $clock_scales:expr) => {
+        $crate::mt::engines::hlocal::Stager::<32, $msg_bw, 128, $clock_scales, $msg_type>::new()
+    };
+
+    // With CLOCK_BW and CLOCK_SCALES
+    ($msg_type:ty, CLOCK_BW = $clock_bw:expr, CLOCK_SCALES = $clock_scales:expr) => {
+        $crate::mt::engines::hlocal::Stager::<32, 128, $clock_bw, $clock_scales, $msg_type>::new()
+    };
+
+    // With BLOCK_BW, MSG_BW, and CLOCK_BW
+    ($msg_type:ty, BLOCK_BW = $block_bw:expr, MSG_BW = $msg_bw:expr, CLOCK_BW = $clock_bw:expr) => {
+        $crate::mt::engines::hlocal::Stager::<$block_bw, $msg_bw, $clock_bw, 2, $msg_type>::new()
+    };
+
+    // With BLOCK_BW, MSG_BW, and CLOCK_SCALES
+    ($msg_type:ty, BLOCK_BW = $block_bw:expr, MSG_BW = $msg_bw:expr, CLOCK_SCALES = $clock_scales:expr) => {
+        $crate::mt::engines::hlocal::Stager::<$block_bw, $msg_bw, 128, $clock_scales, $msg_type>::new()
+    };
+
+    // With BLOCK_BW, CLOCK_BW, and CLOCK_SCALES
+    ($msg_type:ty, BLOCK_BW = $block_bw:expr, CLOCK_BW = $clock_bw:expr, CLOCK_SCALES = $clock_scales:expr) => {
+        $crate::mt::engines::hlocal::Stager::<$block_bw, 128, $clock_bw, $clock_scales, $msg_type>::new()
+    };
+
+    // With MSG_BW, CLOCK_BW, and CLOCK_SCALES
+    ($msg_type:ty, MSG_BW = $msg_bw:expr, CLOCK_BW = $clock_bw:expr, CLOCK_SCALES = $clock_scales:expr) => {
+        $crate::mt::engines::hlocal::Stager::<32, $msg_bw, $clock_bw, $clock_scales, $msg_type>::new()
+    };
+
+    // With all parameters
+    ($msg_type:ty, BLOCK_BW = $block_bw:expr, MSG_BW = $msg_bw:expr, CLOCK_BW = $clock_bw:expr, CLOCK_SCALES = $clock_scales:expr) => {
+        $crate::mt::engines::hlocal::Stager::<$block_bw, $msg_bw, $clock_bw, $clock_scales, $msg_type>::new()
+    };
 }
 
 #[cfg(test)]
@@ -1277,6 +1374,15 @@ mod unit_tests {
             planets.schedule(time, i)?;
         }
         Ok(())
+    }
+
+    #[test]
+    fn test_stager_macro() {
+        stager!(TestMessage).unwrap();
+        stager!(TestMessage, BLOCK_BW = 48).unwrap();
+        stager!(TestMessage, BLOCK_BW = 48, MSG_BW = 12).unwrap();
+        stager!(TestMessage, MSG_BW = 12, CLOCK_BW = 128).unwrap();
+        stager!(TestMessage, CLOCK_BW = 128, CLOCK_SCALES = 1).unwrap();
     }
 
     #[test]

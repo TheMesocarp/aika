@@ -205,6 +205,34 @@ impl<const CLOCK_SLOTS: usize, const CLOCK_HEIGHT: usize, MessageType: Pod + Zer
     }
 }
 
+#[macro_export]
+macro_rules! world {
+    // Just the message type - use all defaults
+    ($msg_type:ty) => {
+        $crate::st::LonePlanet::<128, 2, $msg_type>::init
+    };
+
+    // With CLOCK_SLOTS only
+    ($msg_type:ty, CLOCK_SLOTS = $clock_slots:expr) => {
+        $crate::st::LonePlanet::<$clock_slots, 2, $msg_type>::init
+    };
+
+    // With CLOCK_HEIGHT only
+    ($msg_type:ty, CLOCK_HEIGHT = $clock_height:expr) => {
+        $crate::st::LonePlanet::<128, $clock_height, $msg_type>::init
+    };
+
+    // With both parameters
+    ($msg_type:ty, CLOCK_SLOTS = $clock_slots:expr, CLOCK_HEIGHT = $clock_height:expr) => {
+        $crate::st::LonePlanet::<$clock_slots, $clock_height, $msg_type>::init
+    };
+
+    // With both parameters (reverse order)
+    ($msg_type:ty, CLOCK_HEIGHT = $clock_height:expr, CLOCK_SLOTS = $clock_slots:expr) => {
+        $crate::st::LonePlanet::<$clock_slots, $clock_height, $msg_type>::init
+    };
+}
+
 #[cfg(test)]
 mod tests {
     use crate::actors::ConnectedActor;
@@ -401,6 +429,14 @@ mod tests {
 
             Ok(Event::new(time, time, id, SchedulingTask::Wait))
         }
+    }
+
+    #[test]
+    fn test_world_macro() {
+        world!(u8)(Stateless).unwrap();
+        world!(u8, CLOCK_SLOTS = 256)(Stateless).unwrap();
+        world!(u8, CLOCK_HEIGHT = 1)(Stateless).unwrap();
+        world!(u8, CLOCK_SLOTS = 64, CLOCK_HEIGHT = 4)(Stateless).unwrap();
     }
 
     #[test]
