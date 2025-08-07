@@ -249,3 +249,129 @@ unsafe impl<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroa
     for Galaxy<BLOCK_BW, MSG_BW, MessageType>
 {
 }
+
+#[cfg(test)]
+mod unit_tests {
+    use super::*;
+    use crate::actors::{Actor, ConnectedActor, Context};
+    use crate::env::Stateless;
+    use crate::objects::{Event, Msg, SchedulingTask};
+    
+    #[derive(Debug, Copy, Clone)]
+    #[repr(C)]
+    struct TestMsg;
+    unsafe impl Pod for TestMsg {}
+    unsafe impl Zeroable for TestMsg {}
+    
+    #[derive(Debug)]
+    #[allow(dead_code)]
+    struct DummyActor;
+    impl Actor<TestMsg> for DummyActor {
+        fn step(&mut self, _: &mut Context<TestMsg>, id: usize) -> Result<Event, AikaError> {
+            Ok(Event::new(0, 0, id, SchedulingTask::Wait))
+        }
+    }
+    impl ConnectedActor<TestMsg> for DummyActor {
+        fn read_message(&mut self, _: &mut Context<TestMsg>, _: Msg<TestMsg>, _: usize) -> Result<(), AikaError> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn test_galaxy_creation() {
+        let galaxy: Galaxy<8, 16, TestMsg> = Galaxy::new(4, 128).unwrap();
+        assert_eq!(galaxy.planet_count, 4);
+        assert_eq!(galaxy.registered, 0);
+        assert_eq!(galaxy.time.terminal, u64::MAX);
+        assert_eq!(galaxy.time.gvt, 0);
+        assert_eq!(galaxy.max_block_dur, 64);
+    }
+
+    #[test]
+    fn test_galaxy_configuration() {
+        let mut galaxy: Galaxy<8, 16, TestMsg> = Galaxy::new(2, 64).unwrap();
+        
+        galaxy.set_time_scale(1000);
+        assert_eq!(galaxy.time.terminal, 1000);
+        
+        galaxy.checkpoints(50);
+        assert_eq!(galaxy.time.cp_hz, 50);
+        
+        galaxy.with_block_duration(25);
+        assert_eq!(galaxy.max_block_dur, 25);
+    }
+
+    #[test]
+    fn test_planet_spawning() {
+        let mut galaxy: Galaxy<8, 16, TestMsg> = Galaxy::new(3, 64).unwrap();
+        
+        let planet1 = galaxy.spawn_planet::<32, 2>(Stateless).unwrap();
+        assert_eq!(galaxy.registered, 1);
+        assert_eq!(planet1.context.cluster_id, 0);
+        
+        let planet2 = galaxy.spawn_planet::<32, 2>(Stateless).unwrap();
+        assert_eq!(galaxy.registered, 2);
+        assert_eq!(planet2.context.cluster_id, 1);
+        
+        let planet3 = galaxy.spawn_planet::<32, 2>(Stateless).unwrap();
+        assert_eq!(galaxy.registered, 3);
+        assert_eq!(planet3.context.cluster_id, 2);
+        
+        let result = galaxy.spawn_planet::<32, 2>(Stateless);
+        assert!(matches!(result, Err(AikaError::MaximumClustersAllowed)));
+    }
+
+    #[test]
+    fn test_galaxy_terminal_time_requirement() {
+        let galaxy: Galaxy<8, 16, TestMsg> = Galaxy::new(2, 64).unwrap();
+        let result = galaxy.master();
+        assert!(matches!(result, Err(AikaError::MustSetTerminalTime)));
+    }
+
+    #[test]
+    fn test_message_delivery() {
+        let mut galaxy: Galaxy<8, 16, TestMsg> = Galaxy::new(2, 64).unwrap();
+        galaxy.set_time_scale(100);
+        
+        let mut planet1 = galaxy.spawn_planet::<32, 2>(Stateless).unwrap();
+        let mut planet2 = galaxy.spawn_planet::<32, 2>(Stateless).unwrap();
+        
+        let msg = Msg::new(TestMsg, 0, 10, 0, Some(0));
+        planet1.context.send_mail(msg, 1).unwrap();
+        
+        let sends = std::mem::take(&mut planet1.context.outbox);
+        for mail in sends {
+            planet1.message_user.send(mail).unwrap();
+        }
+        
+        galaxy.deliver_the_mail().unwrap();
+        
+        let received = planet2.message_user.poll();
+        assert!(received.is_some());
+    }
+
+    #[test] 
+    fn test_check_all_terminal() {
+        let mut galaxy: Galaxy<8, 16, TestMsg> = Galaxy::new(2, 64).unwrap();
+        galaxy.set_time_scale(100);
+        galaxy.with_block_duration(50);
+        
+        let mut planet1 = galaxy.spawn_planet::<32, 2>(Stateless).unwrap();
+        let mut planet2 = galaxy.spawn_planet::<32, 2>(Stateless).unwrap();
+        
+        assert!(!galaxy.check_all_terminal().unwrap());
+        
+        planet1.blocks.block.start = 100;
+        planet1.blocks.block.dur = 0;
+        planet2.blocks.block.start = 100;
+        planet2.blocks.block.dur = 0;
+        
+        planet1.blocks.submitter.write(planet1.blocks.block).unwrap();
+        planet2.blocks.submitter.write(planet2.blocks.block).unwrap();
+        
+        galaxy.consensus.poll_n_slot().unwrap();
+        
+        galaxy.time.gvt = 100;
+        assert!(galaxy.check_all_terminal().unwrap());
+    }
+}

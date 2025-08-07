@@ -309,6 +309,11 @@ macro_rules! stager {
         $crate::mt::engines::hlocal::Stager::<$block_bw, $msg_bw, 128, 2, $msg_type>::new()
     };
 
+    // With MSG_BW and BLOCK_BW
+    ($msg_type:ty, MSG_BW = $msg_bw:expr, BLOCK_BW = $block_bw:expr) => {
+        $crate::mt::engines::hlocal::Stager::<$block_bw, $msg_bw, 128, 2, $msg_type>::new()
+    };
+
     // With BLOCK_BW and CLOCK_BW
     ($msg_type:ty, BLOCK_BW = $block_bw:expr, CLOCK_BW = $clock_bw:expr) => {
         $crate::mt::engines::hlocal::Stager::<$block_bw, 32, $clock_bw, 2, $msg_type>::new()
@@ -822,7 +827,7 @@ mod messaging_tests {
 
     #[test]
     fn test_intercluster_messaging_heavy() {
-        let mut stager = stager!(Message, MSG_BW = { 16 * 1024 }).unwrap();
+        let mut stager = stager!(Message, MSG_BW = { 16 * 1024 }, BLOCK_BW = 128 ).unwrap();
         let config = Config::new(4, 32, 20, 2048, 10);
         stager.config(config).unwrap();
 

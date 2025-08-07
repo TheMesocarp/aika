@@ -616,10 +616,345 @@ mod tests {
         world.spawn_actor(sender);
         world.schedule(1, 0).unwrap();
 
-        // This should run without panicking
         assert_eq!(
             world.run().err().unwrap(),
             AikaError::MessagedNonExistent(1, 99)
         );
+    }
+}
+
+#[cfg(test)]
+mod lets_try_to_break_it {
+    use crate::env::Stateless;
+
+    use super::*;
+    
+    #[derive(Debug)]
+    struct StressActor {
+        id: usize,
+        send_count: usize,
+        max_sends: usize,
+        targets: Vec<usize>,
+    }
+    
+    impl StressActor {
+        fn new(id: usize, max_sends: usize, targets: Vec<usize>) -> Self {
+            Self { id, send_count: 0, max_sends, targets }
+        }
+    }
+    
+    impl Actor<u8> for StressActor {
+        fn step(&mut self, ctx: &mut Context<u8>, actor_id: usize) -> Result<Event, AikaError> {
+            if self.send_count < self.max_sends {
+                // Send to all targets
+                for &target in &self.targets {
+                    let msg = Msg::new(
+                        (self.send_count % 256) as u8,
+                        ctx.time,
+                        ctx.time + (self.id % 10) as u64 + 1,
+                        actor_id,
+                        Some(target)
+                    );
+                    ctx.send_mail(msg, 0)?;
+                }
+                self.send_count += 1;
+                Ok(Event::new(ctx.time, ctx.time, actor_id, SchedulingTask::Timeout(1)))
+            } else {
+                Ok(Event::new(ctx.time, ctx.time, actor_id, SchedulingTask::Wait))
+            }
+        }
+    }
+    
+    impl ConnectedActor<u8> for StressActor {
+        fn read_message(&mut self, ctx: &mut Context<u8>, _: Msg<u8>, id: usize) -> Result<(), AikaError> {
+            // Trigger more activity on message receipt
+            if self.send_count < self.max_sends / 2 {
+                self.send_count += 1;
+                let _ = self.step(ctx, id)?;
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn test_message_storm() {
+        let mut world = LonePlanet::<256, 3, u8>::init(Stateless).unwrap();
+        world.set_terminal_time(1000);
+        
+        // Create fully connected network
+        let num_actors = 20;
+        for i in 0..num_actors {
+            let mut targets = Vec::new();
+            for j in 0..num_actors {
+                if i != j {
+                    targets.push(j);
+                }
+            }
+            world.spawn_receiver_actor(StressActor::new(i, 100, targets));
+        }
+        
+        // Start all actors
+        for i in 0..num_actors {
+            world.schedule(1, i).unwrap();
+        }
+        
+        world.run().unwrap();
+    }
+
+    #[test]
+    fn test_cascading_triggers() {
+        #[derive(Debug)]
+        struct CascadeActor {
+            triggers_remaining: usize,
+        }
+        
+        impl Actor<u8> for CascadeActor {
+            fn step(&mut self, ctx: &mut Context<u8>, id: usize) -> Result<Event, AikaError> {
+                if self.triggers_remaining > 0 {
+                    self.triggers_remaining -= 1;
+                    let next = (id + 1) % 10;
+                    Ok(Event::new(
+                        ctx.time,
+                        ctx.time,
+                        id,
+                        SchedulingTask::Trigger { time: ctx.time + 1, idx: next }
+                    ))
+                } else {
+                    Ok(Event::new(ctx.time, ctx.time, id, SchedulingTask::Wait))
+                }
+            }
+        }
+        
+        impl ConnectedActor<u8> for CascadeActor {
+            fn read_message(&mut self, _: &mut Context<u8>, _: Msg<u8>, _: usize) -> Result<(), AikaError> {
+                Ok(())
+            }
+        }
+        
+        let mut world = LonePlanet::<128, 2, u8>::init(Stateless).unwrap();
+        world.set_terminal_time(500);
+        
+        for _ in 0..10 {
+            world.spawn_receiver_actor(CascadeActor { triggers_remaining: 50 });
+        }
+        
+        world.schedule(1, 0).unwrap();
+        world.run().unwrap();
+    }
+
+    #[test]
+    fn test_time_boundary_stress() {
+        #[derive(Debug)]
+        struct BoundaryActor;
+        
+        impl Actor<u8> for BoundaryActor {
+            fn step(&mut self, ctx: &mut Context<u8>, id: usize) -> Result<Event, AikaError> {
+                // Schedule events at exact time boundaries
+                let times = [1, 10, 100, 127, 128, 255, 256, 999, 1000];
+                for &t in &times {
+                    if t > ctx.time && t <= ctx.terminal {
+                        return Ok(Event::new(ctx.time, ctx.time, id, SchedulingTask::Schedule(t)));
+                    }
+                }
+                Ok(Event::new(ctx.time, ctx.time, id, SchedulingTask::Wait))
+            }
+        }
+        
+        impl ConnectedActor<u8> for BoundaryActor {
+            fn read_message(&mut self, _: &mut Context<u8>, _: Msg<u8>, _: usize) -> Result<(), AikaError> {
+                Ok(())
+            }
+        }
+        
+        let mut world = LonePlanet::<128, 2, u8>::init(Stateless).unwrap();
+        world.set_terminal_time(1000);
+        
+        for _ in 0..50 {
+            world.spawn_receiver_actor(BoundaryActor);
+        }
+        
+        for i in 0..50 {
+            world.schedule(0, i).unwrap();
+        }
+        
+        world.run().unwrap();
+    }
+
+    #[test]
+    fn test_broadcast_flood() {
+        #[derive(Debug)]
+        struct BroadcastActor {
+            broadcast_count: usize,
+        }
+        
+        impl Actor<u8> for BroadcastActor {
+            fn step(&mut self, ctx: &mut Context<u8>, id: usize) -> Result<Event, AikaError> {
+                if self.broadcast_count < 100 {
+                    let msg = Msg::new(
+                        self.broadcast_count as u8,
+                        ctx.time,
+                        ctx.time + 1,
+                        id,
+                        None
+                    );
+                    ctx.send_mail(msg, 0)?;
+                    self.broadcast_count += 1;
+                    Ok(Event::new(ctx.time, ctx.time, id, SchedulingTask::Timeout(2)))
+                } else {
+                    Ok(Event::new(ctx.time, ctx.time, id, SchedulingTask::Wait))
+                }
+            }
+        }
+        
+        impl ConnectedActor<u8> for BroadcastActor {
+            fn read_message(&mut self, _: &mut Context<u8>, _: Msg<u8>, _: usize) -> Result<(), AikaError> {
+                Ok(())
+            }
+        }
+        
+        let mut world = LonePlanet::<256, 2, u8>::init(Stateless).unwrap();
+        world.set_terminal_time(500);
+        
+        for _ in 0..30 {
+            world.spawn_receiver_actor(BroadcastActor { broadcast_count: 0 });
+        }
+        
+        for i in 0..30 {
+            world.schedule(i as u64, i).unwrap();
+        }
+        
+        world.run().unwrap();
+    }
+
+    #[test]
+    fn test_scheduler_overflow() {
+        #[derive(Debug)]
+        struct OverflowActor;
+        
+        impl Actor<u8> for OverflowActor {
+            fn step(&mut self, ctx: &mut Context<u8>, id: usize) -> Result<Event, AikaError> {
+                let far_future = ctx.time + 10000;
+                if far_future <= ctx.terminal {
+                    Ok(Event::new(ctx.time, ctx.time, id, SchedulingTask::Schedule(far_future)))
+                } else {
+                    Ok(Event::new(ctx.time, ctx.time, id, SchedulingTask::Timeout(1)))
+                }
+            }
+        }
+        
+        impl ConnectedActor<u8> for OverflowActor {
+            fn read_message(&mut self, _: &mut Context<u8>, _: Msg<u8>, _: usize) -> Result<(), AikaError> {
+                Ok(())
+            }
+        }
+        
+        let mut world = LonePlanet::<128, 2, u8>::init(Stateless).unwrap();
+        world.set_terminal_time(50000);
+        
+        for _ in 0..100 {
+            world.spawn_receiver_actor(OverflowActor);
+        }
+        
+        for i in 0..100 {
+            world.schedule(1, i).unwrap();
+        }
+        
+        world.run().unwrap();
+    }
+
+    #[test]
+    fn test_rapid_self_messaging() {
+        #[derive(Debug)]
+        struct SelfMessager {
+            remaining: usize,
+        }
+        
+        impl Actor<u8> for SelfMessager {
+            fn step(&mut self, ctx: &mut Context<u8>, id: usize) -> Result<Event, AikaError> {
+                if self.remaining > 0 {
+                    for delay in 1..=5 {
+                        let msg = Msg::new(
+                            delay as u8,
+                            ctx.time,
+                            ctx.time + delay,
+                            id,
+                            Some(id) // Self
+                        );
+                        ctx.send_mail(msg, 0)?;
+                    }
+                    self.remaining -= 1;
+                }
+                Ok(Event::new(ctx.time, ctx.time, id, SchedulingTask::Timeout(1)))
+            }
+        }
+        
+        impl ConnectedActor<u8> for SelfMessager {
+            fn read_message(&mut self, ctx: &mut Context<u8>, _: Msg<u8>, id: usize) -> Result<(), AikaError> {
+                // Trigger more self-messages
+                if self.remaining > 0 {
+                    let _ = self.step(ctx, id)?;
+                }
+                Ok(())
+            }
+        }
+        
+        let mut world = LonePlanet::<256, 3, u8>::init(Stateless).unwrap();
+        world.set_terminal_time(200);
+        
+        for _ in 0..10 {
+            world.spawn_receiver_actor(SelfMessager { remaining: 50 });
+        }
+        
+        for i in 0..10 {
+            world.schedule(1, i).unwrap();
+        }
+        
+        world.run().unwrap();
+    }
+
+    #[test]
+    fn test_zero_delay_messages() {
+        #[derive(Debug)]
+        struct ZeroDelayActor {
+            pings: usize,
+        }
+        
+        impl Actor<u8> for ZeroDelayActor {
+            fn step(&mut self, ctx: &mut Context<u8>, id: usize) -> Result<Event, AikaError> {
+                if self.pings < 1000 {
+                    // Send zero-delay message
+                    let target = (id + 1) % 10;
+                    let msg = Msg::new(
+                        self.pings as u8,
+                        ctx.time,
+                        ctx.time, // Zero delay!
+                        id,
+                        Some(target)
+                    );
+                    ctx.send_mail(msg, 0)?;
+                    self.pings += 1;
+                    Ok(Event::new(ctx.time, ctx.time, id, SchedulingTask::Timeout(1)))
+                } else {
+                    Ok(Event::new(ctx.time, ctx.time, id, SchedulingTask::Wait))
+                }
+            }
+        }
+        
+        impl ConnectedActor<u8> for ZeroDelayActor {
+            fn read_message(&mut self, ctx: &mut Context<u8>, _: Msg<u8>, id: usize) -> Result<(), AikaError> {
+                let _ = self.step(ctx, id)?;
+                Ok(())
+            }
+        }
+        
+        let mut world = LonePlanet::<512, 2, u8>::init(Stateless).unwrap();
+        world.set_terminal_time(100);
+        
+        for _ in 0..10 {
+            world.spawn_receiver_actor(ZeroDelayActor { pings: 0 });
+        }
+        
+        world.schedule(1, 0).unwrap();
+        world.run().unwrap();
     }
 }

@@ -23,8 +23,8 @@ pub struct Planet<
     pub context: Context<MessageType>,
     event_system: LocalScheduler<CLOCK_BW, CLOCK_SCALES, Event>,
     local_messages: LocalScheduler<CLOCK_BW, CLOCK_SCALES, Msg<MessageType>>,
-    message_user: ThreadedMessengerUser<MSG_BW, Mail<MessageType>>,
-    blocks: BlockSpoke<BLOCK_BW>,
+    pub(crate) message_user: ThreadedMessengerUser<MSG_BW, Mail<MessageType>>,
+    pub(crate) blocks: BlockSpoke<BLOCK_BW>,
     /// Current time information of the simulation. these should always be the same across simulation clusters in the same `Galaxy`.
     pub time: HTime,
     // checkpoint management
@@ -113,13 +113,15 @@ impl<
         } else if time > self.time.terminal {
             return Err(AikaError::PastTerminal);
         }
+        if actor >= self.actors.len() {
+            return Err(AikaError::InvalidActorId(self.actors.len(), self.context.cluster_id, actor))
+        }
         let now = self.now();
         self.commit(Event::new(now, time, actor, SchedulingTask::Wait));
         Ok(())
     }
 
-    /// Get the current time of the simulation.
-    #[inline(always)]
+    /// Get the current time of the simulation
     pub fn now(&self) -> u64 {
         max(self.event_system.clock.time, self.context.time)
     }
@@ -683,5 +685,198 @@ impl<
         )
         .map_err(|_| AikaError::LoggingWriteError)?;
         Ok(self)
+    }
+}
+
+#[cfg(test)]
+mod planet_tests {
+    use super::*;
+    use crate::actors::{Actor, ConnectedActor, Context};
+    use crate::env::Stateless;
+    use crate::mt::engines::hlocal::Galaxy;
+    use crate::objects::{Event, Msg, SchedulingTask};
+    
+    #[derive(Debug, Copy, Clone)]
+    #[repr(C)]
+    struct TestMsg;
+    unsafe impl Pod for TestMsg {}
+    unsafe impl Zeroable for TestMsg {}
+    
+    #[derive(Debug)]
+    struct TestActor {
+        counter: usize,
+    }
+    
+    impl Actor<TestMsg> for TestActor {
+        fn step(&mut self, ctx: &mut Context<TestMsg>, id: usize) -> Result<Event, AikaError> {
+            self.counter += 1;
+            Ok(Event::new(ctx.time, ctx.time + 1, id, SchedulingTask::Timeout(1)))
+        }
+    }
+    
+    impl ConnectedActor<TestMsg> for TestActor {
+        fn read_message(&mut self, _: &mut Context<TestMsg>, _: Msg<TestMsg>, _: usize) -> Result<(), AikaError> {
+            self.counter += 1;
+            Ok(())
+        }
+    }
+
+    fn create_test_planet() -> Planet<8, 16, 32, 2, TestMsg> {
+        let mut galaxy: Galaxy<8, 16, TestMsg> = Galaxy::new(1, 64).unwrap();
+        galaxy.set_time_scale(1000);
+        galaxy.with_block_duration(10);
+        galaxy.spawn_planet(Stateless).unwrap()
+    }
+
+    #[test]
+    fn test_planet_actor_spawning() {
+        let mut planet = create_test_planet();
+        
+        assert_eq!(planet.actors.len(), 0);
+        
+        planet.spawn_actor(TestActor { counter: 0 });
+        assert_eq!(planet.actors.len(), 1);
+        
+        planet.spawn_actor(TestActor { counter: 0 });
+        assert_eq!(planet.actors.len(), 2);
+    }
+
+    #[test]
+    fn test_planet_scheduling() {
+        let mut planet = create_test_planet();
+        planet.spawn_actor(TestActor { counter: 0 });
+
+        assert!(planet.schedule(10, 0).is_ok());
+
+        planet.context.time = 20;
+        planet.local_messages.clock.time = 20;
+        planet.event_system.clock.time = 20;
+
+        assert!(matches!(planet.schedule(5, 0), Err(AikaError::TimeTravel)));
+        assert!(matches!(planet.schedule(2000, 0), Err(AikaError::PastTerminal)));
+        assert!(matches!(planet.schedule(50, 5), Err(AikaError::InvalidActorId(_, _, _))));
+    }
+
+    #[test]
+    fn test_planet_rollback() {
+        let mut planet = create_test_planet();
+        planet.spawn_actor(TestActor { counter: 0 });
+        
+        planet.context.time = 50;
+        planet.event_system.clock.time = 50;
+        
+        for i in 0..10 {
+            let msg = Msg::new(TestMsg, i * 5, (i + 1) * 5 + 45, 0, Some(0));
+            planet.commit_mail(msg);
+        }
+        
+        assert!(planet.rollback(25).is_ok());
+        assert_eq!(planet.context.time, 25);
+        assert_eq!(planet.now(), 25);
+        
+        assert!(matches!(planet.rollback(30), Err(AikaError::TimeTravel)));
+    }
+
+    #[test]
+    fn test_planet_step() {
+        let mut planet = create_test_planet();
+        planet.spawn_actor(TestActor { counter: 0 });
+        planet.schedule(1, 0).unwrap();
+
+        assert!(planet.step().is_ok());
+        assert_eq!(planet.context.time, 1);
+
+        let msg = Msg::new(TestMsg, 0, 2, 0, Some(0));
+        planet.commit_mail(msg);
+        assert!(planet.step().is_ok());
+    }
+
+    #[test]
+    fn test_planet_interplanetary_message_polling() {
+        let mut planet = create_test_planet();
+        planet.spawn_actor(TestActor { counter: 0 });
+        
+        let msg = Mail::write_letter(
+            Transfer::Msg(Msg::new(TestMsg, 5, 10, 0, Some(0))),
+            0,
+            Some(0)
+        );
+        planet.message_user.send(msg).unwrap();
+        
+        assert!(planet.poll_interplanetary_messenger().is_ok());
+    }
+
+    #[test]
+    fn test_planet_block_submission() {
+        let mut planet = create_test_planet();
+        
+        assert_eq!(planet.blocks.block.start, 0);
+        assert_eq!(planet.blocks.block.dur, 10);
+        
+        for _ in 0..10 {
+            planet.increment().unwrap();
+        }
+        
+        assert_eq!(planet.blocks.block.start, 10);
+        assert_eq!(planet.blocks.block.block_nmb, 1);
+    }
+
+    #[test]
+    fn test_planet_checkpoint_handling() {
+        let mut galaxy: Galaxy<8, 16, TestMsg> = Galaxy::new(1, 64).unwrap();
+        galaxy.set_time_scale(100);
+        galaxy.with_block_duration(10);
+        galaxy.checkpoints(2);
+        
+        let mut planet = galaxy.spawn_planet::<32, 2>(Stateless).unwrap();
+        planet.spawn_actor(TestActor { counter: 0 });
+        
+        for _ in 0..20 {
+            planet.increment().unwrap();
+        }
+        
+        assert!(planet.blocks.block.catchup_block);
+    }
+
+    #[test]
+    fn test_planet_gvt_validation() {
+        let mut planet = create_test_planet();
+
+        planet.time.gvt = 10;
+        planet.context.time = 20;
+        assert!(planet.check_time_validity().is_ok());
+
+        planet.time.gvt = 30;
+        planet.context.time = 20;
+        assert!(matches!(
+            planet.check_time_validity(), 
+            Err(AikaError::GVTPastLocalClock(_, _, _))
+        ));
+
+        planet.time.gvt = 1001;
+        planet.context.time = 1002;
+        assert!(matches!(
+            planet.check_time_validity(),
+            Err(AikaError::PastTerminal)
+        ));
+    }
+
+    #[test]
+    fn test_planet_message_routing() {
+        let mut planet = create_test_planet();
+        planet.spawn_actor(TestActor { counter: 0 });
+        planet.spawn_actor(TestActor { counter: 0 });
+
+        let local_msg = Msg::new(TestMsg, 5, 10, 0, Some(1));
+        planet.context.send_mail(local_msg, 0).unwrap();
+
+        assert_eq!(planet.context.outbox.len(), 1);
+
+        planet.step().unwrap();
+
+        let remote_msg = Msg::new(TestMsg, 5, 10, 0, Some(0));
+        planet.context.send_mail(remote_msg, 1).unwrap();
+
+        assert_eq!(planet.context.outbox.len(), 1);
     }
 }
