@@ -46,7 +46,7 @@ pub enum AikaError {
     #[error("Thread panicked!")]
     ThreadPanic,
     #[error("Mail delivered to the wrong address, fire the mail man.")]
-    MismatchedDeliveryAddress,
+    MismatchedDeliveryAddress(usize, usize),
     #[error("Error found when utilizing `mesocarp`: {0}.")]
     MesoError(#[from] MesoError),
     #[error("Local clocks on a `Planet` were out of sync.")]

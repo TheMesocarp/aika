@@ -1,9 +1,9 @@
-use std::{cmp::{min, Reverse}, io::Write, collections::{BTreeSet, BinaryHeap}, fs::File, thread::sleep, time::{Duration, Instant}};
+use std::{cmp::{max, min, Reverse}, collections::{BTreeSet, BinaryHeap}, fs::File, io::Write, time::Instant};
 
 use bytemuck::{Pod, Zeroable};
 use mesocarp::{comms::mailbox::{Message, ThreadedMessengerUser}, scheduling::Scheduleable};
 
-use crate::{actors::{ConnectedActor, Context}, env::Environment, mt::{consensus::BlockSpoke, engines::HTime}, objects::{AntiMsg, Event, LocalScheduler, Mail, Msg, SchedulingTask, Transfer}, AikaError};
+use crate::{actors::{ConnectedActor, Context}, env::Environment, mt::{consensus::{Block, BlockSpoke}, engines::HTime}, objects::{AntiMsg, Event, LocalScheduler, Mail, Msg, SchedulingTask, Transfer}, AikaError};
 
 
 #[derive(Debug)]
@@ -27,8 +27,11 @@ pub struct Planet<
     blocks: BlockSpoke<BLOCK_BW>,
     /// Current time information of the simulation. these should always be the same across simulation clusters in the same `Galaxy`.
     pub time: HTime,
-    rollback_active: bool,
+    // checkpoint management
+    last_cp_block_nmb: (usize, usize),
+    cp_counter: u64,
     brakes: bool,
+    // debug support
     log: Option<File>,
     start: Instant,
 }
@@ -77,7 +80,8 @@ impl<
             message_user,
             blocks,
             time,
-            rollback_active: false,
+            last_cp_block_nmb: (id, 0),
+            cp_counter: 1,
             brakes: false,
             log: None,
             start,
@@ -94,7 +98,17 @@ impl<
 
     /// Schedule an event for an actor at a given time.
     pub fn schedule(&mut self, time: u64, actor: usize) -> Result<(), AikaError> {
-        if time < self.now() {
+        let now = self.now();
+        if let Some(file) = &mut self.log {
+            writeln!(
+                file,
+                "[{}] Scheduling a step at time {time}, current now() time {now}, scheduler times: {:?}",
+                self.start.elapsed().as_micros(),
+                self.local_messages.clock.time
+            )
+            .map_err(|_| AikaError::LoggingWriteError)?;
+        }
+        if time < self.event_system.clock.time {
             return Err(AikaError::TimeTravel);
         } else if time > self.time.terminal {
             return Err(AikaError::PastTerminal);
@@ -107,7 +121,7 @@ impl<
     /// Get the current time of the simulation.
     #[inline(always)]
     pub fn now(&self) -> u64 {
-        self.event_system.clock.time
+        max(self.event_system.clock.time, self.context.time)
     }
 
     /// Spawn a new `ConnectedActor` on this cluster. Specify the arena size for its state allocator.
@@ -126,9 +140,6 @@ impl<
         let now = self.now();
         if time > now {
             return Err(AikaError::TimeTravel);
-        }
-        if time < self.blocks.block.start {
-            self.rollback_active = true;
         }
         // rollback world and actor states
         self.context.env.rollback(time);
@@ -243,7 +254,7 @@ impl<
                             msg.from_world
                         ).map_err(|_| AikaError::LoggingWriteError)?;
                     }
-                    return Err(AikaError::MismatchedDeliveryAddress);
+                    return Err(AikaError::MismatchedDeliveryAddress(self.context.cluster_id, to));
                 }
             }
             let time = msg.transfer.time();
@@ -266,11 +277,11 @@ impl<
 
             match msg.open_letter() {
                 Transfer::Msg(msg) => {
-                    self.blocks.block.recv(msg.commit_time())?;
+                    self.blocks.block.recv(msg.commit_time(), self.time.terminal)?;
                     self.commit_mail(msg)
                 }
                 Transfer::AntiMsg(anti_msg) => {
-                    self.blocks.block.recv_anti(anti_msg.commit_time())?;
+                    self.blocks.block.recv_anti(anti_msg.commit_time(), self.time.terminal)?;
                     self.annihilate(anti_msg)
                 }
             }
@@ -280,15 +291,28 @@ impl<
 
     // Increment the local clock one step and submit the current block if there is a turnover.
     fn increment(&mut self) -> Result<(), AikaError> {
-        self.event_system.increment();
-        self.local_messages.increment();
+        if !self.blocks.block.catchup_block || (self.blocks.block.catchup_block && (self.now() < self.blocks.block.start)) {
+            self.event_system.increment();
+            self.local_messages.increment();
+        }
         // check-process block now
         self.context.time += 1;
         let end = self.blocks.block.start + self.blocks.block.dur;
+        if let Some(file) = &mut self.log {
+            writeln!(
+                file,
+                "[{}] Local virtual time {:?}: incremented. end time of current block {end}",
+                self.start.elapsed().as_micros(),
+                self.context.time,
+            ).map_err(|_| AikaError::LoggingWriteError)?;
+        }
         if self.context.time == end {
+            // log current block data to initialize next block
             let dur = self.blocks.block.max_dur;
+            let catch_up = self.blocks.block.catchup_block;
             let mut new_id = self.blocks.block.block_id();
             new_id.1 += 1;
+
             if let Some(file) = &mut self.log {
                 writeln!(
                     file,
@@ -305,35 +329,61 @@ impl<
                 )
                 .map_err(|_| AikaError::LoggingWriteError)?;
             }
+            // submit the current block than initialize the new one.
             self.blocks
                 .submitter
                 .write(std::mem::take(&mut self.blocks.block))?;
             self.blocks.block.block_nmb = new_id.1;
             self.blocks.block.producer_id = new_id.0;
             self.blocks.block.start = self.context.time;
-            let diff = self.time.terminal - self.now();
-            self.blocks.block.dur = min(dur, diff);
+            if self.now() < self.time.terminal {
+                let diff = self.time.terminal - self.now();
+                self.blocks.block.dur = min(dur, diff);
+            } else {
+                self.blocks.block.dur = dur;
+            }
             self.blocks.block.max_dur = dur;
+            self.blocks.block.catchup_block = catch_up;
+
+            if let Some(file) = &mut self.log {
+                writeln!(
+                    file,
+                    "[{}] next checkpoint: {:?}",
+                    self.start.elapsed().as_micros(),
+                    self.time.cp_hz * self.blocks.block.max_dur * self.cp_counter
+                )
+                .map_err(|_| AikaError::LoggingWriteError)?;
+            }
+
+            if (self.time.cp_hz != u64::MAX
+                && self.context.time
+                    == (self.time.cp_hz
+                        * self.blocks.block.max_dur
+                        * self.cp_counter)) || self.now() >= self.time.terminal
+            { 
+                if let Some(file) = &mut self.log {
+                    writeln!(
+                        file,
+                        "[{}] Cluster has reached a checkpoint, or past terminal time locally, awaiting GVT before any more events or messages can process.",
+                        self.start.elapsed().as_micros(),
+                    )
+                    .map_err(|_| AikaError::LoggingWriteError)?;
+                }
+                self.blocks.block.catchup_block = true;
+                self.last_cp_block_nmb = self.blocks.block.block_id();
+            }
         }
         Ok(())
     }
 
     // Check the synchronization of all clocks, and ensure GVT is acting as it should, and we are not at terminal time yet.
     fn check_time_validity(&self) -> Result<(), AikaError> {
-        if self.context.time != self.local_messages.clock.time
-            || self.local_messages.clock.time != self.event_system.clock.time
-        {
-            return Err(AikaError::ClockSyncIssue);
-        }
         if self.time.gvt > self.context.time {
             return Err(AikaError::GVTPastLocalClock(
                 self.context.cluster_id,
                 self.context.time,
                 self.time.gvt,
             ));
-        }
-        if self.time.gvt < self.time.terminal && self.context.time > self.time.terminal {
-            return Err(AikaError::PastTerminalButGVTBehind);
         }
         if self.time.gvt >= self.time.terminal && self.context.time > self.time.terminal {
             return Err(AikaError::PastTerminal);
@@ -347,90 +397,132 @@ impl<
         if let Some(file) = &mut self.log {
             writeln!(
                 file,
-                "[{}] step starting at time {:?}",
+                "[{}] step starting at now() time {:?}, scheduler times: {:?}",
                 self.start.elapsed().as_micros(),
-                now
+                now,
+                self.local_messages.clock.time
             )
             .map_err(|_| AikaError::LoggingWriteError)?;
         }
-        if let Ok(msgs) = self.local_messages.clock.tick() {
-            for msg in msgs {
-                let id = msg.to;
-                if id.is_none() {
-                    for i in 0..self.actors.len() {
-                        self.actors[i].read_message(&mut self.context, msg, i)?;
-                    }
-                    continue;
-                }
-                let id = id.unwrap();
-                self.actors[id].read_message(&mut self.context, msg, id)?;
+        if !self.blocks.block.catchup_block || (self.blocks.block.catchup_block && (self.now() < self.blocks.block.start)) {
+            if let Some(file) = &mut self.log {
+                writeln!(
+                    file,
+                    "[{}] meeting step condition for messages and events.",
+                    self.start.elapsed().as_micros(),
+                )
+                .map_err(|_| AikaError::LoggingWriteError)?;
             }
-        }
-        // process events at the next time step
-        if let Ok(events) = self.event_system.clock.tick() {
-            for event in events {
-                let event = self.actors[event.actor].step(&mut self.context, event.actor)?;
-                match event.task {
-                    SchedulingTask::Timeout(time) => {
-                        if (self.now() + time) > self.time.terminal {
-                            continue;
+            if let Ok(msgs) = self.local_messages.clock.tick() {
+                let len = msgs.len();
+                if !msgs.is_empty() {
+                    if let Some(file) = &mut self.log {
+                        writeln!(
+                            file,
+                            "[{}] Found {len} messages to process.",
+                            self.start.elapsed().as_micros(),
+                        )
+                        .map_err(|_| AikaError::LoggingWriteError)?;
+                    }
+                }
+                for msg in msgs {
+                    let id = msg.to;
+                    if id.is_none() {
+                        for i in 0..self.actors.len() {
+                            self.actors[i].read_message(&mut self.context, msg, i)?;
                         }
+                        continue;
+                    }
+                    let id = id.unwrap();
+                    self.actors[id].read_message(&mut self.context, msg, id)?;
+                }
+            }
+            // process events at the next time step
+            if let Ok(events) = self.event_system.clock.tick() {
+                let len = events.len();
+                if !events.is_empty() {
+                    if let Some(file) = &mut self.log {
+                        writeln!(
+                            file,
+                            "[{}] Found {len} events to process.",
+                            self.start.elapsed().as_micros(),
+                        )
+                        .map_err(|_| AikaError::LoggingWriteError)?;
+                    }
+                }
+                for event in events {
+                    let event = self.actors[event.actor].step(&mut self.context, event.actor)?;
+                    match event.task {
+                        SchedulingTask::Timeout(time) => {
+                            if (self.now() + time) > self.time.terminal {
+                                continue;
+                            }
 
-                        self.commit(Event::new(
-                            self.now(),
-                            self.now() + time,
-                            event.actor,
-                            SchedulingTask::Wait,
-                        ));
-                    }
-                    SchedulingTask::Schedule(time) => {
-                        self.commit(Event::new(
-                            self.now(),
-                            time,
-                            event.actor,
-                            SchedulingTask::Wait,
-                        ));
-                    }
-                    SchedulingTask::Trigger { time, idx } => {
-                        self.commit(Event::new(self.now(), time, idx, SchedulingTask::Wait));
-                    }
-                    SchedulingTask::Wait => {}
-                    SchedulingTask::Break => {
-                        self.brakes = true;
-                        break;
+                            self.commit(Event::new(
+                                self.now(),
+                                self.now() + time,
+                                event.actor,
+                                SchedulingTask::Wait,
+                            ));
+                        }
+                        SchedulingTask::Schedule(time) => {
+                            self.commit(Event::new(
+                                self.now(),
+                                time,
+                                event.actor,
+                                SchedulingTask::Wait,
+                            ));
+                        }
+                        SchedulingTask::Trigger { time, idx } => {
+                            self.commit(Event::new(self.now(), time, idx, SchedulingTask::Wait));
+                        }
+                        SchedulingTask::Wait => {}
+                        SchedulingTask::Break => {
+                            self.brakes = true;
+                            break;
+                        }
                     }
                 }
             }
         }
-
         // collect and send all the sends gathered this time step
         let now = self.now();
         let sends = std::mem::take(&mut self.context.outbox);
-        for mail in sends {
-            let mut local = false;
-            if Some(self.context.cluster_id) == mail.to_world {
-                match mail.open_letter() {
-                    Transfer::Msg(msg) => self.commit_mail(msg),
-                    Transfer::AntiMsg(anti_msg) => self.annihilate(anti_msg),
+        if !self.blocks.block.catchup_block || (self.blocks.block.catchup_block && (self.now() < self.blocks.block.start)) {
+            for mail in sends {
+                let mut local = false;
+                if Some(self.context.cluster_id) == mail.to_world {
+                    match mail.open_letter() {
+                        Transfer::Msg(msg) => self.commit_mail(msg),
+                        Transfer::AntiMsg(anti_msg) => self.annihilate(anti_msg),
+                    }
+                    local = true;
+                } else {
+                    if let Some(file) = &mut self.log {
+                        writeln!(
+                            file,
+                            "[{}] sending message to cluster {:?}.",
+                            self.start.elapsed().as_micros(),
+                            mail.to_world
+                        )
+                        .map_err(|_| AikaError::LoggingWriteError)?;
+                    }
+                    self.message_user.send(mail)?;
                 }
-                local = true;
-            } else {
-                self.message_user.send(mail)?;
-            }
-            if now < self.blocks.block.start {
-                let blocks_past =
-                    ((self.blocks.block.start - now - 1) / self.blocks.block.max_dur) as usize;
-                if blocks_past >= BLOCK_BW {
-                    return Err(AikaError::DistantBlocks(blocks_past));
+                if now < self.blocks.block.start {
+                    let blocks_past =
+                        ((self.blocks.block.start - now - 1) / self.blocks.block.max_dur) as usize;
+                    if blocks_past >= BLOCK_BW {
+                        return Err(AikaError::DistantBlocks(blocks_past));
+                    }
+                    self.blocks.block.delayed_corrections[blocks_past] += 1;
+                    continue;
                 }
-                self.blocks.block.delayed_corrections[blocks_past] += 1;
-                continue;
-            }
-            if !local {
-                self.blocks.block.sends += 1;
+                if !local {
+                    self.blocks.block.sends += 1;
+                }
             }
         }
-
         // increment the clock to the next step
         self.increment()?;
         Ok(())
@@ -447,42 +539,47 @@ impl<
             return Err(AikaError::MustSetBlockDuration);
         }
         loop {
-            for _ in 0..8 {
-                self.poll_interplanetary_messenger()?;
-            }
             if let Some(gvt) = self.blocks.subscriber.try_recv() {
                 if gvt < self.time.gvt {
                     return Err(AikaError::GVTisDecreasing);
                 }
                 self.time.gvt = gvt;
             }
-            let now = self.now();
+            if self.time.cp_hz != u64::MAX
+                && self.time.gvt
+                    == (self.time.cp_hz
+                        * self.blocks.block.max_dur
+                        * self.cp_counter)
+                && self.time.gvt != 0
+                && self.context.time < self.time.terminal
+                && self.time.gvt != self.context.time
+            {   
+                self.cp_counter += 1;
+                self.context.time = self.local_messages.clock.time;
+                let start = self.time.gvt;
+                let dur = self.blocks.block.max_dur;
+                let nmb = self.last_cp_block_nmb;
+
+                self.blocks.block = Block::new(start, dur, nmb.1, nmb.0, false);
+
+                let diff = self.time.terminal - self.now();
+                self.blocks.block.dur = min(dur, diff);
+            }
+            for _ in 0..8 {
+                self.poll_interplanetary_messenger()?;
+            }
             // make sure time is valid to proceed.
             match self.check_time_validity() {
                 Ok(_) => {}
                 Err(err) => match err {
-                    AikaError::PastTerminalButGVTBehind => {
-                        std::thread::sleep(Duration::from_nanos(100));
-                        std::thread::yield_now();
-                        continue;
-                    }
-                    AikaError::PastTerminal => break,
+                    AikaError::PastTerminal => {
+                        self.rollback(self.time.terminal + 1)?;
+                        break
+                    },
                     _ => return Err(err),
                 },
             }
             // if at a checkpoint limit, busy-wait the thread until the GVT catches up
-            if self.time.cp_hz != u64::MAX
-                && now
-                    == (self.time.cp_hz
-                        * self.blocks.block.max_dur
-                        * self.blocks.block.block_nmb as u64)
-                && now != self.time.terminal
-                && self.time.gvt != now
-            {
-                sleep(Duration::from_nanos(100));
-                std::thread::yield_now();
-                continue;
-            }
             self.step()?;
             if self.brakes {
                 break;
@@ -500,11 +597,7 @@ impl<
         if self.blocks.block.dur == 0 {
             return Err(AikaError::MustSetBlockDuration);
         }
-        let mut counter = 0;
         loop {
-            for _ in 0..8 {
-                self.poll_interplanetary_messenger()?;
-            }
             if let Some(gvt) = self.blocks.subscriber.try_recv() {
                 writeln!(
                     self.log.as_mut().unwrap(),
@@ -517,36 +610,51 @@ impl<
                 }
                 self.time.gvt = gvt;
             }
-            let now = self.now();
+
+            // if let Some(file) = &mut self.log {
+            //     writeln!(
+            //         file,
+            //         "[{}] GVT caught up to checkpoint, rolling back to GVT and allowing messages and events to continue processing.",
+            //         self.start.elapsed().as_micros(),
+            //     )
+            //     .map_err(|_| AikaError::LoggingWriteError)?;
+            // }
+
+            if self.time.cp_hz != u64::MAX
+                && self.time.gvt
+                    == (self.time.cp_hz
+                        * self.blocks.block.max_dur
+                        * self.cp_counter)
+                && self.time.gvt != 0
+                && self.context.time < self.time.terminal
+                && self.time.gvt != self.context.time
+            {   
+                if let Some(file) = &mut self.log {
+                    writeln!(
+                        file,
+                        "[{}] GVT caught up to checkpoint, rolling back to GVT and allowing messages and events to continue processing.",
+                        self.start.elapsed().as_micros(),
+                    )
+                    .map_err(|_| AikaError::LoggingWriteError)?;
+                }
+                self.cp_counter += 1;
+                self.context.time = self.local_messages.clock.time;
+                let start = self.time.gvt;
+                let dur = self.blocks.block.max_dur;
+                let nmb = self.last_cp_block_nmb;
+
+                self.blocks.block = Block::new(start, dur, nmb.1, nmb.0, false);
+
+                let diff = self.time.terminal - self.now();
+                self.blocks.block.dur = min(dur, diff);
+            } 
+            for _ in 0..8 {
+                self.poll_interplanetary_messenger()?;
+            }
             // make sure time is valid to proceed.
             match self.check_time_validity() {
                 Ok(_) => {}
                 Err(err) => match err {
-                    AikaError::PastTerminalButGVTBehind => {
-                        match counter.cmp(&10) {
-                            std::cmp::Ordering::Less => {
-                                writeln!(
-                                    self.log.as_mut().unwrap(),
-                                    "[{}]: waiting for GVT to catch up, continuing to poll.",
-                                    self.start.elapsed().as_micros(),
-                                )
-                                .map_err(|_| AikaError::LoggingWriteError)?;
-                            }
-                            std::cmp::Ordering::Equal => {
-                                writeln!(
-                                    self.log.as_mut().unwrap(),
-                                    "[{}]: waiting too long for GVT, going quiet.",
-                                    self.start.elapsed().as_micros(),
-                                )
-                                .map_err(|_| AikaError::LoggingWriteError)?;
-                            }
-                            _ => {}
-                        }
-                        counter += 1;
-                        sleep(Duration::from_nanos(100));
-                        std::thread::yield_now();
-                        continue;
-                    }
                     AikaError::PastTerminal => {
                         writeln!(
                             self.log.as_mut().unwrap(),
@@ -554,30 +662,11 @@ impl<
                             self.start.elapsed().as_micros(),
                         )
                         .map_err(|_| AikaError::LoggingWriteError)?;
+                        self.rollback(self.time.terminal + 1)?;
                         break;
                     }
                     _ => return Err(err),
                 },
-            }
-            counter = 0;
-            // if at a checkpoint or the throttle limit, busy-wait the thread
-            if self.time.cp_hz != u64::MAX
-                && now
-                    == (self.time.cp_hz
-                        * self.blocks.block.max_dur
-                        * self.blocks.block.block_nmb as u64)
-                && now != self.time.terminal
-                && self.time.gvt != now
-            {
-                writeln!(
-                    self.log.as_mut().unwrap(),
-                    "[{}] checkpoint sleeping",
-                    self.start.elapsed().as_micros()
-                )
-                .map_err(|_| AikaError::LoggingWriteError)?;
-                sleep(Duration::from_nanos(100));
-                std::thread::yield_now();
-                continue;
             }
             self.step()?;
             if self.brakes {

@@ -154,7 +154,7 @@ impl<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + C
                     self.deliver_the_mail()?;
                 }
                 self.consensus.poll_n_slot()?;
-                while let Some(new_gvt) = self.consensus.check_update_safe_point()? {
+                while let Some(new_gvt) = self.consensus.cusp()? {
                     if new_gvt == self.time.gvt {
                         break;
                     }
@@ -163,12 +163,8 @@ impl<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + C
             }
 
             if self.check_all_terminal()? {
-                if self.consensus.check_status() {
+                if self.time.gvt == self.time.terminal {
                     break;
-                }
-                let terminal = self.time.terminal;
-                if self.consensus.all_producers_at_terminal(terminal) {
-                    self.close.0 = true;
                 }
             }
         }
@@ -229,7 +225,7 @@ impl<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + C
                     self.time.gvt
                 )
                 .map_err(|_| AikaError::LoggingWriteError)?;
-                if self.consensus.check_status() {
+                if self.time.gvt == self.time.terminal {
                     writeln!(
                         self.log.as_mut().unwrap(),
                         "[{}] GVT {:?}: GVT has caught up, consensus reached!",
@@ -238,10 +234,6 @@ impl<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + C
                     )
                     .map_err(|_| AikaError::LoggingWriteError)?;
                     break;
-                }
-                let terminal = self.time.terminal;
-                if self.consensus.all_producers_at_terminal(terminal) {
-                    self.close.0 = true;
                 }
             }
         }

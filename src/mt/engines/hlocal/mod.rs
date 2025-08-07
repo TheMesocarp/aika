@@ -801,7 +801,7 @@ mod messaging_tests {
         let mut stager: Stager<BLOCK_BW, MSG_BW, CLOCK_BW, CLOCK_SCALES, Message> =
             Stager::new().unwrap();
 
-        let config = Config::new(2, 128, 20, 2048, 10000000);
+        let config = Config::new(2, 128, 20, 2048, 10);
         stager.config(config).unwrap();
 
         stager.create_cluster(Stateless).unwrap();
@@ -817,6 +817,29 @@ mod messaging_tests {
         stager.schedule_cluster(0, 1).unwrap();
         stager.schedule_cluster(1, 1).unwrap();
 
+        stager.run(RunMode::Debug).unwrap();
+    }
+
+    #[test]
+    fn test_intercluster_messaging_heavy() {
+        let mut stager = stager!(Message, MSG_BW = { 16 * 1024 }).unwrap();
+        let config = Config::new(4, 32, 20, 2048, 10);
+        stager.config(config).unwrap();
+
+        stager.create_cluster(Stateless).unwrap();
+        stager.create_cluster(Stateless).unwrap();
+        stager.create_cluster(Stateless).unwrap();
+        stager.create_cluster(Stateless).unwrap();
+
+        for i in 0..4 {
+            for j in 0..2000 {
+                stager
+                    .spawn_actor_on_cluster(i, MessagingActor::new(Some((j + 1) % 2000), (i + 1) % 4, 1, 1))
+                    .unwrap();
+            }
+        }
+
+        stager.schedule_all(1).unwrap();
         stager.run(RunMode::Debug).unwrap();
     }
 }

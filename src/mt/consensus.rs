@@ -62,6 +62,7 @@ pub struct Block<const BANDWIDTH: usize> {
     pub local_corrections: isize,
     /// If a rollback erases distant messages, those corrections are logged here.
     pub delayed_corrections: [isize; BANDWIDTH],
+    pub catchup_block: bool,
     /// Current block number in time
     pub block_nmb: usize,
     /// Producer tag
@@ -70,7 +71,7 @@ pub struct Block<const BANDWIDTH: usize> {
 
 impl<const BANDWIDTH: usize> Block<BANDWIDTH> {
     /// Create a new `Block<const BADNWIDTH: usize>`.
-    pub fn new(start: u64, dur: u64, block_nmb: usize, producer_id: usize) -> Self {
+    pub fn new(start: u64, dur: u64, block_nmb: usize, producer_id: usize, catch_up: bool) -> Self {
         Self {
             start,
             dur,
@@ -80,6 +81,7 @@ impl<const BANDWIDTH: usize> Block<BANDWIDTH> {
             delayed_recvs: [0; BANDWIDTH],
             local_corrections: 0,
             delayed_corrections: [0; BANDWIDTH],
+            catchup_block: catch_up,
             block_nmb,
             producer_id,
         }
@@ -91,8 +93,23 @@ impl<const BANDWIDTH: usize> Block<BANDWIDTH> {
     }
 
     /// Increment the appropriate receive counter given the time stamp and correction flag.
-    pub fn recv(&mut self, commit_time: u64) -> Result<(), MesoError> {
+    pub fn recv(&mut self, commit_time: u64, termination_time: u64) -> Result<(), MesoError> {
         if commit_time < self.start {
+            let real_diff = self.start - commit_time - 1;
+            if self.start > termination_time {
+                let leftovers = termination_time % self.max_dur;
+                let term_diff = self.start - termination_time - 1;
+                let blocks_since = term_diff / self.max_dur;
+                let until_term = real_diff - term_diff;
+                
+                let bremaining = if leftovers < until_term {
+                    let remaining = until_term - leftovers - 1;
+                    remaining / self.max_dur
+                } else { 0 };
+                let total = blocks_since + 1 + bremaining;
+                self.delayed_recvs[total as usize] += 1;
+                return Ok(());
+            }
             let real_diff = self.start - commit_time - 1;
             let blocks = (real_diff / self.dur) as usize;
             if blocks >= BANDWIDTH {
@@ -121,9 +138,23 @@ impl<const BANDWIDTH: usize> Block<BANDWIDTH> {
     }
 
     /// Acknowledge the receive of an anti-message and decrement the appropiate correction counter or recv counter.
-    pub fn recv_anti(&mut self, commit_time: u64) -> Result<(), MesoError> {
+    pub fn recv_anti(&mut self, commit_time: u64, termination_time: u64) -> Result<(), MesoError> {
         if commit_time < self.start {
             let real_diff = self.start - commit_time - 1;
+            if self.start > termination_time {
+                let leftovers = termination_time % self.max_dur;
+                let term_diff = self.start - termination_time - 1;
+                let blocks_since = term_diff / self.max_dur;
+                let until_term = real_diff - term_diff;
+                
+                let bremaining = if leftovers < until_term {
+                    let remaining = until_term - leftovers - 1;
+                    remaining / self.max_dur
+                } else { 0 };
+                let total = blocks_since + 1 + bremaining;
+                self.delayed_recvs[total as usize] += 1;
+                return Ok(());
+            }
             let blocks = (real_diff / self.dur) as usize;
             if blocks >= BANDWIDTH {
                 return Err(MesoError::DistantBlocks(blocks));
@@ -158,6 +189,7 @@ impl<const BANDWIDTH: usize> Default for Block<BANDWIDTH> {
             delayed_recvs: [0; BANDWIDTH],
             local_corrections: 0,
             delayed_corrections: [0; BANDWIDTH],
+            catchup_block: false,
             block_nmb: 0,
             producer_id: usize::MAX,
         }
@@ -219,7 +251,7 @@ impl<const BANDWIDTH: usize> BlockProcessor<BANDWIDTH> {
         Ok(BlockSpoke {
             submitter: cloned,
             subscriber: sub,
-            block: Block::new(0, 0, 0, self.centralized_registrations - 1),
+            block: Block::new(0, 0, 0, self.centralized_registrations - 1, false),
         })
     }
 
@@ -378,33 +410,9 @@ impl<const BANDWIDTH: usize> Consensus<BANDWIDTH> {
         Ok(latests)
     }
 
-    /// Have all producers submitted the final valid block?
-    pub fn all_producers_at_terminal(&mut self, terminal: u64) -> bool {
-        let len = self.next.len();
-
-        let mut latests = vec![None; len];
-        for i in self.next.iter().flatten() {
-            let out = Some(*i);
-            latests.push(out);
-        }
-
-        for (producer, row) in self.queue.iter().enumerate() {
-            if let Some(block) = row.iter().rev().find_map(|&x| x) {
-                let cloned = Some(block);
-                latests[producer] = cloned;
-            }
-        }
-        for block in latests.iter().flatten() {
-            if block.start + block.dur < terminal {
-                return false;
-            }
-        }
-        true
-    }
-
     /// Check if all of the next row is received and if its safe to commit a new block or not.
     /// Output the new global time if there is any.
-    pub fn check_update_safe_point(&mut self) -> Result<Option<u64>, MesoError> {
+    pub fn cusp(&mut self) -> Result<Option<u64>, MesoError> {
         if !self.next.iter().all(|x| x.is_some()) {
             return Ok(None);
         }
@@ -416,6 +424,9 @@ impl<const BANDWIDTH: usize> Consensus<BANDWIDTH> {
         let mut delayed_recvs = [0isize; BANDWIDTH];
         let mut correction_factor = 0isize;
         for block in &mut self.next.iter_mut().flatten() {
+            if block.catchup_block {
+                return Ok(None)
+            }
             if start == dur && dur == 0 {
                 start = block.start;
                 dur = block.dur;
@@ -474,6 +485,9 @@ impl<const BANDWIDTH: usize> Consensus<BANDWIDTH> {
         let mut delayed_recvs = [0isize; BANDWIDTH];
         let mut correction_factor = 0isize;
         for block in &mut self.next.iter_mut().flatten() {
+            if block.catchup_block {
+                return Ok(None)
+            }
             if start == dur && dur == 0 {
                 start = block.start;
                 dur = block.dur;
@@ -519,72 +533,6 @@ impl<const BANDWIDTH: usize> Consensus<BANDWIDTH> {
         Ok(None)
     }
 
-    pub fn cusp_return_sends(&mut self) -> Result<Option<Result<u64, isize>>, MesoError> {
-        if !self.next.iter().all(|x| x.is_some()) {
-            return Ok(None);
-        }
-        let mut start = 0;
-        let mut dur = 0;
-
-        let mut sends = 0;
-        let mut recvs = 0;
-        let mut delayed_recvs = [0isize; BANDWIDTH];
-        let mut correction_factor = 0isize;
-        for block in &mut self.next.iter_mut().flatten() {
-            if start == dur && dur == 0 {
-                start = block.start;
-                dur = block.dur;
-            }
-            if dur != block.dur || start != block.start {
-                return Err(MesoError::MismatchBlockRanges);
-            }
-            sends += block.sends;
-            recvs += block.recvs_current_block;
-            delayed_recvs
-                .iter_mut()
-                .zip(block.delayed_recvs.iter())
-                .for_each(|(x, y)| *x += *y);
-            correction_factor += block.local_corrections;
-        }
-        let mut lates = 0;
-        for producer_queue in self.queue.iter() {
-            for (slot, maybe) in producer_queue.iter().enumerate() {
-                match maybe {
-                    Some(block) => {
-                        lates += block.delayed_recvs[slot];
-                        correction_factor += block.delayed_corrections[slot];
-                    }
-                    None => break,
-                }
-            }
-        }
-
-        let normalized_sends = (sends.checked_add_signed(correction_factor).unwrap()) as isize;
-        let normalized_recvs = recvs as isize + lates;
-        let diff = normalized_sends - normalized_recvs;
-        if diff == 0 {
-            if dur == 0 {
-                return Ok(None);
-            }
-            self.commit_block(start, dur, sends, recvs, delayed_recvs, correction_factor);
-            return Ok(Some(Ok(self.safe_point)));
-        }
-        Ok(Some(Err(diff)))
-    }
-
-    /// Check for pending blocks.
-    pub fn check_status(&self) -> bool {
-        if !self.next.iter().all(|x| x.is_none()) {
-            return false;
-        }
-        for row in self.queue.iter() {
-            if !row.iter().all(|x| x.is_none()) {
-                return false;
-            }
-        }
-        true
-    }
-
     fn commit_block(
         &mut self,
         start: u64,
@@ -597,7 +545,7 @@ impl<const BANDWIDTH: usize> Consensus<BANDWIDTH> {
         self.block_nmb += 1;
         self.safe_point = start + dur;
 
-        let mut block = Block::<BANDWIDTH>::new(start, dur, self.block_nmb, usize::MAX);
+        let mut block = Block::<BANDWIDTH>::new(start, dur, self.block_nmb, usize::MAX, false);
         block.recvs_current_block = recvs;
         block.sends = sends;
         block.delayed_recvs = delayed_recvs;
@@ -671,7 +619,6 @@ mod unit_tests {
         assert_eq!(consensus.processor.centralized_registrations, NUM_PRODUCERS);
         assert_eq!(spokes.len(), NUM_PRODUCERS);
         assert_eq!(consensus.safe_point, 0);
-        assert!(consensus.check_status());
     }
 
     #[test]
@@ -679,16 +626,16 @@ mod unit_tests {
         let (mut consensus, mut spokes) = setup_consensus(1);
         let spoke = &mut spokes[0];
 
-        let mut block1 = Block::new(0, BLOCK_DURATION, 0, 0);
+        let mut block1 = Block::new(0, BLOCK_DURATION, 0, 0, false);
         block1.send();
         block1.send();
         submit_block(spoke, block1);
 
         consensus.poll_n_slot().unwrap();
-        let gvt_update = consensus.check_update_safe_point().unwrap();
+        let gvt_update = consensus.cusp().unwrap();
         assert!(gvt_update.is_none());
 
-        let mut block2 = Block::new(BLOCK_DURATION, BLOCK_DURATION, 1, 0);
+        let mut block2 = Block::new(BLOCK_DURATION, BLOCK_DURATION, 1, 0, false);
         block2.delayed_recvs[0] += 2;
         block2.send();
         block2.send();
@@ -697,8 +644,8 @@ mod unit_tests {
 
         consensus.poll_n_slot().unwrap();
 
-        let _ = consensus.check_update_safe_point().unwrap();
-        let gvt_update = consensus.check_update_safe_point().unwrap();
+        let _ = consensus.cusp().unwrap();
+        let gvt_update = consensus.cusp().unwrap();
         assert!(gvt_update.is_some());
         assert_eq!(gvt_update.unwrap(), 2 * BLOCK_DURATION);
         assert_eq!(consensus.safe_point, 2 * BLOCK_DURATION);
@@ -709,43 +656,43 @@ mod unit_tests {
         let (mut consensus, mut spokes) = setup_consensus(NUM_PRODUCERS);
 
         for (i, spoke) in spokes.iter_mut().enumerate().take(NUM_PRODUCERS) {
-            let mut block1 = Block::new(0, BLOCK_DURATION, 0, i);
+            let mut block1 = Block::new(0, BLOCK_DURATION, 0, i, false);
             block1.send();
             submit_block(spoke, block1);
         }
 
         consensus.poll_n_slot().unwrap();
-        assert!(consensus.check_update_safe_point().unwrap().is_none());
+        assert!(consensus.cusp().unwrap().is_none());
 
         for (i, spoke) in spokes.iter_mut().enumerate().take(NUM_PRODUCERS - 1) {
-            let mut block2 = Block::new(BLOCK_DURATION, BLOCK_DURATION, 1, i);
+            let mut block2 = Block::new(BLOCK_DURATION, BLOCK_DURATION, 1, i, false);
             block2.delayed_recvs[0] += 1;
             submit_block(spoke, block2);
         }
 
-        let block2 = Block::new(BLOCK_DURATION, BLOCK_DURATION, 1, NUM_PRODUCERS - 1);
+        let block2 = Block::new(BLOCK_DURATION, BLOCK_DURATION, 1, NUM_PRODUCERS - 1, false);
         submit_block(&mut spokes[NUM_PRODUCERS - 1], block2);
 
         consensus.poll_n_slot().unwrap();
-        let gvt_update = consensus.check_update_safe_point().unwrap();
+        let gvt_update = consensus.cusp().unwrap();
         println!("{gvt_update:?}");
         assert!(gvt_update.is_none());
 
-        let mut block3 = Block::new(2 * BLOCK_DURATION, BLOCK_DURATION, 2, NUM_PRODUCERS - 1);
+        let mut block3 = Block::new(2 * BLOCK_DURATION, BLOCK_DURATION, 2, NUM_PRODUCERS - 1, false);
         block3.delayed_recvs[1] += 1;
         submit_block(&mut spokes[NUM_PRODUCERS - 1], block3);
 
         for (i, spoke) in spokes.iter_mut().enumerate().take(NUM_PRODUCERS - 1) {
-            let block3 = Block::new(2 * BLOCK_DURATION, BLOCK_DURATION, 2, i);
+            let block3 = Block::new(2 * BLOCK_DURATION, BLOCK_DURATION, 2, i, false);
             submit_block(spoke, block3);
         }
 
         consensus.poll_n_slot().unwrap();
-        let _ = consensus.check_update_safe_point().unwrap();
+        let _ = consensus.cusp().unwrap();
         consensus.poll_n_slot().unwrap();
-        let _ = consensus.check_update_safe_point().unwrap();
+        let _ = consensus.cusp().unwrap();
         consensus.poll_n_slot().unwrap();
-        let gvt_update = consensus.check_update_safe_point().unwrap();
+        let gvt_update = consensus.cusp().unwrap();
 
         assert_eq!(gvt_update, Some(3 * BLOCK_DURATION));
         assert_eq!(consensus.safe_point, 3 * BLOCK_DURATION);
@@ -755,25 +702,25 @@ mod unit_tests {
     fn test_recv_greater_than_sends_blocks_gvt() {
         let (mut consensus, mut spokes) = setup_consensus(NUM_PRODUCERS);
 
-        let block1_p1 = Block::new(0, BLOCK_DURATION, 0, 0);
+        let block1_p1 = Block::new(0, BLOCK_DURATION, 0, 0, false);
         submit_block(&mut spokes[0], block1_p1);
 
-        let mut block1_p2 = Block::new(0, BLOCK_DURATION, 0, 1);
+        let mut block1_p2 = Block::new(0, BLOCK_DURATION, 0, 1, false);
         block1_p2.sends = 1;
         submit_block(&mut spokes[1], block1_p2);
 
         consensus.poll_n_slot().unwrap();
-        assert!(consensus.check_update_safe_point().unwrap().is_none());
+        assert!(consensus.cusp().unwrap().is_none());
 
-        let mut block2_p1 = Block::new(BLOCK_DURATION, BLOCK_DURATION, 1, 0);
+        let mut block2_p1 = Block::new(BLOCK_DURATION, BLOCK_DURATION, 1, 0, false);
         block2_p1.recvs_current_block = 2;
         submit_block(&mut spokes[0], block2_p1);
 
-        let block2_p2 = Block::new(BLOCK_DURATION, BLOCK_DURATION, 1, 1);
+        let block2_p2 = Block::new(BLOCK_DURATION, BLOCK_DURATION, 1, 1, false);
         submit_block(&mut spokes[1], block2_p2);
 
         consensus.poll_n_slot().unwrap();
-        let gvt_update = consensus.check_update_safe_point().unwrap();
+        let gvt_update = consensus.cusp().unwrap();
         assert!(gvt_update.is_none());
     }
 
@@ -782,22 +729,22 @@ mod unit_tests {
         let (mut consensus, mut spokes) = setup_consensus(1);
         let spoke = &mut spokes[0];
 
-        let mut block1 = Block::new(0, BLOCK_DURATION, 0, 0);
+        let mut block1 = Block::new(0, BLOCK_DURATION, 0, 0, false);
         block1.sends = 1;
         submit_block(spoke, block1);
         consensus.poll_n_slot().unwrap();
-        assert!(consensus.check_update_safe_point().unwrap().is_none());
+        assert!(consensus.cusp().unwrap().is_none());
 
-        let block2 = Block::new(BLOCK_DURATION, BLOCK_DURATION, 1, 0);
+        let block2 = Block::new(BLOCK_DURATION, BLOCK_DURATION, 1, 0, false);
         submit_block(spoke, block2);
         consensus.poll_n_slot().unwrap();
-        assert!(consensus.check_update_safe_point().unwrap().is_none());
+        assert!(consensus.cusp().unwrap().is_none());
 
-        let mut block3 = Block::new(2 * BLOCK_DURATION, BLOCK_DURATION, 2, 0);
-        block3.recv(BLOCK_DURATION / 2).unwrap();
+        let mut block3 = Block::new(2 * BLOCK_DURATION, BLOCK_DURATION, 2, 0, false);
+        block3.recv(BLOCK_DURATION / 2, 1000).unwrap();
         submit_block(spoke, block3);
         consensus.poll_n_slot().unwrap();
-        let gvt_update = consensus.check_update_safe_point().unwrap();
+        let gvt_update = consensus.cusp().unwrap();
         assert_eq!(gvt_update, Some(BLOCK_DURATION));
     }
 
@@ -806,19 +753,19 @@ mod unit_tests {
         let (mut consensus, mut spokes) = setup_consensus(1);
         let spoke = &mut spokes[0];
 
-        let mut block1 = Block::new(0, BLOCK_DURATION, 0, 0);
+        let mut block1 = Block::new(0, BLOCK_DURATION, 0, 0, false);
         block1.sends = 5;
         block1.local_corrections = -2;
         submit_block(spoke, block1);
         consensus.poll_n_slot().unwrap();
-        assert!(consensus.check_update_safe_point().unwrap().is_none());
+        assert!(consensus.cusp().unwrap().is_none());
 
-        let mut block2 = Block::new(BLOCK_DURATION, BLOCK_DURATION, 1, 0);
+        let mut block2 = Block::new(BLOCK_DURATION, BLOCK_DURATION, 1, 0, false);
         block2.delayed_recvs[0] = 3;
         submit_block(spoke, block2);
 
         consensus.poll_n_slot().unwrap();
-        let gvt_update = consensus.check_update_safe_point().unwrap();
+        let gvt_update = consensus.cusp().unwrap();
         assert_eq!(gvt_update, Some(BLOCK_DURATION));
     }
 
@@ -827,25 +774,25 @@ mod unit_tests {
         let (mut consensus, mut spokes) = setup_consensus(1);
         let spoke = &mut spokes[0];
 
-        let mut block1 = Block::new(0, BLOCK_DURATION, 0, 0);
+        let mut block1 = Block::new(0, BLOCK_DURATION, 0, 0, false);
         block1.sends = 2;
         submit_block(spoke, block1);
         consensus.poll_n_slot().unwrap();
-        assert!(consensus.check_update_safe_point().unwrap().is_none());
+        assert!(consensus.cusp().unwrap().is_none());
 
-        let mut block2 = Block::new(BLOCK_DURATION, BLOCK_DURATION, 1, 0);
+        let mut block2 = Block::new(BLOCK_DURATION, BLOCK_DURATION, 1, 0, false);
         block2.recvs_current_block = 3;
         block2.delayed_recvs[0] = 2;
         block2.send_anti(BLOCK_DURATION / 2).unwrap();
         submit_block(spoke, block2);
         consensus.poll_n_slot().unwrap();
 
-        let mut block3 = Block::new(2 * BLOCK_DURATION, BLOCK_DURATION, 2, 0);
-        block3.recv_anti(BLOCK_DURATION / 2).unwrap();
+        let mut block3 = Block::new(2 * BLOCK_DURATION, BLOCK_DURATION, 2, 0, false);
+        block3.recv_anti(BLOCK_DURATION / 2, 1000).unwrap();
         submit_block(spoke, block3);
         consensus.poll_n_slot().unwrap();
 
-        let gvt_update = consensus.check_update_safe_point().unwrap();
+        let gvt_update = consensus.cusp().unwrap();
         assert_eq!(gvt_update, Some(BLOCK_DURATION));
     }
 
@@ -854,16 +801,16 @@ mod unit_tests {
         let (mut consensus, mut spokes) = setup_consensus(1);
         let spoke = &mut spokes[0];
 
-        let mut block2 = Block::new(BLOCK_DURATION, BLOCK_DURATION, 1, 0);
+        let mut block2 = Block::new(BLOCK_DURATION, BLOCK_DURATION, 1, 0, false);
         block2.recvs_current_block = 1;
         submit_block(spoke, block2);
 
         consensus.poll_n_slot().unwrap();
-        assert!(consensus.check_update_safe_point().unwrap().is_none());
+        assert!(consensus.cusp().unwrap().is_none());
         assert!(consensus.next[0].is_none());
         assert!(consensus.queue[0][0].is_some());
 
-        let mut block1 = Block::new(0, BLOCK_DURATION, 0, 0);
+        let mut block1 = Block::new(0, BLOCK_DURATION, 0, 0, false);
         block1.sends = 1;
         block1.recvs_current_block = 1;
         submit_block(spoke, block1);
@@ -872,7 +819,7 @@ mod unit_tests {
         assert!(consensus.next[0].is_some());
         assert!(consensus.queue[0][0].is_some());
 
-        let gvt_update = consensus.check_update_safe_point().unwrap();
+        let gvt_update = consensus.cusp().unwrap();
         assert_eq!(gvt_update, Some(BLOCK_DURATION));
         assert_eq!(consensus.safe_point, BLOCK_DURATION);
 
@@ -885,32 +832,32 @@ mod unit_tests {
         let (mut consensus, mut spokes) = setup_consensus(2);
 
         // First, advance GVT to 100 correctly
-        let mut b0p0 = Block::new(0, BLOCK_DURATION, 0, 0);
+        let mut b0p0 = Block::new(0, BLOCK_DURATION, 0, 0, false);
         b0p0.sends = 1;
         b0p0.recvs_current_block = 1;
         submit_block(&mut spokes[0], b0p0);
-        let b0p1 = Block::new(0, BLOCK_DURATION, 0, 1);
+        let b0p1 = Block::new(0, BLOCK_DURATION, 0, 1, false);
         submit_block(&mut spokes[1], b0p1);
 
         consensus.poll_n_slot().unwrap();
-        let gvt_update = consensus.check_update_safe_point().unwrap();
+        let gvt_update = consensus.cusp().unwrap();
         assert_eq!(gvt_update, Some(BLOCK_DURATION));
         assert_eq!(consensus.safe_point, BLOCK_DURATION);
 
         // Now, producers should submit blocks for the next window (starting at 100).
         // Producer 0 submits a valid block.
-        let b1p0_valid = Block::new(BLOCK_DURATION, BLOCK_DURATION, 1, 0);
+        let b1p0_valid = Block::new(BLOCK_DURATION, BLOCK_DURATION, 1, 0, false);
         submit_block(&mut spokes[0], b1p0_valid);
 
         // Producer 1 submits a block with the correct number, but an old, invalid timestamp.
-        let b1p1_invalid = Block::new(0, BLOCK_DURATION, 1, 1);
+        let b1p1_invalid = Block::new(0, BLOCK_DURATION, 1, 1, false);
         submit_block(&mut spokes[1], b1p1_invalid);
 
         // Poll to load the new blocks into the `next` slots.
         consensus.poll_n_slot().unwrap();
 
         // Check for GVT update. This should fail because the blocks in `next` have mismatched start times.
-        let result = consensus.check_update_safe_point();
+        let result = consensus.cusp();
         assert!(
             matches!(result, Err(MesoError::MismatchBlockRanges)),
             "Consensus should reject blocks with mismatched time ranges"
@@ -950,7 +897,7 @@ mod unit_tests {
 
                     // Create a balanced block to ensure GVT can advance.
                     // A message is "sent" in block `k` and "received" in block `k+1`.
-                    let mut block = Block::new(start_time, BLOCK_DURATION, block_nmb, i);
+                    let mut block = Block::new(start_time, BLOCK_DURATION, block_nmb, i, false);
                     if block_nmb < BLOCKS_PER_PRODUCER - 1 {
                         block.sends = 1;
                     }
@@ -972,7 +919,7 @@ mod unit_tests {
             let mut consensus_guard = shared_consensus.lock().unwrap();
             for _ in 0..10 {
                 consensus_guard.poll_n_slot().unwrap();
-                let _ = consensus_guard.check_update_safe_point();
+                let _ = consensus_guard.cusp();
             }
 
             if consensus_guard.safe_point >= final_gvt {
@@ -995,11 +942,7 @@ mod unit_tests {
         // Clean up remaining queued items from the final GVT round if any.
         let mut final_consensus = consensus_guard;
         final_consensus.poll_n_slot().unwrap();
-        let _ = final_consensus.check_update_safe_point();
-        assert!(
-            final_consensus.check_status(),
-            "Consensus queues not empty at end of test"
-        );
+        let _ = final_consensus.cusp();
     }
 
     #[test]
@@ -1007,7 +950,7 @@ mod unit_tests {
         let (mut consensus, mut spokes) = setup_consensus(1);
         let spoke = &mut spokes[0];
 
-        let distant_block = Block::new(0, BLOCK_DURATION, BANDWIDTH + 1, 0);
+        let distant_block = Block::new(0, BLOCK_DURATION, BANDWIDTH + 1, 0, false);
         submit_block(spoke, distant_block);
 
         // poll_n_slot should reject this block
@@ -1020,26 +963,26 @@ mod unit_tests {
         let (mut consensus, mut spokes) = setup_consensus(2);
 
         // Block 0: Both producers submit, GVT advances
-        let block0_p0 = Block::new(0, BLOCK_DURATION, 0, 0);
+        let block0_p0 = Block::new(0, BLOCK_DURATION, 0, 0, false);
         submit_block(&mut spokes[0], block0_p0);
-        let block0_p1 = Block::new(0, BLOCK_DURATION, 0, 1);
+        let block0_p1 = Block::new(0, BLOCK_DURATION, 0, 1, false);
         submit_block(&mut spokes[1], block0_p1);
 
         consensus.poll_n_slot().unwrap();
         // With sends=0, recvs=0, GVT should advance immediately.
-        let gvt_update = consensus.check_update_safe_point().unwrap();
+        let gvt_update = consensus.cusp().unwrap();
         assert_eq!(gvt_update, Some(BLOCK_DURATION));
         assert_eq!(consensus.safe_point, BLOCK_DURATION);
 
         // Block 1: Only producer 0 submits
-        let block1_p0 = Block::new(BLOCK_DURATION, BLOCK_DURATION, 1, 0);
+        let block1_p0 = Block::new(BLOCK_DURATION, BLOCK_DURATION, 1, 0, false);
         submit_block(&mut spokes[0], block1_p0);
         // Producer 1 does not submit its block for this round.
 
         // Poll and try to advance GVT multiple times
         for _ in 0..5 {
             consensus.poll_n_slot().unwrap();
-            let gvt_update = consensus.check_update_safe_point().unwrap();
+            let gvt_update = consensus.cusp().unwrap();
             // GVT should not advance because producer 1 has not submitted its block
             assert!(gvt_update.is_none());
             assert_eq!(
@@ -1058,14 +1001,14 @@ mod unit_tests {
             let spoke = &mut spokes[0];
 
             // Create a block with a small number of sends.
-            let mut block0 = Block::new(0, BLOCK_DURATION, 0, 0);
+            let mut block0 = Block::new(0, BLOCK_DURATION, 0, 0, false);
             block0.sends = 2;
             // But a large negative correction, so the net sends would be negative.
             block0.local_corrections = -5;
             submit_block(spoke, block0);
             consensus.poll_n_slot().unwrap();
             // This call should panic
-            let _ = consensus.check_update_safe_point();
+            let _ = consensus.cusp();
         });
 
         assert!(
@@ -1083,13 +1026,13 @@ mod unit_tests {
             let current_time = (round as u64) * BLOCK_DURATION;
             // All producers submit an empty block for the current round
             for (i, spoke) in spokes.iter_mut().enumerate() {
-                let empty_block = Block::new(current_time, BLOCK_DURATION, round, i);
+                let empty_block = Block::new(current_time, BLOCK_DURATION, round, i, false);
                 submit_block(spoke, empty_block);
             }
 
             // Poll and advance GVT
             consensus.poll_n_slot().unwrap();
-            let gvt_update = consensus.check_update_safe_point().unwrap();
+            let gvt_update = consensus.cusp().unwrap();
 
             let expected_gvt = current_time + BLOCK_DURATION;
             assert_eq!(
@@ -1104,6 +1047,5 @@ mod unit_tests {
         }
 
         assert_eq!(consensus.block_nmb, ROUNDS);
-        assert!(consensus.check_status());
     }
 }
