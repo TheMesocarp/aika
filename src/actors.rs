@@ -6,7 +6,7 @@ use mesocarp::logging::journal::Journal;
 
 use crate::{
     env::Environment,
-    objects::{AntiMsg, Event, Mail, Msg, Transfer},
+    objects::{AntiMsg, Mail, Msg, SchedulingTask, Transfer},
     AikaError,
 };
 
@@ -77,7 +77,7 @@ impl<MessageType: Pod + Zeroable + Clone> Context<MessageType> {
 /// An `Actor` is an independent logical process that belongs to a `Planet` and can schedule events.
 pub trait Actor<MessageType: Clone + Pod + Zeroable>: std::fmt::Debug {
     fn step(&mut self, env: &mut Context<MessageType>, actor_id: usize)
-        -> Result<Event, AikaError>;
+        -> Result<SchedulingTask, AikaError>;
 }
 
 /// A `ConnectedActor` is an independent logical process that belongs to a `Planet` and can schedule events,
@@ -101,7 +101,7 @@ impl<MessageType: Pod + Zeroable + Clone> ActorType<MessageType> {
         &mut self,
         env: &mut Context<MessageType>,
         actor_id: usize,
-    ) -> Result<Event, AikaError> {
+    ) -> Result<SchedulingTask, AikaError> {
         match self {
             ActorType::Basic(actor) => actor.step(env, actor_id),
             ActorType::Connected(connected_actor) => connected_actor.step(env, actor_id),

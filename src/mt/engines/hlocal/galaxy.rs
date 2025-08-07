@@ -122,7 +122,6 @@ impl<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + C
 
     // Check if all clusters are at terminal time.
     fn check_all_terminal(&mut self) -> Result<bool, AikaError> {
-        //println!("GVT Master: checking terminal condition at time {:?}", self.time.gvt);
         if self.time.gvt >= self.time.terminal {
             return Ok(true);
         }
@@ -154,7 +153,10 @@ impl<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + C
                     self.deliver_the_mail()?;
                 }
                 self.consensus.poll_n_slot()?;
-                while let Some(new_gvt) = self.consensus.cusp()? {
+                while let Some(new_gvt) = self
+                    .consensus
+                    .cusp()?
+                {
                     if new_gvt == self.time.gvt {
                         break;
                     }
@@ -255,7 +257,7 @@ mod unit_tests {
     use super::*;
     use crate::actors::{Actor, ConnectedActor, Context};
     use crate::env::Stateless;
-    use crate::objects::{Event, Msg, SchedulingTask};
+    use crate::objects::{Msg, SchedulingTask};
     
     #[derive(Debug, Copy, Clone)]
     #[repr(C)]
@@ -267,8 +269,8 @@ mod unit_tests {
     #[allow(dead_code)]
     struct DummyActor;
     impl Actor<TestMsg> for DummyActor {
-        fn step(&mut self, _: &mut Context<TestMsg>, id: usize) -> Result<Event, AikaError> {
-            Ok(Event::new(0, 0, id, SchedulingTask::Wait))
+        fn step(&mut self, _: &mut Context<TestMsg>, _id: usize) -> Result<SchedulingTask, AikaError> {
+            Ok(SchedulingTask::Wait)
         }
     }
     impl ConnectedActor<TestMsg> for DummyActor {

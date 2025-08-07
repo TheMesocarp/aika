@@ -37,5 +37,5 @@ criterion = { version = "0.7", features = ["html_reports"] }
 aika = { path = "." }
 
 [[bench]]
-name = "event_throughput"
+name = "hlocal_overhead"
 harness = false

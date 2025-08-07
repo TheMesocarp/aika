@@ -183,7 +183,7 @@ impl<
                         .name(format!("Cluster {i}"))
                         .spawn(move || {
                             barrier_clone.wait();
-                            let planet = planet.run_debug()?;
+                            let planet = planet.run()?;
                             Ok::<
                                 Planet<BLOCK_BW, MSG_BW, CLOCK_BW, CLOCK_SCALES, MessageType>,
                                 AikaError,
@@ -246,11 +246,11 @@ impl<
             planets.push(planet);
         }
         let galaxy = Some(ghandle.join().map_err(|_| AikaError::ThreadPanic)??);
-        let execution_time = {
-            let start = start_time.lock().unwrap();
-            start.unwrap().elapsed()
-        };
         if mode == RunMode::Debug {
+            let execution_time = {
+                let start = start_time.lock().unwrap();
+                start.unwrap().elapsed()
+            };
             println!("Runtime: {execution_time:?}")
         }
         Ok(Self {
@@ -372,7 +372,7 @@ mod unit_tests {
     use super::*;
     use crate::actors::{Actor, ConnectedActor, Context};
     use crate::env::SimpleUnified;
-    use crate::objects::{AntiMsg, Event, Mail, Msg, SchedulingTask, Transfer};
+    use crate::objects::{AntiMsg, Mail, Msg, SchedulingTask, Transfer};
     use bytemuck::{Pod, Zeroable};
     use mesocarp::logging::journal::Journal;
     use mesocarp::scheduling::Scheduleable;
@@ -408,8 +408,8 @@ mod unit_tests {
         fn step(
             &mut self,
             context: &mut Context<TestMessage>,
-            actor_id: usize,
-        ) -> Result<Event, AikaError> {
+            _actor_id: usize,
+        ) -> Result<SchedulingTask, AikaError> {
             let journal = &mut context.env.downcast_mut::<SimpleUnified>().unwrap().inner;
             match journal.read_state::<usize>() {
                 Ok(state) => {
@@ -421,12 +421,8 @@ mod unit_tests {
                     }
                 }
             }
-            Ok(Event::new(
-                context.time,
-                context.time + 1,
-                actor_id,
-                SchedulingTask::Timeout(1),
-            ))
+            Ok(SchedulingTask::Timeout(1)
+            )
         }
     }
 
@@ -454,14 +450,14 @@ mod unit_tests {
             &mut self,
             context: &mut Context<TestMessage>,
             actor_id: usize,
-        ) -> Result<Event, AikaError> {
+        ) -> Result<SchedulingTask, AikaError> {
             let id = actor_id;
             let time = context.time;
             context.send_mail(
                 Msg::new(TestMessage, time, time + 1, id, Some((id + 1) % AGENTS)),
                 context.cluster_id,
             )?;
-            Ok(Event::new(time, time, id, SchedulingTask::Wait))
+            Ok(SchedulingTask::Wait)
         }
     }
 
@@ -683,7 +679,7 @@ mod messaging_tests {
             engines::hlocal::{Config, Stager},
             RunMode,
         },
-        objects::{Event, Msg},
+        objects::{Msg, SchedulingTask},
         AikaError,
     };
 
@@ -726,17 +722,12 @@ mod messaging_tests {
             &mut self,
             env: &mut crate::actors::Context<Message>,
             actor_id: usize,
-        ) -> Result<crate::prelude::Event, crate::AikaError> {
+        ) -> Result<SchedulingTask, AikaError> {
             let time = env.time;
             let msg = Msg::new(Message, time, time + self.delay1, actor_id, self.target);
             env.send_mail(msg, self.cluster)?;
             self.sent += 1;
-            Ok(Event::new(
-                time,
-                time,
-                actor_id,
-                crate::objects::SchedulingTask::Wait,
-            ))
+            Ok(SchedulingTask::Wait)
         }
     }
 
@@ -779,7 +770,7 @@ mod messaging_tests {
 
         stager.schedule_cluster(0, 1).unwrap();
 
-        stager.run(RunMode::Debug).unwrap();
+        stager.run(RunMode::Fast).unwrap();
     }
 
     #[test]

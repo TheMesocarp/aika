@@ -453,8 +453,8 @@ impl<
                     }
                 }
                 for event in events {
-                    let event = self.actors[event.actor].step(&mut self.context, event.actor)?;
-                    match event.task {
+                    let task = self.actors[event.actor].step(&mut self.context, event.actor)?;
+                    match task {
                         SchedulingTask::Timeout(time) => {
                             if (self.now() + time) > self.time.terminal {
                                 continue;
@@ -533,7 +533,8 @@ impl<
     /// Run the local cluster. Master loop polls the inter-cluster messenger, checks for GVT updates, then checks its time
     /// validity to proceed. If all is safe to proceed, step the simulation one time step, and check if we now meet the
     /// termination requirements. If not, yield the thread and repeat.
-    pub fn run(mut self) -> Result<Self, AikaError> {
+    #[allow(dead_code)]
+    pub(crate) fn run(mut self) -> Result<Self, AikaError> {
         if self.time.terminal == u64::MAX {
             return Err(AikaError::MustSetTerminalTime);
         }
@@ -547,6 +548,7 @@ impl<
                 }
                 self.time.gvt = gvt;
             }
+
             if self.time.cp_hz != u64::MAX
                 && self.time.gvt
                     == (self.time.cp_hz
@@ -566,7 +568,7 @@ impl<
 
                 let diff = self.time.terminal - self.now();
                 self.blocks.block.dur = min(dur, diff);
-            }
+            } 
             for _ in 0..8 {
                 self.poll_interplanetary_messenger()?;
             }
@@ -576,12 +578,11 @@ impl<
                 Err(err) => match err {
                     AikaError::PastTerminal => {
                         self.rollback(self.time.terminal + 1)?;
-                        break
-                    },
+                        break;
+                    }
                     _ => return Err(err),
                 },
             }
-            // if at a checkpoint limit, busy-wait the thread until the GVT catches up
             self.step()?;
             if self.brakes {
                 break;
@@ -694,7 +695,7 @@ mod planet_tests {
     use crate::actors::{Actor, ConnectedActor, Context};
     use crate::env::Stateless;
     use crate::mt::engines::hlocal::Galaxy;
-    use crate::objects::{Event, Msg, SchedulingTask};
+    use crate::objects::{Msg, SchedulingTask};
     
     #[derive(Debug, Copy, Clone)]
     #[repr(C)]
@@ -708,9 +709,9 @@ mod planet_tests {
     }
     
     impl Actor<TestMsg> for TestActor {
-        fn step(&mut self, ctx: &mut Context<TestMsg>, id: usize) -> Result<Event, AikaError> {
+        fn step(&mut self, _ctx: &mut Context<TestMsg>, _id: usize) -> Result<SchedulingTask, AikaError> {
             self.counter += 1;
-            Ok(Event::new(ctx.time, ctx.time + 1, id, SchedulingTask::Timeout(1)))
+            Ok(SchedulingTask::Timeout(1))
         }
     }
     

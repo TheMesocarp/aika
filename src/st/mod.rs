@@ -146,8 +146,8 @@ impl<const CLOCK_SLOTS: usize, const CLOCK_HEIGHT: usize, MessageType: Pod + Zer
                             id,
                         ));
                     }
-                    let event = self.actors[id].step(env, id)?;
-                    match event.task {
+                    let task = self.actors[id].step(env, id)?;
+                    match task {
                         SchedulingTask::Timeout(time) => {
                             if (self.now() + time) > self.env.terminal {
                                 continue;
@@ -255,9 +255,8 @@ mod tests {
     }
 
     impl Actor<u8> for TestAgent {
-        fn step(&mut self, supports: &mut Context<u8>, id: usize) -> Result<Event, AikaError> {
-            let time = supports.time;
-            Ok(Event::new(time, time, id, SchedulingTask::Timeout(1)))
+        fn step(&mut self, _supports: &mut Context<u8>, _id: usize) -> Result<SchedulingTask, AikaError> {
+            Ok(SchedulingTask::Timeout(1))
         }
     }
 
@@ -282,15 +281,14 @@ mod tests {
     }
 
     impl Actor<u8> for SendingAgent {
-        fn step(&mut self, env: &mut Context<u8>, _id: usize) -> Result<Event, AikaError> {
+        fn step(&mut self, env: &mut Context<u8>, _id: usize) -> Result<SchedulingTask, AikaError> {
             let time = env.time;
 
-            // Send messages until we've sent the desired count
             if self.messages_sent < self.message_count {
                 let msg = Msg::new(
                     self.messages_sent as u8,
                     time,
-                    time + 10, // Deliver 10 time units later
+                    time + 10, 
                     self.id,
                     Some(self.target),
                 );
@@ -298,11 +296,10 @@ mod tests {
                 self.messages_sent += 1;
             }
 
-            // Continue sending every 5 time units
             if self.messages_sent < self.message_count {
-                Ok(Event::new(time, time, self.id, SchedulingTask::Timeout(5)))
+                Ok(SchedulingTask::Timeout(5))
             } else {
-                Ok(Event::new(time, time, self.id, SchedulingTask::Wait))
+                Ok(SchedulingTask::Wait)
             }
         }
     }
@@ -324,13 +321,8 @@ mod tests {
     }
 
     impl Actor<u8> for ReceivingAgent {
-        fn step(&mut self, context: &mut Context<u8>, id: usize) -> Result<Event, AikaError> {
-            Ok(Event::new(
-                context.time,
-                context.time,
-                id,
-                SchedulingTask::Wait,
-            ))
+        fn step(&mut self, _context: &mut Context<u8>, _id: usize) -> Result<SchedulingTask, AikaError> {
+            Ok(SchedulingTask::Wait)
         }
     }
 
@@ -365,7 +357,7 @@ mod tests {
     }
 
     impl Actor<u8> for BroadcastingAgent {
-        fn step(&mut self, context: &mut Context<u8>, id: usize) -> Result<Event, AikaError> {
+        fn step(&mut self, context: &mut Context<u8>, _id: usize) -> Result<SchedulingTask, AikaError> {
             let time = context.time;
 
             if self.broadcasts_sent < self.broadcast_count {
@@ -381,9 +373,9 @@ mod tests {
             }
 
             if self.broadcasts_sent < self.broadcast_count {
-                Ok(Event::new(time, time, id, SchedulingTask::Timeout(10)))
+                Ok(SchedulingTask::Timeout(10))
             } else {
-                Ok(Event::new(time, time, id, SchedulingTask::Wait))
+                Ok(SchedulingTask::Wait)
             }
         }
     }
@@ -409,25 +401,18 @@ mod tests {
     }
 
     impl Actor<u8> for TriggeringAgent {
-        fn step(&mut self, context: &mut Context<u8>, id: usize) -> Result<Event, AikaError> {
-            let time = context.time;
-
-            // Check if we should trigger the target
+        fn step(&mut self, _context: &mut Context<u8>, _id: usize) -> Result<SchedulingTask, AikaError> {
             if self.trigger_index < self.trigger_times.len() {
                 let trigger_time = self.trigger_times[self.trigger_index];
                 self.trigger_index += 1;
-                return Ok(Event::new(
-                    time,
-                    time,
-                    id,
-                    SchedulingTask::Trigger {
+                return Ok(SchedulingTask::Trigger {
                         time: trigger_time,
                         idx: self.target,
-                    },
-                ));
+                    }
+                );
             }
 
-            Ok(Event::new(time, time, id, SchedulingTask::Wait))
+            Ok(SchedulingTask::Wait)
         }
     }
 
@@ -598,13 +583,13 @@ mod tests {
         }
 
         impl Actor<u8> for InvalidTargetAgent {
-            fn step(&mut self, context: &mut Context<u8>, id: usize) -> Result<Event, AikaError> {
+            fn step(&mut self, context: &mut Context<u8>, id: usize) -> Result<SchedulingTask, AikaError> {
                 let time = context.time;
                 self.attempted = true;
                 let msg = Msg::new(1, time, time + 5, id, Some(99));
                 context.send_mail(msg, 0)?;
 
-                Ok(Event::new(time, time, id, SchedulingTask::Wait))
+                Ok(SchedulingTask::Wait)
             }
         }
 
@@ -644,7 +629,7 @@ mod lets_try_to_break_it {
     }
     
     impl Actor<u8> for StressActor {
-        fn step(&mut self, ctx: &mut Context<u8>, actor_id: usize) -> Result<Event, AikaError> {
+        fn step(&mut self, ctx: &mut Context<u8>, actor_id: usize) -> Result<SchedulingTask, AikaError> {
             if self.send_count < self.max_sends {
                 // Send to all targets
                 for &target in &self.targets {
@@ -658,9 +643,9 @@ mod lets_try_to_break_it {
                     ctx.send_mail(msg, 0)?;
                 }
                 self.send_count += 1;
-                Ok(Event::new(ctx.time, ctx.time, actor_id, SchedulingTask::Timeout(1)))
+                Ok(SchedulingTask::Timeout(1))
             } else {
-                Ok(Event::new(ctx.time, ctx.time, actor_id, SchedulingTask::Wait))
+                Ok(SchedulingTask::Wait)
             }
         }
     }
@@ -709,18 +694,15 @@ mod lets_try_to_break_it {
         }
         
         impl Actor<u8> for CascadeActor {
-            fn step(&mut self, ctx: &mut Context<u8>, id: usize) -> Result<Event, AikaError> {
+            fn step(&mut self, ctx: &mut Context<u8>, id: usize) -> Result<SchedulingTask, AikaError> {
                 if self.triggers_remaining > 0 {
                     self.triggers_remaining -= 1;
                     let next = (id + 1) % 10;
-                    Ok(Event::new(
-                        ctx.time,
-                        ctx.time,
-                        id,
+                    Ok(
                         SchedulingTask::Trigger { time: ctx.time + 1, idx: next }
-                    ))
+                    )
                 } else {
-                    Ok(Event::new(ctx.time, ctx.time, id, SchedulingTask::Wait))
+                    Ok(SchedulingTask::Wait)
                 }
             }
         }
@@ -748,15 +730,15 @@ mod lets_try_to_break_it {
         struct BoundaryActor;
         
         impl Actor<u8> for BoundaryActor {
-            fn step(&mut self, ctx: &mut Context<u8>, id: usize) -> Result<Event, AikaError> {
+            fn step(&mut self, ctx: &mut Context<u8>, _id: usize) -> Result<SchedulingTask, AikaError> {
                 // Schedule events at exact time boundaries
                 let times = [1, 10, 100, 127, 128, 255, 256, 999, 1000];
                 for &t in &times {
                     if t > ctx.time && t <= ctx.terminal {
-                        return Ok(Event::new(ctx.time, ctx.time, id, SchedulingTask::Schedule(t)));
+                        return Ok(SchedulingTask::Schedule(t));
                     }
                 }
-                Ok(Event::new(ctx.time, ctx.time, id, SchedulingTask::Wait))
+                Ok(SchedulingTask::Wait)
             }
         }
         
@@ -788,7 +770,7 @@ mod lets_try_to_break_it {
         }
         
         impl Actor<u8> for BroadcastActor {
-            fn step(&mut self, ctx: &mut Context<u8>, id: usize) -> Result<Event, AikaError> {
+            fn step(&mut self, ctx: &mut Context<u8>, id: usize) -> Result<SchedulingTask, AikaError> {
                 if self.broadcast_count < 100 {
                     let msg = Msg::new(
                         self.broadcast_count as u8,
@@ -799,9 +781,9 @@ mod lets_try_to_break_it {
                     );
                     ctx.send_mail(msg, 0)?;
                     self.broadcast_count += 1;
-                    Ok(Event::new(ctx.time, ctx.time, id, SchedulingTask::Timeout(2)))
+                    Ok(SchedulingTask::Timeout(2))
                 } else {
-                    Ok(Event::new(ctx.time, ctx.time, id, SchedulingTask::Wait))
+                    Ok(SchedulingTask::Wait)
                 }
             }
         }
@@ -832,12 +814,12 @@ mod lets_try_to_break_it {
         struct OverflowActor;
         
         impl Actor<u8> for OverflowActor {
-            fn step(&mut self, ctx: &mut Context<u8>, id: usize) -> Result<Event, AikaError> {
+            fn step(&mut self, ctx: &mut Context<u8>, _id: usize) -> Result<SchedulingTask, AikaError> {
                 let far_future = ctx.time + 10000;
                 if far_future <= ctx.terminal {
-                    Ok(Event::new(ctx.time, ctx.time, id, SchedulingTask::Schedule(far_future)))
+                    Ok(SchedulingTask::Schedule(far_future))
                 } else {
-                    Ok(Event::new(ctx.time, ctx.time, id, SchedulingTask::Timeout(1)))
+                    Ok(SchedulingTask::Timeout(1))
                 }
             }
         }
@@ -870,7 +852,7 @@ mod lets_try_to_break_it {
         }
         
         impl Actor<u8> for SelfMessager {
-            fn step(&mut self, ctx: &mut Context<u8>, id: usize) -> Result<Event, AikaError> {
+            fn step(&mut self, ctx: &mut Context<u8>, id: usize) -> Result<SchedulingTask, AikaError> {
                 if self.remaining > 0 {
                     for delay in 1..=5 {
                         let msg = Msg::new(
@@ -884,7 +866,7 @@ mod lets_try_to_break_it {
                     }
                     self.remaining -= 1;
                 }
-                Ok(Event::new(ctx.time, ctx.time, id, SchedulingTask::Timeout(1)))
+                Ok(SchedulingTask::Timeout(1))
             }
         }
         
@@ -920,7 +902,7 @@ mod lets_try_to_break_it {
         }
         
         impl Actor<u8> for ZeroDelayActor {
-            fn step(&mut self, ctx: &mut Context<u8>, id: usize) -> Result<Event, AikaError> {
+            fn step(&mut self, ctx: &mut Context<u8>, id: usize) -> Result<SchedulingTask, AikaError> {
                 if self.pings < 1000 {
                     // Send zero-delay message
                     let target = (id + 1) % 10;
@@ -933,9 +915,9 @@ mod lets_try_to_break_it {
                     );
                     ctx.send_mail(msg, 0)?;
                     self.pings += 1;
-                    Ok(Event::new(ctx.time, ctx.time, id, SchedulingTask::Timeout(1)))
+                    Ok(SchedulingTask::Timeout(1))
                 } else {
-                    Ok(Event::new(ctx.time, ctx.time, id, SchedulingTask::Wait))
+                    Ok(SchedulingTask::Wait)
                 }
             }
         }
