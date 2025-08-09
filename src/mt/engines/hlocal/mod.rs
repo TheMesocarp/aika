@@ -2,25 +2,36 @@
 //!
 //! `aika`'s hybrid model is inspired by [Local Time Warp](https://dl.acm.org/doi/abs/10.1145/158459.158474); where local "clusters",
 //! or in our case `Planet`, operate conservatively on a partition of the global state, while inter-cluster coordination,
-//! in otherwords `Galaxy`, synchronizes clusters optimistically. The GVT is computed asynchronously using a block-based message
+//! in otherwords `Substrate`, synchronizes clusters optimistically. The GVT is computed asynchronously using a block-based message
 //! counting algorithm, defined [here](https://docs.rs/mesocarp/latest/mesocarp/sync/gvt/aika/index.html). The block-based nature
 //! implies this is inherently a conservative GVT update: its accuracy is at a trade off with resource usage in the stack during runtime.
 //! Additionally, the model supports a synchronization checkpointing system to help reduce the possibility and depth of rollback
 //! cascades between clusters.
 //!
-//! This `hlocal` variant of aika's hybrid model is structured centrally around the `Galaxy` thread, which manage block update processing,
+//! This `hlocal` variant of aika's hybrid model is structured centrally around the `Substrate` thread, which manage block update processing,
 //! GVT update broadcasts to clusters, and inter-cluster message passing via a message bus.
-use std::{sync::{Arc, Barrier, Mutex}, time::Instant};
+use std::{
+    sync::{Arc, Barrier, Mutex},
+    time::Instant,
+};
 
 use bytemuck::{Pod, Zeroable};
 
-use crate::{actors::ConnectedActor, env::Environment, mt::{logging::setup_hlocal_logging, RunMode}, AikaError};
+use crate::{
+    actors::ConnectedActor,
+    env::Environment,
+    mt::{engines::hlocal::bus::MessageBus, logging::setup_hlocal_logging, RunMode},
+    AikaError,
+};
 
-pub use crate::mt::engines::hlocal::{cluster::Planet, galaxy::Galaxy};
+pub use crate::mt::engines::hlocal::{
+    cluster::Planet,
+    gvt::{Substrate, GVT},
+};
 
-mod galaxy;
+mod bus;
 mod cluster;
-
+mod gvt;
 
 #[derive(Debug, Copy, Clone)]
 /// A `Config` packages all of the configuration information for the simulation's GVT/consensus algorithm.
@@ -58,8 +69,8 @@ pub struct Stager<
     const CLOCK_SCALES: usize,
     MessageType: Pod + Zeroable + Clone,
 > {
-    pub galaxy: Option<Galaxy<BLOCK_BW, MSG_BW, MessageType>>,
-    pub planets: Vec<Planet<BLOCK_BW, MSG_BW, CLOCK_BW, CLOCK_SCALES, MessageType>>,
+    pub substrate: Option<Substrate<BLOCK_BW, MSG_BW, MessageType>>,
+    pub clusters: Vec<Planet<BLOCK_BW, MSG_BW, CLOCK_BW, CLOCK_SCALES, MessageType>>,
     configured: bool,
 }
 
@@ -73,26 +84,26 @@ impl<
 {
     pub fn new() -> Result<Self, AikaError> {
         Ok(Self {
-            galaxy: None,
-            planets: Vec::new(),
+            substrate: None,
+            clusters: Vec::new(),
             configured: false,
         })
     }
 
     pub fn config(&mut self, config: Config) -> Result<(), AikaError> {
-        let mut galaxy = Galaxy::new(config.clusters, config.batch_size)?;
-        galaxy.set_time_scale(config.terminal);
-        galaxy.with_block_duration(config.block_duration);
-        galaxy.checkpoints(config.checkpoint_frequency);
-        self.galaxy = Some(galaxy);
+        let mut substrate = Substrate::new(config.clusters, config.batch_size)?;
+        substrate.set_time_scale(config.terminal);
+        substrate.with_block_duration(config.block_duration);
+        substrate.checkpoints(config.checkpoint_frequency);
+        self.substrate = Some(substrate);
         self.configured = true;
         Ok(())
     }
 
     pub fn create_cluster(&mut self, env: impl Environment + 'static) -> Result<(), AikaError> {
         if self.configured {
-            let cluster = self.galaxy.as_mut().unwrap().spawn_planet(env)?;
-            self.planets.push(cluster);
+            let cluster = self.substrate.as_mut().unwrap().spawn_cluster(env)?;
+            self.clusters.push(cluster);
             return Ok(());
         }
         Err(AikaError::UnconfiguredStager)
@@ -103,51 +114,51 @@ impl<
         cluster: usize,
         actor: impl ConnectedActor<MessageType> + 'static,
     ) -> Result<(), AikaError> {
-        let clusters = self.planets.len();
+        let clusters = self.clusters.len();
         if clusters <= cluster {
             return Err(AikaError::InvalidClusterId(clusters, cluster));
         }
-        self.planets[cluster].spawn_actor(actor);
+        self.clusters[cluster].spawn_actor(actor);
         Ok(())
     }
 
     pub fn schedule(&mut self, cluster: usize, actor: usize, time: u64) -> Result<(), AikaError> {
-        let clusters = self.planets.len();
+        let clusters = self.clusters.len();
         if clusters <= cluster {
             return Err(AikaError::InvalidClusterId(clusters, cluster));
         }
-        let actors = self.planets[cluster].actors.len();
+        let actors = self.clusters[cluster].actors.len();
         if actors <= actor {
             return Err(AikaError::InvalidActorId(actors, cluster, actor));
         }
-        self.planets[cluster].schedule(time, actor)?;
+        self.clusters[cluster].schedule(time, actor)?;
         Ok(())
     }
 
     pub fn schedule_cluster(&mut self, cluster: usize, time: u64) -> Result<(), AikaError> {
-        let clusters = self.planets.len();
+        let clusters = self.clusters.len();
         if clusters <= cluster {
             return Err(AikaError::InvalidClusterId(clusters, cluster));
         }
-        let actors = self.planets[cluster].actors.len();
+        let actors = self.clusters[cluster].actors.len();
         for i in 0..actors {
-            self.planets[cluster].schedule(time, i)?;
+            self.clusters[cluster].schedule(time, i)?;
         }
         Ok(())
     }
 
     pub fn schedule_all(&mut self, time: u64) -> Result<(), AikaError> {
-        let clusters = self.planets.len();
+        let clusters = self.clusters.len();
         for cluster in 0..clusters {
-            let actors = self.planets[cluster].actors.len();
+            let actors = self.clusters[cluster].actors.len();
             for i in 0..actors {
-                self.planets[cluster].schedule(time, i)?;
+                self.clusters[cluster].schedule(time, i)?;
             }
         }
         Ok(())
     }
 
-    pub fn run(self, mode: RunMode) -> Result<Self, AikaError> {
+    pub fn run(mut self, mode: RunMode) -> Result<Self, AikaError> {
         match self.check_ready() {
             Ok(_) => {}
             Err(err) => match err {
@@ -158,23 +169,25 @@ impl<
             },
         }
 
-        let num_threads = self.planets.len() + 1;
+        let num_threads = self.clusters.len() + 2;
         let barrier = Arc::new(Barrier::new(num_threads));
         let start_time = Arc::new(Mutex::new(None::<Instant>));
 
         let mut pfiles = vec![];
-        let mut gfile = None;
         if RunMode::Debug == mode {
-            let mut files = setup_hlocal_logging(self.planets.len())
+            let mut files = setup_hlocal_logging(self.clusters.len())
                 .map_err(|_| AikaError::LoggingSetupFailure)?;
-            gfile = files.pop();
+            let busfile = files.pop().unwrap();
+            let gvtfile = files.pop().unwrap();
+            self.substrate.as_mut().unwrap().set_log((gvtfile, busfile));
             pfiles = files;
         }
 
-        let mut galaxy = self.galaxy.unwrap();
-        let planets = self.planets;
+        let (gvt, bus) = self.substrate.unwrap().split_substrate()?;
+
+        let cluster = self.clusters;
         let phandles = match mode {
-            RunMode::Fast => planets
+            RunMode::Fast => cluster
                 .into_iter()
                 .enumerate()
                 .map(|(i, planet)| {
@@ -193,8 +206,8 @@ impl<
                 })
                 .collect::<Result<Vec<_>, _>>(),
             RunMode::Debug => {
-                let planets = planets.into_iter().zip(pfiles).collect::<Vec<_>>();
-                planets
+                let cluster = cluster.into_iter().zip(pfiles).collect::<Vec<_>>();
+                cluster
                     .into_iter()
                     .enumerate()
                     .map(|(i, (mut planet, file))| {
@@ -220,32 +233,41 @@ impl<
                     .collect::<Result<Vec<_>, _>>()
             }
         }?;
-
+        let barrier_clone = Arc::clone(&barrier);
         let ghandle = std::thread::Builder::new()
-            .name("Galaxy".to_owned())
+            .name("GVT Consensus".to_owned())
             .spawn(move || {
-                let galaxy = match mode {
+                let gvt = match mode {
                     RunMode::Fast => {
-                        barrier.wait();
-                        galaxy.master()?
+                        barrier_clone.wait();
+                        gvt.master()?
                     }
                     RunMode::Debug => {
-                        let gfile = gfile.unwrap();
-                        galaxy.set_log(gfile);
-                        barrier.wait();
-                        galaxy.master_debug()?
+                        barrier_clone.wait();
+                        gvt.master_debug()?
                     }
                 };
-                Ok::<Galaxy<BLOCK_BW, MSG_BW, MessageType>, AikaError>(galaxy)
+                Ok::<GVT<BLOCK_BW>, AikaError>(gvt)
             })
             .map_err(|_| AikaError::ThreadPanic)?;
 
-        let mut planets = Vec::new();
+        let bhandle = std::thread::Builder::new()
+            .name("GVT Consensus".to_owned())
+            .spawn(move || {
+                barrier.wait();
+                let bus = bus.master()?;
+                Ok::<MessageBus<MSG_BW, MessageType>, AikaError>(bus)
+            })
+            .map_err(|_| AikaError::ThreadPanic)?;
+
+        let mut clusters = Vec::new();
         for handle in phandles {
             let planet = handle.join().map_err(|_| AikaError::ThreadPanic)??;
-            planets.push(planet);
+            clusters.push(planet);
         }
-        let galaxy = Some(ghandle.join().map_err(|_| AikaError::ThreadPanic)??);
+        let gvt = ghandle.join().map_err(|_| AikaError::ThreadPanic)??;
+        let bus = bhandle.join().map_err(|_| AikaError::ThreadPanic)??;
+
         if mode == RunMode::Debug {
             let execution_time = {
                 let start = start_time.lock().unwrap();
@@ -253,22 +275,23 @@ impl<
             };
             println!("Runtime: {execution_time:?}")
         }
+        let substrate = Some(Substrate::rejoin_substrate(gvt, bus));
         Ok(Self {
-            galaxy,
-            planets,
+            substrate,
+            clusters,
             configured: true,
         })
     }
 
     fn check_ready(&self) -> Result<(), Option<usize>> {
-        if self.galaxy.is_none() {
+        if self.substrate.is_none() {
             return Err(None);
         }
-        let galaxy = self.galaxy.as_ref().unwrap();
-        if galaxy.registered != galaxy.planet_count {
+        let substrate = self.substrate.as_ref().unwrap();
+        if substrate.registered != substrate.planet_count {
             return Err(None);
         }
-        for (i, planet) in self.planets.iter().enumerate() {
+        for (i, planet) in self.clusters.iter().enumerate() {
             if planet.actors.is_empty() {
                 return Err(Some(i));
             }
@@ -421,8 +444,7 @@ mod unit_tests {
                     }
                 }
             }
-            Ok(SchedulingTask::Timeout(1)
-            )
+            Ok(SchedulingTask::Timeout(1))
         }
     }
 
@@ -482,7 +504,7 @@ mod unit_tests {
         block_dur: u64,
     ) -> Result<
         (
-            Galaxy<BLOCK_BANDWIDTH, MSG_BANDWIDTH, MessageType>,
+            Substrate<BLOCK_BANDWIDTH, MSG_BANDWIDTH, MessageType>,
             Planet<BLOCK_BANDWIDTH, MSG_BANDWIDTH, CLOCK_BW, CLOCK_SCALES, MessageType>,
         ),
         AikaError,
@@ -490,17 +512,17 @@ mod unit_tests {
     where
         TestAgent: ConnectedActor<MessageType>,
     {
-        let mut galaxy = Galaxy::<BLOCK_BANDWIDTH, MSG_BANDWIDTH, MessageType>::new(6, 12)?;
-        galaxy.set_time_scale(terminal);
-        galaxy.with_block_duration(block_dur);
-        let mut planet = galaxy.spawn_planet::<CLOCK_BW, CLOCK_SCALES>(SimpleUnified {
+        let mut substrate = Substrate::<BLOCK_BANDWIDTH, MSG_BANDWIDTH, MessageType>::new(1, 12)?;
+        substrate.set_time_scale(terminal);
+        substrate.with_block_duration(block_dur);
+        let mut planet = substrate.spawn_cluster::<CLOCK_BW, CLOCK_SCALES>(SimpleUnified {
             inner: Journal::init(1024),
         })?;
         for j in 0..AGENTS {
             let actor = TestAgent::new(j);
             planet.spawn_actor(actor);
         }
-        Ok((galaxy, planet))
+        Ok((substrate, planet))
     }
 
     fn schedule_all<
@@ -508,11 +530,11 @@ mod unit_tests {
         const CLOCK_SCALES: usize,
         MessageType: Pod + Zeroable + Clone,
     >(
-        planets: &mut Planet<BLOCK_BANDWIDTH, MSG_BANDWIDTH, CLOCK_BW, CLOCK_SCALES, MessageType>,
+        cluster: &mut Planet<BLOCK_BANDWIDTH, MSG_BANDWIDTH, CLOCK_BW, CLOCK_SCALES, MessageType>,
         time: u64,
     ) -> Result<(), AikaError> {
         for i in 0..AGENTS {
-            planets.schedule(time, i)?;
+            cluster.schedule(time, i)?;
         }
         Ok(())
     }
@@ -528,20 +550,24 @@ mod unit_tests {
 
     #[test]
     fn test_simple_setup() {
-        let (galaxy, mut planets) = create_setup::<64, 2, TestMessage>(1, 1).unwrap();
-        schedule_all(&mut planets, 0).unwrap();
-        let ghandle = thread::spawn(move || galaxy.master());
-        let phandle = thread::spawn(move || planets.run());
+        let (substrate, mut cluster) = create_setup::<64, 2, TestMessage>(1, 1).unwrap();
+        let (gvt, bus) = substrate.split_substrate().unwrap();
+        schedule_all(&mut cluster, 0).unwrap();
+        let ghandle = thread::spawn(move || gvt.master());
+        let bhandle = thread::spawn(move || bus.master());
+        let phandle = thread::spawn(move || cluster.run());
 
-        let galaxy_result = ghandle.join().expect("Galaxy thread panicked");
-        let planet_result = phandle.join().expect("Planet thread panicked");
+        let substrate_result = ghandle.join().expect("Substrate thread panicked.");
+        let bus_result = bhandle.join().expect("Bus panicked.");
+        let planet_result = phandle.join().expect("Planet thread panicked.");
 
         // Ensure both threads completed successfully
-        assert!(galaxy_result.is_ok());
+        assert!(substrate_result.is_ok());
         assert!(
             planet_result.is_ok(),
             "Planet run loop failed: {planet_result:?}"
         );
+        assert!(bus_result.is_ok())
     }
 
     #[test]
@@ -582,9 +608,9 @@ mod unit_tests {
 
     #[test]
     fn test_rollback_accounting() {
-        let mut galaxy: Galaxy<8, 8, TestMessage> = Galaxy::new(1, 1).unwrap();
-        let mut planet = galaxy
-            .spawn_planet::<16, 2>(SimpleUnified {
+        let mut substrate: Substrate<8, 8, TestMessage> = Substrate::new(1, 1).unwrap();
+        let mut planet = substrate
+            .spawn_cluster::<16, 2>(SimpleUnified {
                 inner: Journal::init(1024),
             })
             .unwrap();
@@ -628,12 +654,12 @@ mod unit_tests {
             _ => panic!("Expected TimeTravel error"),
         }
 
-        let (_, mut planets) = create_setup::<64, 2, TestMessage>(50, 1).unwrap();
-        planets.spawn_actor(TestAgent::new(0));
-        planets.spawn_actor(TestAgent::new(1));
+        let (_, mut cluster) = create_setup::<64, 2, TestMessage>(50, 1).unwrap();
+        cluster.spawn_actor(TestAgent::new(0));
+        cluster.spawn_actor(TestAgent::new(1));
         for i in 0..100 {
-            planets.commit_mail(Msg::new(TestMessage, i, i + 10, 0, Some(1)));
-            planets.context.anti_msgs.write(
+            cluster.commit_mail(Msg::new(TestMessage, i, i + 10, 0, Some(1)));
+            cluster.context.anti_msgs.write(
                 Mail::write_letter(
                     Transfer::<TestMessage>::AntiMsg(AntiMsg::new(i, i + 10, 0, Some(1))),
                     0,
@@ -644,11 +670,11 @@ mod unit_tests {
             );
         }
         for _ in 0..50 {
-            planets.step().unwrap();
+            cluster.step().unwrap();
         }
-        planets.rollback(25).unwrap();
+        cluster.rollback(25).unwrap();
         assert_eq!(
-            planets
+            cluster
                 .context
                 .anti_msgs
                 .read_all::<Mail<TestMessage>>()
@@ -656,7 +682,7 @@ mod unit_tests {
             25
         );
         assert_eq!(
-            planets
+            cluster
                 .context
                 .anti_msgs
                 .read_state::<Mail<TestMessage>>()
@@ -770,7 +796,7 @@ mod messaging_tests {
 
         stager.schedule_cluster(0, 1).unwrap();
 
-        stager.run(RunMode::Fast).unwrap();
+        stager.run(RunMode::Debug).unwrap();
     }
 
     #[test]
@@ -778,7 +804,7 @@ mod messaging_tests {
         let mut stager: Stager<BLOCK_BW, MSG_BW, CLOCK_BW, CLOCK_SCALES, Message> =
             Stager::new().unwrap();
 
-        let config = Config::new(1, 128, 20, 2048, 10000000);
+        let config = Config::new(1, 128, 20, 20480, 10000000);
         stager.config(config).unwrap();
 
         stager.create_cluster(Stateless).unwrap();
@@ -794,32 +820,31 @@ mod messaging_tests {
 
     #[test]
     fn test_intercluster_messaging() {
-        let mut stager: Stager<BLOCK_BW, MSG_BW, CLOCK_BW, CLOCK_SCALES, Message> =
-            Stager::new().unwrap();
+        let mut stager: Stager<216, 1024, CLOCK_BW, CLOCK_SCALES, Message> = Stager::new().unwrap();
 
-        let config = Config::new(2, 128, 20, 2048, 10);
+        let config = Config::new(2, 128, 128, 2048, 10);
         stager.config(config).unwrap();
 
         stager.create_cluster(Stateless).unwrap();
         stager.create_cluster(Stateless).unwrap();
 
         stager
-            .spawn_actor_on_cluster(0, MessagingActor::new(Some(0), 1, 1, 1))
+            .spawn_actor_on_cluster(0, MessagingActor::new(Some(0), 1, 5, 1))
             .unwrap();
         stager
-            .spawn_actor_on_cluster(1, MessagingActor::new(Some(0), 0, 1, 1))
+            .spawn_actor_on_cluster(1, MessagingActor::new(Some(0), 0, 5, 1))
             .unwrap();
 
         stager.schedule_cluster(0, 1).unwrap();
         stager.schedule_cluster(1, 1).unwrap();
 
-        stager.run(RunMode::Debug).unwrap();
+        stager.run(RunMode::Fast).unwrap();
     }
 
     #[test]
     fn test_intercluster_messaging_heavy() {
-        let mut stager = stager!(Message, MSG_BW = { 16 * 1024 }, BLOCK_BW = 128 ).unwrap();
-        let config = Config::new(4, 32, 20, 2048, 10);
+        let mut stager = stager!(Message, MSG_BW = { 16 * 1024 }, BLOCK_BW = 128).unwrap();
+        let config = Config::new(4, 32, 48, 2048, 10);
         stager.config(config).unwrap();
 
         stager.create_cluster(Stateless).unwrap();
@@ -828,14 +853,17 @@ mod messaging_tests {
         stager.create_cluster(Stateless).unwrap();
 
         for i in 0..4 {
-            for j in 0..2000 {
+            for j in 0..100 {
                 stager
-                    .spawn_actor_on_cluster(i, MessagingActor::new(Some((j + 1) % 2000), (i + 1) % 4, 1, 1))
+                    .spawn_actor_on_cluster(
+                        i,
+                        MessagingActor::new(Some((j + 1) % 100), (i + 1) % 4, 2, 2),
+                    )
                     .unwrap();
             }
         }
 
         stager.schedule_all(1).unwrap();
-        stager.run(RunMode::Debug).unwrap();
+        stager.run(RunMode::Fast).unwrap();
     }
 }

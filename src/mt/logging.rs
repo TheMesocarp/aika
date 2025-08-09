@@ -33,6 +33,7 @@ pub(crate) fn setup_hlocal_logging(
     }
 
     files.push(init_log_file(&folder_name, "GVT.log")?);
+    files.push(init_log_file(&folder_name, "MessageBus.log")?);
 
     Ok(files)
 }

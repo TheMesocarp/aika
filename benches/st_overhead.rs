@@ -1,7 +1,7 @@
 use aika::{
     actors::{Actor, Context},
     env::Stateless,
-    objects::{SchedulingTask},
+    objects::SchedulingTask,
     st::LonePlanet,
     AikaError,
 };
@@ -25,8 +25,11 @@ impl ThroughputAgent {
 }
 
 impl Actor<()> for ThroughputAgent {
-    fn step(&mut self, _context: &mut Context<()>, _id: usize) -> Result<SchedulingTask, AikaError> {
-
+    fn step(
+        &mut self,
+        _context: &mut Context<()>,
+        _id: usize,
+    ) -> Result<SchedulingTask, AikaError> {
         if self.remaining_steps > 0 {
             self.remaining_steps -= 1;
             // Just timeout for 1 step - minimal work

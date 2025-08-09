@@ -1,17 +1,39 @@
-use std::{fs::File, io::Write, time::Instant};
+use std::{
+    fs::File,
+    io::Write,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    time::{Duration, Instant},
+};
 
 use bytemuck::{Pod, Zeroable};
-use mesocarp::{comms::mailbox::ThreadedMessenger, MesoError};
+use mesocarp::comms::buses::ThreadedMessenger;
 
-use crate::{env::Environment, mt::{consensus::{Block, ComputeLayout, Consensus}, engines::{hlocal::Planet, HTime}}, objects::Mail, AikaError};
-
+use crate::{
+    env::Environment,
+    mt::{
+        consensus::{Block, ComputeLayout, Consensus},
+        engines::{
+            hlocal::{bus::MessageBus, Planet},
+            HTime,
+        },
+    },
+    objects::Mail,
+    AikaError,
+};
 
 #[derive(Debug)]
-/// A `Galaxy` is an inter-cluster message bus and GVT updater, intended to own its own thread.
-pub struct Galaxy<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + Clone> {
+/// A `Substrate` is an inter-cluster message bus and GVT updater, intended to own its own thread.
+pub struct Substrate<
+    const BLOCK_BW: usize,
+    const MSG_BW: usize,
+    MessageType: Pod + Zeroable + Clone,
+> {
     /// The temporal consensus routine for an updted GVT computation.
     pub consensus: Consensus<BLOCK_BW>,
-    pub(crate) interplanetary_messenger: ThreadedMessenger<MSG_BW, Mail<MessageType>>,
+    pub(crate) messenger: ThreadedMessenger<MSG_BW, Mail<MessageType>>,
     /// Current time information.
     pub time: HTime,
     /// Maximum duration of a block. Also the expected length of a block unless the simulation terminates early.
@@ -20,29 +42,27 @@ pub struct Galaxy<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod +
     pub registered: usize,
     /// Maximum number of allowed clusters.
     pub planet_count: usize,
-    /// The GVT thread is waiting for in flight messages to arrive before closing
-    close: (bool, bool),
     /// Log file for the last run.
-    log: Option<File>,
+    log: Option<(File, File)>,
     /// start Instant of the simulation, for debug tracking.
     start: Instant,
 }
 
 impl<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + Clone>
-    Galaxy<BLOCK_BW, MSG_BW, MessageType>
+    Substrate<BLOCK_BW, MSG_BW, MessageType>
 {
-    /// Create a new `Galaxy` with `planet_count: usize` maximum number of clusters, and `block_batch_size` arena allocation sizing for block logging.
+    /// Create a new `Substrate` with `planet_count: usize` maximum number of clusters, and `block_batch_size` arena allocation sizing for block logging.
     pub fn new(planet_count: usize, block_batch_size: usize) -> Result<Self, AikaError> {
         let start = Instant::now();
         let mut planet_ids = Vec::new();
         for i in 0..planet_count {
             planet_ids.push(i);
         }
-        let messenger = ThreadedMessenger::new(planet_ids)?;
+        let messenger = ThreadedMessenger::new(planet_count)?;
 
         Ok(Self {
             consensus: Consensus::new(ComputeLayout::HubSpoke, block_batch_size)?,
-            interplanetary_messenger: messenger,
+            messenger,
             time: HTime {
                 gvt: 0,
                 cp_hz: u64::MAX,
@@ -51,7 +71,6 @@ impl<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + C
             max_block_dur: 64,
             registered: 0,
             planet_count,
-            close: (false, false),
             log: None,
             start,
         })
@@ -72,8 +91,8 @@ impl<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + C
         self.max_block_dur = duration;
     }
 
-    /// Spawn a new simulation cluster on this `Galaxy`'s coordination infrastructure.
-    pub fn spawn_planet<const CLOCK_BW: usize, const CLOCK_SCALES: usize>(
+    /// Spawn a new simulation cluster on this `Substrate`'s coordination infrastructure.
+    pub fn spawn_cluster<const CLOCK_BW: usize, const CLOCK_SCALES: usize>(
         &mut self,
         env: impl Environment + 'static,
     ) -> Result<Planet<BLOCK_BW, MSG_BW, CLOCK_BW, CLOCK_SCALES, MessageType>, AikaError> {
@@ -82,7 +101,7 @@ impl<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + C
         }
         let id = self.registered;
         self.registered += 1;
-        let messenger_account = self.interplanetary_messenger.get_user(id)?;
+        let messenger_account = self.messenger.get_user()?;
         let mut spoke = self.consensus.register_producer(None)?.unwrap();
         spoke.block.max_dur = self.max_block_dur;
         spoke.block.dur = self.max_block_dur;
@@ -90,33 +109,99 @@ impl<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + C
     }
 
     // Sets the log file
-    pub fn set_log(&mut self, file: File) {
+    pub fn set_log(&mut self, file: (File, File)) {
         self.log = Some(file);
     }
 
-    // Poll and and deliver the mail to the appropriate cluster ID if found.
-    fn deliver_the_mail(&mut self) -> Result<(), AikaError> {
-        match self.interplanetary_messenger.poll() {
-            Ok(msgs) => {
-                if let Some(file) = &mut self.log {
-                    writeln!(
-                        file,
-                        "[{}] Found {:?} messages in-transit.",
-                        self.start.elapsed().as_micros(),
-                        msgs.len()
-                    )
-                    .map_err(|_| AikaError::LoggingWriteError)?;
-                }
-                self.interplanetary_messenger.deliver(msgs)?;
-                Ok(())
-            }
-            Err(err) => {
-                if let MesoError::NoDirectCommsToShare = err {
-                    Ok(())
-                } else {
-                    Err(AikaError::MesoError(err))
-                }
-            }
+    pub fn split_substrate(
+        self,
+    ) -> Result<(GVT<BLOCK_BW>, MessageBus<MSG_BW, MessageType>), AikaError> {
+        if self.registered != self.planet_count {
+            return Err(AikaError::NotAllClustersRegistered);
+        }
+        let mut gvtfile = None;
+        let mut busfile = None;
+        if self.log.is_some() {
+            let (gfile, bfile) = self.log.unwrap();
+            gvtfile = Some(gfile);
+            busfile = Some(bfile);
+        }
+
+        let term = Arc::new(AtomicBool::new(false));
+        let cloned = Arc::clone(&term);
+
+        let gvt = GVT::from_substrate(
+            self.consensus,
+            self.time,
+            self.max_block_dur,
+            gvtfile,
+            self.start,
+            term,
+        );
+        let bus = MessageBus::from_substrate(self.messenger, busfile, self.start, cloned);
+        Ok((gvt, bus))
+    }
+
+    pub fn rejoin_substrate(gvt: GVT<BLOCK_BW>, bus: MessageBus<MSG_BW, MessageType>) -> Self {
+        let count = bus.messenger.capacity;
+        let mut log = None;
+        if bus.log.is_some() {
+            let blog = bus.log.unwrap();
+            let glog = gvt.log.unwrap();
+            log = Some((glog, blog));
+        }
+        Self {
+            consensus: gvt.consensus,
+            messenger: bus.messenger,
+            time: gvt.time,
+            max_block_dur: gvt.max_block_dur,
+            registered: count,
+            planet_count: count,
+            log,
+            start: gvt.start,
+        }
+    }
+}
+
+unsafe impl<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + Clone> Send
+    for Substrate<BLOCK_BW, MSG_BW, MessageType>
+{
+}
+unsafe impl<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + Clone> Sync
+    for Substrate<BLOCK_BW, MSG_BW, MessageType>
+{
+}
+
+pub struct GVT<const BLOCK_BW: usize> {
+    /// The temporal consensus routine for an updted GVT computation.
+    pub consensus: Consensus<BLOCK_BW>,
+    /// Current time information.
+    pub time: HTime,
+    /// Maximum duration of a block. Also the expected length of a block unless the simulation terminates early.
+    pub max_block_dur: u64,
+    /// Log file for the last run.
+    log: Option<File>,
+    /// start Instant of the simulation, for debug tracking.
+    start: Instant,
+    terminal_flag: Arc<AtomicBool>,
+}
+
+impl<const BLOCK_BW: usize> GVT<BLOCK_BW> {
+    fn from_substrate(
+        consensus: Consensus<BLOCK_BW>,
+        time: HTime,
+        max_block_dur: u64,
+        log: Option<File>,
+        start: Instant,
+        terminal_flag: Arc<AtomicBool>,
+    ) -> Self {
+        Self {
+            consensus,
+            time,
+            max_block_dur,
+            log,
+            start,
+            terminal_flag,
         }
     }
 
@@ -149,14 +234,8 @@ impl<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + C
             self.time.gvt = self.consensus.safe_point;
             // mail
             for _ in 0..10 {
-                if !self.close.1 {
-                    self.deliver_the_mail()?;
-                }
                 self.consensus.poll_n_slot()?;
-                while let Some(new_gvt) = self
-                    .consensus
-                    .cusp()?
-                {
+                while let Some(new_gvt) = self.consensus.cusp()? {
                     if new_gvt == self.time.gvt {
                         break;
                     }
@@ -164,12 +243,11 @@ impl<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + C
                 }
             }
 
-            if self.check_all_terminal()? {
-                if self.time.gvt == self.time.terminal {
-                    break;
-                }
+            if self.check_all_terminal()? && self.time.gvt == self.time.terminal {
+                break;
             }
         }
+        self.terminal_flag.store(true, Ordering::Release);
         Ok(self)
     }
 
@@ -198,9 +276,6 @@ impl<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + C
             )
             .map_err(|_| AikaError::LoggingWriteError)?;
             for _ in 0..10 {
-                if !self.close.1 {
-                    self.deliver_the_mail()?;
-                }
                 self.consensus.poll_n_slot()?;
                 while let Some(new_gvt) = self
                     .consensus
@@ -238,18 +313,19 @@ impl<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + C
                     break;
                 }
             }
+            std::thread::sleep(Duration::from_nanos(5));
         }
+        if let Some(log) = &mut self.log {
+            writeln!(
+                log,
+                "[{}] Sending termination flag to message bus.",
+                self.start.elapsed().as_micros()
+            )
+            .map_err(|_| AikaError::LoggingWriteError)?;
+        }
+        self.terminal_flag.store(true, Ordering::SeqCst);
         Ok(self)
     }
-}
-
-unsafe impl<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + Clone> Send
-    for Galaxy<BLOCK_BW, MSG_BW, MessageType>
-{
-}
-unsafe impl<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + Clone> Sync
-    for Galaxy<BLOCK_BW, MSG_BW, MessageType>
-{
 }
 
 #[cfg(test)]
@@ -258,30 +334,39 @@ mod unit_tests {
     use crate::actors::{Actor, ConnectedActor, Context};
     use crate::env::Stateless;
     use crate::objects::{Msg, SchedulingTask};
-    
+
     #[derive(Debug, Copy, Clone)]
     #[repr(C)]
     struct TestMsg;
     unsafe impl Pod for TestMsg {}
     unsafe impl Zeroable for TestMsg {}
-    
+
     #[derive(Debug)]
     #[allow(dead_code)]
     struct DummyActor;
     impl Actor<TestMsg> for DummyActor {
-        fn step(&mut self, _: &mut Context<TestMsg>, _id: usize) -> Result<SchedulingTask, AikaError> {
+        fn step(
+            &mut self,
+            _: &mut Context<TestMsg>,
+            _id: usize,
+        ) -> Result<SchedulingTask, AikaError> {
             Ok(SchedulingTask::Wait)
         }
     }
     impl ConnectedActor<TestMsg> for DummyActor {
-        fn read_message(&mut self, _: &mut Context<TestMsg>, _: Msg<TestMsg>, _: usize) -> Result<(), AikaError> {
+        fn read_message(
+            &mut self,
+            _: &mut Context<TestMsg>,
+            _: Msg<TestMsg>,
+            _: usize,
+        ) -> Result<(), AikaError> {
             Ok(())
         }
     }
 
     #[test]
     fn test_galaxy_creation() {
-        let galaxy: Galaxy<8, 16, TestMsg> = Galaxy::new(4, 128).unwrap();
+        let galaxy: Substrate<8, 16, TestMsg> = Substrate::new(4, 128).unwrap();
         assert_eq!(galaxy.planet_count, 4);
         assert_eq!(galaxy.registered, 0);
         assert_eq!(galaxy.time.terminal, u64::MAX);
@@ -291,88 +376,101 @@ mod unit_tests {
 
     #[test]
     fn test_galaxy_configuration() {
-        let mut galaxy: Galaxy<8, 16, TestMsg> = Galaxy::new(2, 64).unwrap();
-        
+        let mut galaxy: Substrate<8, 16, TestMsg> = Substrate::new(2, 64).unwrap();
+
         galaxy.set_time_scale(1000);
         assert_eq!(galaxy.time.terminal, 1000);
-        
+
         galaxy.checkpoints(50);
         assert_eq!(galaxy.time.cp_hz, 50);
-        
+
         galaxy.with_block_duration(25);
         assert_eq!(galaxy.max_block_dur, 25);
     }
 
     #[test]
     fn test_planet_spawning() {
-        let mut galaxy: Galaxy<8, 16, TestMsg> = Galaxy::new(3, 64).unwrap();
-        
-        let planet1 = galaxy.spawn_planet::<32, 2>(Stateless).unwrap();
+        let mut galaxy: Substrate<8, 16, TestMsg> = Substrate::new(3, 64).unwrap();
+
+        let planet1 = galaxy.spawn_cluster::<32, 2>(Stateless).unwrap();
         assert_eq!(galaxy.registered, 1);
         assert_eq!(planet1.context.cluster_id, 0);
-        
-        let planet2 = galaxy.spawn_planet::<32, 2>(Stateless).unwrap();
+
+        let planet2 = galaxy.spawn_cluster::<32, 2>(Stateless).unwrap();
         assert_eq!(galaxy.registered, 2);
         assert_eq!(planet2.context.cluster_id, 1);
-        
-        let planet3 = galaxy.spawn_planet::<32, 2>(Stateless).unwrap();
+
+        let planet3 = galaxy.spawn_cluster::<32, 2>(Stateless).unwrap();
         assert_eq!(galaxy.registered, 3);
         assert_eq!(planet3.context.cluster_id, 2);
-        
-        let result = galaxy.spawn_planet::<32, 2>(Stateless);
+
+        let result = galaxy.spawn_cluster::<32, 2>(Stateless);
         assert!(matches!(result, Err(AikaError::MaximumClustersAllowed)));
     }
 
     #[test]
     fn test_galaxy_terminal_time_requirement() {
-        let galaxy: Galaxy<8, 16, TestMsg> = Galaxy::new(2, 64).unwrap();
+        let substrate: Substrate<8, 16, TestMsg> = Substrate::new(2, 64).unwrap();
+        let (galaxy, _) = substrate.split_substrate().unwrap();
         let result = galaxy.master();
         assert!(matches!(result, Err(AikaError::MustSetTerminalTime)));
     }
 
     #[test]
     fn test_message_delivery() {
-        let mut galaxy: Galaxy<8, 16, TestMsg> = Galaxy::new(2, 64).unwrap();
+        let mut galaxy: Substrate<8, 16, TestMsg> = Substrate::new(2, 64).unwrap();
         galaxy.set_time_scale(100);
-        
-        let mut planet1 = galaxy.spawn_planet::<32, 2>(Stateless).unwrap();
-        let mut planet2 = galaxy.spawn_planet::<32, 2>(Stateless).unwrap();
-        
+
+        let mut planet1 = galaxy.spawn_cluster::<32, 2>(Stateless).unwrap();
+        let mut planet2 = galaxy.spawn_cluster::<32, 2>(Stateless).unwrap();
+
         let msg = Msg::new(TestMsg, 0, 10, 0, Some(0));
         planet1.context.send_mail(msg, 1).unwrap();
-        
+
         let sends = std::mem::take(&mut planet1.context.outbox);
+
+        let (_, mut bus) = galaxy.split_substrate().unwrap();
+
         for mail in sends {
             planet1.message_user.send(mail).unwrap();
         }
-        
-        galaxy.deliver_the_mail().unwrap();
-        
+
+        bus.deliver_the_mail().unwrap();
+
         let received = planet2.message_user.poll();
         assert!(received.is_some());
     }
 
-    #[test] 
+    #[test]
     fn test_check_all_terminal() {
-        let mut galaxy: Galaxy<8, 16, TestMsg> = Galaxy::new(2, 64).unwrap();
+        let mut galaxy: Substrate<8, 16, TestMsg> = Substrate::new(2, 64).unwrap();
         galaxy.set_time_scale(100);
         galaxy.with_block_duration(50);
-        
-        let mut planet1 = galaxy.spawn_planet::<32, 2>(Stateless).unwrap();
-        let mut planet2 = galaxy.spawn_planet::<32, 2>(Stateless).unwrap();
-        
+
+        let mut planet1 = galaxy.spawn_cluster::<32, 2>(Stateless).unwrap();
+        let mut planet2 = galaxy.spawn_cluster::<32, 2>(Stateless).unwrap();
+
+        let (mut galaxy, _) = galaxy.split_substrate().unwrap();
         assert!(!galaxy.check_all_terminal().unwrap());
-        
+
         planet1.blocks.block.start = 100;
         planet1.blocks.block.dur = 0;
         planet2.blocks.block.start = 100;
         planet2.blocks.block.dur = 0;
-        
-        planet1.blocks.submitter.write(planet1.blocks.block).unwrap();
-        planet2.blocks.submitter.write(planet2.blocks.block).unwrap();
-        
+
+        planet1
+            .blocks
+            .submitter
+            .write(planet1.blocks.block)
+            .unwrap();
+        planet2
+            .blocks
+            .submitter
+            .write(planet2.blocks.block)
+            .unwrap();
+
         galaxy.consensus.poll_n_slot().unwrap();
-        
+
         galaxy.time.gvt = 100;
         assert!(galaxy.check_all_terminal().unwrap());
     }

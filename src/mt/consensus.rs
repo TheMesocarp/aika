@@ -93,7 +93,7 @@ impl<const BANDWIDTH: usize> Block<BANDWIDTH> {
     }
 
     /// Increment the appropriate receive counter given the time stamp and correction flag.
-    pub fn recv(&mut self, commit_time: u64, termination_time: u64) -> Result<(), MesoError> {
+    pub fn recv(&mut self, commit_time: u64, termination_time: u64) -> Result<(), AikaError> {
         if commit_time < self.start {
             let real_diff = self.start - commit_time - 1;
             if self.start > termination_time {
@@ -101,11 +101,13 @@ impl<const BANDWIDTH: usize> Block<BANDWIDTH> {
                 let term_diff = self.start - termination_time - 1;
                 let blocks_since = term_diff / self.max_dur;
                 let until_term = real_diff - term_diff;
-                
+
                 let bremaining = if leftovers < until_term {
                     let remaining = until_term - leftovers - 1;
                     remaining / self.max_dur
-                } else { 0 };
+                } else {
+                    0
+                };
                 let total = blocks_since + 1 + bremaining;
                 self.delayed_recvs[total as usize] += 1;
                 return Ok(());
@@ -113,7 +115,7 @@ impl<const BANDWIDTH: usize> Block<BANDWIDTH> {
             let real_diff = self.start - commit_time - 1;
             let blocks = (real_diff / self.dur) as usize;
             if blocks >= BANDWIDTH {
-                return Err(MesoError::DistantBlocks(blocks));
+                return Err(AikaError::DistantBlocks(blocks));
             }
             self.delayed_recvs[blocks] += 1;
         } else {
@@ -123,7 +125,7 @@ impl<const BANDWIDTH: usize> Block<BANDWIDTH> {
     }
 
     /// Decrement the appropiate correction counter when sending an outgoing anti-message.
-    pub fn send_anti(&mut self, commit_time: u64) -> Result<(), MesoError> {
+    pub fn send_anti(&mut self, commit_time: u64) -> Result<(), AikaError> {
         if commit_time >= self.start {
             self.local_corrections -= 1;
             return Ok(());
@@ -131,14 +133,14 @@ impl<const BANDWIDTH: usize> Block<BANDWIDTH> {
         let real_diff = self.start - commit_time - 1;
         let blocks = (real_diff / self.max_dur) as usize;
         if blocks >= BANDWIDTH {
-            return Err(MesoError::DistantBlocks(blocks));
+            return Err(AikaError::DistantBlocks(blocks));
         }
         self.delayed_corrections[blocks] -= 1;
         Ok(())
     }
 
     /// Acknowledge the receive of an anti-message and decrement the appropiate correction counter or recv counter.
-    pub fn recv_anti(&mut self, commit_time: u64, termination_time: u64) -> Result<(), MesoError> {
+    pub fn recv_anti(&mut self, commit_time: u64, termination_time: u64) -> Result<(), AikaError> {
         if commit_time < self.start {
             let real_diff = self.start - commit_time - 1;
             if self.start > termination_time {
@@ -146,18 +148,20 @@ impl<const BANDWIDTH: usize> Block<BANDWIDTH> {
                 let term_diff = self.start - termination_time - 1;
                 let blocks_since = term_diff / self.max_dur;
                 let until_term = real_diff - term_diff;
-                
+
                 let bremaining = if leftovers < until_term {
                     let remaining = until_term - leftovers - 1;
                     remaining / self.max_dur
-                } else { 0 };
+                } else {
+                    0
+                };
                 let total = blocks_since + 1 + bremaining;
                 self.delayed_recvs[total as usize] += 1;
                 return Ok(());
             }
             let blocks = (real_diff / self.dur) as usize;
             if blocks >= BANDWIDTH {
-                return Err(MesoError::DistantBlocks(blocks));
+                return Err(AikaError::DistantBlocks(blocks));
             }
             self.delayed_recvs[blocks] -= 1;
         } else {
@@ -372,7 +376,7 @@ impl<const BANDWIDTH: usize> Consensus<BANDWIDTH> {
     }
 
     /// Poll for new incoming blocks and slot them in their respective spots.
-    pub fn poll_n_slot(&mut self) -> Result<(), MesoError> {
+    pub fn poll_n_slot(&mut self) -> Result<(), AikaError> {
         let new_blocks = self.processor.poll()?;
         for (i, planet) in new_blocks.into_iter().enumerate() {
             if let Some(blocks) = planet {
@@ -383,7 +387,7 @@ impl<const BANDWIDTH: usize> Consensus<BANDWIDTH> {
                         continue;
                     }
                     if diff > BANDWIDTH {
-                        return Err(MesoError::DistantBlocks(diff));
+                        return Err(AikaError::DistantBlocks(diff));
                     }
                     self.queue[i][diff - 1] = Some(block);
                 }
@@ -412,7 +416,7 @@ impl<const BANDWIDTH: usize> Consensus<BANDWIDTH> {
 
     /// Check if all of the next row is received and if its safe to commit a new block or not.
     /// Output the new global time if there is any.
-    pub fn cusp(&mut self) -> Result<Option<u64>, MesoError> {
+    pub fn cusp(&mut self) -> Result<Option<u64>, AikaError> {
         if !self.next.iter().all(|x| x.is_some()) {
             return Ok(None);
         }
@@ -425,14 +429,14 @@ impl<const BANDWIDTH: usize> Consensus<BANDWIDTH> {
         let mut correction_factor = 0isize;
         for block in &mut self.next.iter_mut().flatten() {
             if block.catchup_block {
-                return Ok(None)
+                return Ok(None);
             }
             if start == dur && dur == 0 {
                 start = block.start;
                 dur = block.dur;
             }
             if dur != block.dur || start != block.start {
-                return Err(MesoError::MismatchBlockRanges);
+                return Err(AikaError::MismatchBlockRanges);
             }
             sends += block.sends;
             recvs += block.recvs_current_block;
@@ -473,7 +477,7 @@ impl<const BANDWIDTH: usize> Consensus<BANDWIDTH> {
         &mut self,
         file: &mut File,
         instant: Instant,
-    ) -> Result<Option<u64>, MesoError> {
+    ) -> Result<Option<u64>, AikaError> {
         if !self.next.iter().all(|x| x.is_some()) {
             return Ok(None);
         }
@@ -486,14 +490,14 @@ impl<const BANDWIDTH: usize> Consensus<BANDWIDTH> {
         let mut correction_factor = 0isize;
         for block in &mut self.next.iter_mut().flatten() {
             if block.catchup_block {
-                return Ok(None)
+                return Ok(None);
             }
             if start == dur && dur == 0 {
                 start = block.start;
                 dur = block.dur;
             }
             if dur != block.dur || start != block.start {
-                return Err(MesoError::MismatchBlockRanges);
+                return Err(AikaError::MismatchBlockRanges);
             }
             sends += block.sends;
             recvs += block.recvs_current_block;
@@ -522,7 +526,7 @@ impl<const BANDWIDTH: usize> Consensus<BANDWIDTH> {
             file,
             "[{:?}] Next block for each cluster is submitted with total sends: {sends}, total receives from the same block: {recvs}, with rollback corrections: {correction_factor}  and delayed receives found in later blocks: {lates}",
             instant.elapsed().as_micros(),
-        ).map_err(|_| MesoError::BuffersFull)?;
+        ).map_err(|_| MesoError::ClockSubmissionFailed)?;
         if normalized_sends - normalized_recvs == 0 {
             if dur == 0 {
                 return Ok(None);
@@ -678,7 +682,13 @@ mod unit_tests {
         println!("{gvt_update:?}");
         assert!(gvt_update.is_none());
 
-        let mut block3 = Block::new(2 * BLOCK_DURATION, BLOCK_DURATION, 2, NUM_PRODUCERS - 1, false);
+        let mut block3 = Block::new(
+            2 * BLOCK_DURATION,
+            BLOCK_DURATION,
+            2,
+            NUM_PRODUCERS - 1,
+            false,
+        );
         block3.delayed_recvs[1] += 1;
         submit_block(&mut spokes[NUM_PRODUCERS - 1], block3);
 
@@ -859,7 +869,7 @@ mod unit_tests {
         // Check for GVT update. This should fail because the blocks in `next` have mismatched start times.
         let result = consensus.cusp();
         assert!(
-            matches!(result, Err(MesoError::MismatchBlockRanges)),
+            matches!(result, Err(AikaError::MismatchBlockRanges)),
             "Consensus should reject blocks with mismatched time ranges"
         );
     }
@@ -955,7 +965,7 @@ mod unit_tests {
 
         // poll_n_slot should reject this block
         let result = consensus.poll_n_slot();
-        assert!(matches!(result, Err(MesoError::DistantBlocks(_))));
+        assert!(matches!(result, Err(AikaError::DistantBlocks(_))));
     }
 
     #[test]

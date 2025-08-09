@@ -78,5 +78,7 @@ pub enum AikaError {
     #[error("Attempted to register a compute producer that expected one layout, but another was found: {0}")]
     ComputeLayoutExpectationMismatch(ComputeLayout),
     #[error("Received a message from too distant in the past, GVT safe point is no longer safe.")]
-    DistantBlocks(usize)
+    DistantBlocks(usize),
+    #[error("Producers submitting different duration blocks.")]
+    MismatchBlockRanges,
 }

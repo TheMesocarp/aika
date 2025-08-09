@@ -76,8 +76,11 @@ impl<MessageType: Pod + Zeroable + Clone> Context<MessageType> {
 
 /// An `Actor` is an independent logical process that belongs to a `Planet` and can schedule events.
 pub trait Actor<MessageType: Clone + Pod + Zeroable>: std::fmt::Debug {
-    fn step(&mut self, env: &mut Context<MessageType>, actor_id: usize)
-        -> Result<SchedulingTask, AikaError>;
+    fn step(
+        &mut self,
+        env: &mut Context<MessageType>,
+        actor_id: usize,
+    ) -> Result<SchedulingTask, AikaError>;
 }
 
 /// A `ConnectedActor` is an independent logical process that belongs to a `Planet` and can schedule events,

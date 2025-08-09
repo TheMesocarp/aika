@@ -1,13 +1,27 @@
-use std::{cmp::{max, min, Reverse}, collections::{BTreeSet, BinaryHeap}, fs::File, io::Write, time::Instant};
+use std::{
+    cmp::{max, min, Reverse},
+    collections::{BTreeSet, BinaryHeap},
+    fs::File,
+    io::Write,
+    time::Instant,
+};
 
 use bytemuck::{Pod, Zeroable};
-use mesocarp::{comms::mailbox::{Message, ThreadedMessengerUser}, scheduling::Scheduleable};
+use mesocarp::{comms::buses::ThreadedMessengerUser, scheduling::Scheduleable};
 
-use crate::{actors::{ConnectedActor, Context}, env::Environment, mt::{consensus::{Block, BlockSpoke}, engines::HTime}, objects::{AntiMsg, Event, LocalScheduler, Mail, Msg, SchedulingTask, Transfer}, AikaError};
-
+use crate::{
+    actors::{ConnectedActor, Context},
+    env::Environment,
+    mt::{
+        consensus::{Block, BlockSpoke},
+        engines::HTime,
+    },
+    objects::{AntiMsg, Event, LocalScheduler, Mail, Msg, SchedulingTask, Transfer},
+    AikaError,
+};
 
 #[derive(Debug)]
-/// A `Planet` is a local simulation cluster within a `Galaxy` system, owns a partition of global simulation state.
+/// A `Planet` is a local simulation cluster within a `Substrate` system, owns a partition of global simulation state.
 /// It operates conservative with respect to its local actors, but allows rollbacks from causality violations
 /// triggered in inter-cluster messaging.
 pub struct Planet<
@@ -23,9 +37,11 @@ pub struct Planet<
     pub context: Context<MessageType>,
     event_system: LocalScheduler<CLOCK_BW, CLOCK_SCALES, Event>,
     local_messages: LocalScheduler<CLOCK_BW, CLOCK_SCALES, Msg<MessageType>>,
+    early_arrivals: Vec<Msg<MessageType>>,
+    early_anti_arrivals: Vec<AntiMsg>,
     pub(crate) message_user: ThreadedMessengerUser<MSG_BW, Mail<MessageType>>,
     pub(crate) blocks: BlockSpoke<BLOCK_BW>,
-    /// Current time information of the simulation. these should always be the same across simulation clusters in the same `Galaxy`.
+    /// Current time information of the simulation. these should always be the same across simulation clusters in the same `Substrate`.
     pub time: HTime,
     // checkpoint management
     last_cp_block_nmb: (usize, usize),
@@ -77,6 +93,8 @@ impl<
             context: Context::new(env, true, id, terminal),
             event_system: LocalScheduler::new()?,
             local_messages: LocalScheduler::new()?,
+            early_arrivals: Vec::new(),
+            early_anti_arrivals: Vec::new(),
             message_user,
             blocks,
             time,
@@ -114,7 +132,11 @@ impl<
             return Err(AikaError::PastTerminal);
         }
         if actor >= self.actors.len() {
-            return Err(AikaError::InvalidActorId(self.actors.len(), self.context.cluster_id, actor))
+            return Err(AikaError::InvalidActorId(
+                self.actors.len(),
+                self.context.cluster_id,
+                actor,
+            ));
         }
         let now = self.now();
         self.commit(Event::new(now, time, actor, SchedulingTask::Wait));
@@ -256,7 +278,10 @@ impl<
                             msg.from_world
                         ).map_err(|_| AikaError::LoggingWriteError)?;
                     }
-                    return Err(AikaError::MismatchedDeliveryAddress(self.context.cluster_id, to));
+                    return Err(AikaError::MismatchedDeliveryAddress(
+                        self.context.cluster_id,
+                        to,
+                    ));
                 }
             }
             let time = msg.transfer.time();
@@ -279,11 +304,31 @@ impl<
 
             match msg.open_letter() {
                 Transfer::Msg(msg) => {
-                    self.blocks.block.recv(msg.commit_time(), self.time.terminal)?;
+                    if let Some(file) = &mut self.log {
+                        writeln!(
+                            file,
+                            "[{}] found message in poll with recieve time {time}.",
+                            self.start.elapsed().as_micros(),
+                        )
+                        .map_err(|_| AikaError::LoggingWriteError)?;
+                    }
+                    if msg.commit_time() > self.blocks.block.start + self.blocks.block.dur {
+                        self.early_arrivals.push(msg);
+                        continue;
+                    }
+                    self.blocks
+                        .block
+                        .recv(msg.commit_time(), self.time.terminal)?;
                     self.commit_mail(msg)
                 }
                 Transfer::AntiMsg(anti_msg) => {
-                    self.blocks.block.recv_anti(anti_msg.commit_time(), self.time.terminal)?;
+                    if anti_msg.commit_time() > self.blocks.block.start + self.blocks.block.dur {
+                        self.early_anti_arrivals.push(anti_msg);
+                        continue;
+                    }
+                    self.blocks
+                        .block
+                        .recv_anti(anti_msg.commit_time(), self.time.terminal)?;
                     self.annihilate(anti_msg)
                 }
             }
@@ -293,7 +338,7 @@ impl<
 
     // Increment the local clock one step and submit the current block if there is a turnover.
     fn increment(&mut self) -> Result<(), AikaError> {
-        if !self.blocks.block.catchup_block || (self.blocks.block.catchup_block && (self.now() < self.blocks.block.start)) {
+        if !self.blocks.block.catchup_block || (self.now() < self.blocks.block.start) {
             self.event_system.increment();
             self.local_messages.increment();
         }
@@ -306,7 +351,8 @@ impl<
                 "[{}] Local virtual time {:?}: incremented. end time of current block {end}",
                 self.start.elapsed().as_micros(),
                 self.context.time,
-            ).map_err(|_| AikaError::LoggingWriteError)?;
+            )
+            .map_err(|_| AikaError::LoggingWriteError)?;
         }
         if self.context.time == end {
             // log current block data to initialize next block
@@ -359,10 +405,9 @@ impl<
 
             if (self.time.cp_hz != u64::MAX
                 && self.context.time
-                    == (self.time.cp_hz
-                        * self.blocks.block.max_dur
-                        * self.cp_counter)) || self.now() >= self.time.terminal
-            { 
+                    == (self.time.cp_hz * self.blocks.block.max_dur * self.cp_counter))
+                || self.now() >= self.time.terminal
+            {
                 if let Some(file) = &mut self.log {
                     writeln!(
                         file,
@@ -406,7 +451,32 @@ impl<
             )
             .map_err(|_| AikaError::LoggingWriteError)?;
         }
-        if !self.blocks.block.catchup_block || (self.blocks.block.catchup_block && (self.now() < self.blocks.block.start)) {
+
+        while !self.early_arrivals.is_empty() {
+            if self.now() >= self.early_arrivals[0].commit_time() {
+                let msg = self.early_arrivals.pop().unwrap();
+                self.blocks
+                    .block
+                    .recv(msg.commit_time(), self.time.terminal)?;
+                self.commit_mail(msg);
+                continue;
+            }
+            break;
+        }
+
+        while !self.early_anti_arrivals.is_empty() {
+            if self.now() >= self.early_anti_arrivals[0].commit_time() {
+                let msg = self.early_anti_arrivals.pop().unwrap();
+                self.blocks
+                    .block
+                    .recv_anti(msg.commit_time(), self.time.terminal)?;
+                self.annihilate(msg);
+                continue;
+            }
+            break;
+        }
+
+        if !self.blocks.block.catchup_block || (self.now() < self.blocks.block.start) {
             if let Some(file) = &mut self.log {
                 writeln!(
                     file,
@@ -490,7 +560,7 @@ impl<
         // collect and send all the sends gathered this time step
         let now = self.now();
         let sends = std::mem::take(&mut self.context.outbox);
-        if !self.blocks.block.catchup_block || (self.blocks.block.catchup_block && (self.now() < self.blocks.block.start)) {
+        if !self.blocks.block.catchup_block || (self.now() < self.blocks.block.start) {
             for mail in sends {
                 let mut local = false;
                 if Some(self.context.cluster_id) == mail.to_world {
@@ -503,9 +573,11 @@ impl<
                     if let Some(file) = &mut self.log {
                         writeln!(
                             file,
-                            "[{}] sending message to cluster {:?}.",
+                            "[{}] sending message to cluster {:?}, from actor: {:?}, to actor: {:?}",
                             self.start.elapsed().as_micros(),
-                            mail.to_world
+                            mail.to_world,
+                            mail.transfer.from(),
+                            mail.transfer.to()
                         )
                         .map_err(|_| AikaError::LoggingWriteError)?;
                     }
@@ -521,6 +593,9 @@ impl<
                     continue;
                 }
                 if !local {
+                    if mail.to_world.is_none() {
+                        // number of worlds add to sends
+                    }
                     self.blocks.block.sends += 1;
                 }
             }
@@ -550,14 +625,11 @@ impl<
             }
 
             if self.time.cp_hz != u64::MAX
-                && self.time.gvt
-                    == (self.time.cp_hz
-                        * self.blocks.block.max_dur
-                        * self.cp_counter)
+                && self.time.gvt == (self.time.cp_hz * self.blocks.block.max_dur * self.cp_counter)
                 && self.time.gvt != 0
                 && self.context.time < self.time.terminal
                 && self.time.gvt != self.context.time
-            {   
+            {
                 self.cp_counter += 1;
                 self.context.time = self.local_messages.clock.time;
                 let start = self.time.gvt;
@@ -568,8 +640,8 @@ impl<
 
                 let diff = self.time.terminal - self.now();
                 self.blocks.block.dur = min(dur, diff);
-            } 
-            for _ in 0..8 {
+            }
+            for _ in 0..16 {
                 self.poll_interplanetary_messenger()?;
             }
             // make sure time is valid to proceed.
@@ -624,14 +696,11 @@ impl<
             // }
 
             if self.time.cp_hz != u64::MAX
-                && self.time.gvt
-                    == (self.time.cp_hz
-                        * self.blocks.block.max_dur
-                        * self.cp_counter)
+                && self.time.gvt == (self.time.cp_hz * self.blocks.block.max_dur * self.cp_counter)
                 && self.time.gvt != 0
                 && self.context.time < self.time.terminal
                 && self.time.gvt != self.context.time
-            {   
+            {
                 if let Some(file) = &mut self.log {
                     writeln!(
                         file,
@@ -650,8 +719,8 @@ impl<
 
                 let diff = self.time.terminal - self.now();
                 self.blocks.block.dur = min(dur, diff);
-            } 
-            for _ in 0..8 {
+            }
+            for _ in 0..16 {
                 self.poll_interplanetary_messenger()?;
             }
             // make sure time is valid to proceed.
@@ -694,50 +763,59 @@ mod planet_tests {
     use super::*;
     use crate::actors::{Actor, ConnectedActor, Context};
     use crate::env::Stateless;
-    use crate::mt::engines::hlocal::Galaxy;
+    use crate::mt::engines::hlocal::Substrate;
     use crate::objects::{Msg, SchedulingTask};
-    
+
     #[derive(Debug, Copy, Clone)]
     #[repr(C)]
     struct TestMsg;
     unsafe impl Pod for TestMsg {}
     unsafe impl Zeroable for TestMsg {}
-    
+
     #[derive(Debug)]
     struct TestActor {
         counter: usize,
     }
-    
+
     impl Actor<TestMsg> for TestActor {
-        fn step(&mut self, _ctx: &mut Context<TestMsg>, _id: usize) -> Result<SchedulingTask, AikaError> {
+        fn step(
+            &mut self,
+            _ctx: &mut Context<TestMsg>,
+            _id: usize,
+        ) -> Result<SchedulingTask, AikaError> {
             self.counter += 1;
             Ok(SchedulingTask::Timeout(1))
         }
     }
-    
+
     impl ConnectedActor<TestMsg> for TestActor {
-        fn read_message(&mut self, _: &mut Context<TestMsg>, _: Msg<TestMsg>, _: usize) -> Result<(), AikaError> {
+        fn read_message(
+            &mut self,
+            _: &mut Context<TestMsg>,
+            _: Msg<TestMsg>,
+            _: usize,
+        ) -> Result<(), AikaError> {
             self.counter += 1;
             Ok(())
         }
     }
 
     fn create_test_planet() -> Planet<8, 16, 32, 2, TestMsg> {
-        let mut galaxy: Galaxy<8, 16, TestMsg> = Galaxy::new(1, 64).unwrap();
+        let mut galaxy: Substrate<8, 16, TestMsg> = Substrate::new(1, 64).unwrap();
         galaxy.set_time_scale(1000);
         galaxy.with_block_duration(10);
-        galaxy.spawn_planet(Stateless).unwrap()
+        galaxy.spawn_cluster(Stateless).unwrap()
     }
 
     #[test]
     fn test_planet_actor_spawning() {
         let mut planet = create_test_planet();
-        
+
         assert_eq!(planet.actors.len(), 0);
-        
+
         planet.spawn_actor(TestActor { counter: 0 });
         assert_eq!(planet.actors.len(), 1);
-        
+
         planet.spawn_actor(TestActor { counter: 0 });
         assert_eq!(planet.actors.len(), 2);
     }
@@ -754,27 +832,33 @@ mod planet_tests {
         planet.event_system.clock.time = 20;
 
         assert!(matches!(planet.schedule(5, 0), Err(AikaError::TimeTravel)));
-        assert!(matches!(planet.schedule(2000, 0), Err(AikaError::PastTerminal)));
-        assert!(matches!(planet.schedule(50, 5), Err(AikaError::InvalidActorId(_, _, _))));
+        assert!(matches!(
+            planet.schedule(2000, 0),
+            Err(AikaError::PastTerminal)
+        ));
+        assert!(matches!(
+            planet.schedule(50, 5),
+            Err(AikaError::InvalidActorId(_, _, _))
+        ));
     }
 
     #[test]
     fn test_planet_rollback() {
         let mut planet = create_test_planet();
         planet.spawn_actor(TestActor { counter: 0 });
-        
+
         planet.context.time = 50;
         planet.event_system.clock.time = 50;
-        
+
         for i in 0..10 {
             let msg = Msg::new(TestMsg, i * 5, (i + 1) * 5 + 45, 0, Some(0));
             planet.commit_mail(msg);
         }
-        
+
         assert!(planet.rollback(25).is_ok());
         assert_eq!(planet.context.time, 25);
         assert_eq!(planet.now(), 25);
-        
+
         assert!(matches!(planet.rollback(30), Err(AikaError::TimeTravel)));
     }
 
@@ -796,46 +880,46 @@ mod planet_tests {
     fn test_planet_interplanetary_message_polling() {
         let mut planet = create_test_planet();
         planet.spawn_actor(TestActor { counter: 0 });
-        
+
         let msg = Mail::write_letter(
             Transfer::Msg(Msg::new(TestMsg, 5, 10, 0, Some(0))),
             0,
-            Some(0)
+            Some(0),
         );
         planet.message_user.send(msg).unwrap();
-        
+
         assert!(planet.poll_interplanetary_messenger().is_ok());
     }
 
     #[test]
     fn test_planet_block_submission() {
         let mut planet = create_test_planet();
-        
+
         assert_eq!(planet.blocks.block.start, 0);
         assert_eq!(planet.blocks.block.dur, 10);
-        
+
         for _ in 0..10 {
             planet.increment().unwrap();
         }
-        
+
         assert_eq!(planet.blocks.block.start, 10);
         assert_eq!(planet.blocks.block.block_nmb, 1);
     }
 
     #[test]
     fn test_planet_checkpoint_handling() {
-        let mut galaxy: Galaxy<8, 16, TestMsg> = Galaxy::new(1, 64).unwrap();
+        let mut galaxy: Substrate<8, 16, TestMsg> = Substrate::new(1, 64).unwrap();
         galaxy.set_time_scale(100);
         galaxy.with_block_duration(10);
         galaxy.checkpoints(2);
-        
-        let mut planet = galaxy.spawn_planet::<32, 2>(Stateless).unwrap();
+
+        let mut planet = galaxy.spawn_cluster::<32, 2>(Stateless).unwrap();
         planet.spawn_actor(TestActor { counter: 0 });
-        
+
         for _ in 0..20 {
             planet.increment().unwrap();
         }
-        
+
         assert!(planet.blocks.block.catchup_block);
     }
 
@@ -850,7 +934,7 @@ mod planet_tests {
         planet.time.gvt = 30;
         planet.context.time = 20;
         assert!(matches!(
-            planet.check_time_validity(), 
+            planet.check_time_validity(),
             Err(AikaError::GVTPastLocalClock(_, _, _))
         ));
 

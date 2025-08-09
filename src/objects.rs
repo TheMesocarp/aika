@@ -8,7 +8,7 @@ use std::{
 
 use bytemuck::{Pod, Zeroable};
 use mesocarp::{
-    comms::mailbox::Message,
+    comms::buses::Message,
     scheduling::{htw::Clock, Scheduleable},
 };
 
@@ -34,16 +34,6 @@ impl<T: Clone> Msg<T> {
             recv,
             data,
         }
-    }
-}
-
-impl<T: Clone> Message for Msg<T> {
-    fn to(&self) -> Option<usize> {
-        self.to
-    }
-
-    fn from(&self) -> usize {
-        self.from
     }
 }
 
@@ -163,18 +153,18 @@ pub(crate) enum Transfer<T: Pod + Zeroable + Clone> {
     AntiMsg(AntiMsg),
 }
 
-impl<T: Pod + Zeroable + Clone> Message for Transfer<T> {
-    fn to(&self) -> Option<usize> {
+impl<T: Pod + Zeroable + Clone> Transfer<T> {
+    pub fn from(&self) -> usize {
         match self {
-            Transfer::Msg(msg) => msg.to(),
-            Transfer::AntiMsg(anti_msg) => anti_msg.to(),
+            Transfer::Msg(msg) => msg.from,
+            Transfer::AntiMsg(anti_msg) => anti_msg.from,
         }
     }
 
-    fn from(&self) -> usize {
+    pub fn to(&self) -> Option<usize> {
         match self {
-            Transfer::Msg(msg) => msg.from(),
-            Transfer::AntiMsg(anti_msg) => anti_msg.from(),
+            Transfer::Msg(msg) => msg.to,
+            Transfer::AntiMsg(anti_msg) => anti_msg.to,
         }
     }
 }
