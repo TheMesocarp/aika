@@ -4,7 +4,7 @@
 
 A Rust-native coordination layer for multi-agent systems, with support for single-threaded, multi-threaded, and distributed execution. Finnish for "Time". Built entirely from systems theory first developed in the mid '80s through early '90s.
 
-> Use `aika::mt` engines at own risk, many features are still being tested.
+> DO NOT USE `aika::mt` engines yet, still experimental!
 
 ## Roadmap
 
