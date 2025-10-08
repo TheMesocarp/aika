@@ -7,7 +7,10 @@ use std::{
 };
 
 use bytemuck::{Pod, Zeroable};
-use mesocarp::{comms::buses::ThreadedMessengerUser, scheduling::Scheduleable};
+use mesocarp::{
+    comms::buses::{Message, ThreadedMessengerUser},
+    scheduling::Scheduleable,
+};
 
 use crate::{
     actors::{ConnectedActor, Context},
@@ -16,7 +19,7 @@ use crate::{
         consensus::{Block, BlockSpoke},
         engines::HTime,
     },
-    objects::{AntiMsg, Event, LocalScheduler, Mail, Msg, SchedulingTask, Transfer},
+    objects::{AntiMsg, Event, LocalScheduler, Msg, SchedulingTask, Transfer},
     AikaError,
 };
 
@@ -39,7 +42,7 @@ pub struct Planet<
     local_messages: LocalScheduler<CLOCK_BW, CLOCK_SCALES, Msg<MessageType>>,
     early_arrivals: Vec<Msg<MessageType>>,
     early_anti_arrivals: Vec<AntiMsg>,
-    pub(crate) message_user: ThreadedMessengerUser<MSG_BW, Mail<MessageType>>,
+    pub(crate) message_user: ThreadedMessengerUser<MSG_BW, Transfer<MessageType>>,
     pub(crate) blocks: BlockSpoke<BLOCK_BW>,
     /// Current time information of the simulation. these should always be the same across simulation clusters in the same `Substrate`.
     pub time: HTime,
@@ -83,11 +86,12 @@ impl<
         env: impl Environment + 'static,
         time: HTime,
         blocks: BlockSpoke<BLOCK_BW>,
-        message_user: ThreadedMessengerUser<MSG_BW, Mail<MessageType>>,
+        message_user: ThreadedMessengerUser<MSG_BW, Transfer<MessageType>>,
         id: usize,
         start: Instant,
     ) -> Result<Self, AikaError> {
         let terminal = time.terminal;
+        println!("cluster ID: {id}");
         Ok(Self {
             actors: Vec::new(),
             context: Context::new(env, true, id, terminal),
@@ -170,22 +174,19 @@ impl<
         // rollback local message scheduler
         self.local_messages.rollback(time);
         // rollback and claim all the anti messages produced after the rollback time
-        let anti_msgs: Vec<(Mail<MessageType>, u64)> = self.context.anti_msgs.rollback_return(time);
+        let anti_msgs: Vec<(AntiMsg, u64)> = self.context.anti_msgs.rollback_return(time);
 
         // send out anti messages generated post rollback.
         for (anti, _) in anti_msgs {
-            let anti_time = anti.transfer.commit_time();
-            if let Some(to) = anti.to_world {
-                if to == self.context.cluster_id {
-                    let anti = anti.open_letter();
-                    if let Transfer::AntiMsg(anti) = anti {
-                        self.annihilate(anti);
-                    }
+            let anti_time = anti.commit_time();
+            if anti.to.0 != usize::MAX {
+                if anti.to.0 == self.context.cluster_id {
+                    self.annihilate(anti);
                 } else {
-                    self.message_user.send(anti)?;
+                    self.message_user.send(Transfer::AntiMsg(anti))?;
                 }
             } else {
-                self.message_user.send(anti)?;
+                self.message_user.send(Transfer::AntiMsg(anti))?;
             }
             if anti_time < self.blocks.block.start {
                 let blocks_past = ((self.blocks.block.start - anti_time - 1)
@@ -266,25 +267,25 @@ impl<
             return Ok(());
         }
         for msg in maybe.unwrap() {
-            if let Some(to) = msg.to_world {
-                if to != self.context.cluster_id {
-                    if let Some(file) = &mut self.log {
-                        writeln!(
-                            file,
-                            "[{}] !!! PANIC !!! Mismatched delivery addresses. Was meant for cluster No. {to}, received by cluster No. {:?}. source actor {:?} on planet {:?}", 
-                            self.start.elapsed().as_micros(),
-                            self.context.cluster_id,
-                            msg.transfer.from(),
-                            msg.from_world
-                        ).map_err(|_| AikaError::LoggingWriteError)?;
-                    }
-                    return Err(AikaError::MismatchedDeliveryAddress(
+            let to = msg.to();
+            if to != Some(usize::MAX) && to != Some(self.context.cluster_id) {
+                if let Some(file) = &mut self.log {
+                    writeln!(
+                        file,
+                        "[{}] !!! PANIC !!! Mismatched delivery addresses. Was meant for cluster No. {:?}, received by cluster No. {:?}. source actor {:?}", 
+                        self.start.elapsed().as_micros(),
+                        &to,
                         self.context.cluster_id,
-                        to,
-                    ));
+                        msg.from(),
+                    ).map_err(|_| AikaError::LoggingWriteError)?;
                 }
+                return Err(AikaError::MismatchedDeliveryAddress(
+                    msg.from(),
+                    self.context.cluster_id,
+                    to.unwrap(),
+                ));
             }
-            let time = msg.transfer.time();
+            let time = msg.time();
             // println!(
             //     "Planet {:?}: opening mail with recieve time {time}",
             //     self.context.cluster_id
@@ -302,7 +303,7 @@ impl<
                 self.rollback(time)?;
             }
 
-            match msg.open_letter() {
+            match msg {
                 Transfer::Msg(msg) => {
                     if let Some(file) = &mut self.log {
                         writeln!(
@@ -438,20 +439,7 @@ impl<
         Ok(())
     }
 
-    // Take one step in local cluster time.
-    pub(crate) fn step(&mut self) -> Result<(), AikaError> {
-        let now = self.now();
-        if let Some(file) = &mut self.log {
-            writeln!(
-                file,
-                "[{}] step starting at now() time {:?}, scheduler times: {:?}",
-                self.start.elapsed().as_micros(),
-                now,
-                self.local_messages.clock.time
-            )
-            .map_err(|_| AikaError::LoggingWriteError)?;
-        }
-
+    fn drain_early_arrivals(&mut self) -> Result<(), AikaError> {
         while !self.early_arrivals.is_empty() {
             if self.now() >= self.early_arrivals[0].commit_time() {
                 let msg = self.early_arrivals.pop().unwrap();
@@ -475,96 +463,17 @@ impl<
             }
             break;
         }
+        Ok(())
+    }
 
-        if !self.blocks.block.catchup_block || (self.now() < self.blocks.block.start) {
-            if let Some(file) = &mut self.log {
-                writeln!(
-                    file,
-                    "[{}] meeting step condition for messages and events.",
-                    self.start.elapsed().as_micros(),
-                )
-                .map_err(|_| AikaError::LoggingWriteError)?;
-            }
-            if let Ok(msgs) = self.local_messages.clock.tick() {
-                let len = msgs.len();
-                if !msgs.is_empty() {
-                    if let Some(file) = &mut self.log {
-                        writeln!(
-                            file,
-                            "[{}] Found {len} messages to process.",
-                            self.start.elapsed().as_micros(),
-                        )
-                        .map_err(|_| AikaError::LoggingWriteError)?;
-                    }
-                }
-                for msg in msgs {
-                    let id = msg.to;
-                    if id.is_none() {
-                        for i in 0..self.actors.len() {
-                            self.actors[i].read_message(&mut self.context, msg, i)?;
-                        }
-                        continue;
-                    }
-                    let id = id.unwrap();
-                    self.actors[id].read_message(&mut self.context, msg, id)?;
-                }
-            }
-            // process events at the next time step
-            if let Ok(events) = self.event_system.clock.tick() {
-                let len = events.len();
-                if !events.is_empty() {
-                    if let Some(file) = &mut self.log {
-                        writeln!(
-                            file,
-                            "[{}] Found {len} events to process.",
-                            self.start.elapsed().as_micros(),
-                        )
-                        .map_err(|_| AikaError::LoggingWriteError)?;
-                    }
-                }
-                for event in events {
-                    let task = self.actors[event.actor].step(&mut self.context, event.actor)?;
-                    match task {
-                        SchedulingTask::Timeout(time) => {
-                            if (self.now() + time) > self.time.terminal {
-                                continue;
-                            }
-
-                            self.commit(Event::new(
-                                self.now(),
-                                self.now() + time,
-                                event.actor,
-                                SchedulingTask::Wait,
-                            ));
-                        }
-                        SchedulingTask::Schedule(time) => {
-                            self.commit(Event::new(
-                                self.now(),
-                                time,
-                                event.actor,
-                                SchedulingTask::Wait,
-                            ));
-                        }
-                        SchedulingTask::Trigger { time, idx } => {
-                            self.commit(Event::new(self.now(), time, idx, SchedulingTask::Wait));
-                        }
-                        SchedulingTask::Wait => {}
-                        SchedulingTask::Break => {
-                            self.brakes = true;
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-        // collect and send all the sends gathered this time step
+    fn send_outbox(&mut self) -> Result<(), AikaError> {
         let now = self.now();
         let sends = std::mem::take(&mut self.context.outbox);
         if !self.blocks.block.catchup_block || (self.now() < self.blocks.block.start) {
-            for mail in sends {
+            for msg in sends {
                 let mut local = false;
-                if Some(self.context.cluster_id) == mail.to_world {
-                    match mail.open_letter() {
+                if Some(self.context.cluster_id) == msg.to() {
+                    match msg {
                         Transfer::Msg(msg) => self.commit_mail(msg),
                         Transfer::AntiMsg(anti_msg) => self.annihilate(anti_msg),
                     }
@@ -575,13 +484,13 @@ impl<
                             file,
                             "[{}] sending message to cluster {:?}, from actor: {:?}, to actor: {:?}",
                             self.start.elapsed().as_micros(),
-                            mail.to_world,
-                            mail.transfer.from(),
-                            mail.transfer.to()
+                            msg.to(),
+                            msg.actor_from(),
+                            msg.actor_to()
                         )
                         .map_err(|_| AikaError::LoggingWriteError)?;
                     }
-                    self.message_user.send(mail)?;
+                    self.message_user.send(msg)?;
                 }
                 if now < self.blocks.block.start {
                     let blocks_past =
@@ -593,14 +502,119 @@ impl<
                     continue;
                 }
                 if !local {
-                    if mail.to_world.is_none() {
+                    if msg.to() == Some(usize::MAX) {
                         // number of worlds add to sends
                     }
                     self.blocks.block.sends += 1;
                 }
             }
         }
-        // increment the clock to the next step
+        self.context.counter = 0;
+        Ok(())
+    }
+
+    fn tick(&mut self) -> Result<(), AikaError> {
+        if let Some(file) = &mut self.log {
+            writeln!(
+                file,
+                "[{}] meeting step condition for messages and events.",
+                self.start.elapsed().as_micros(),
+            )
+            .map_err(|_| AikaError::LoggingWriteError)?;
+        }
+        if let Ok(msgs) = self.local_messages.clock.tick() {
+            let len = msgs.len();
+            if !msgs.is_empty() {
+                if let Some(file) = &mut self.log {
+                    writeln!(
+                        file,
+                        "[{}] Found {len} messages to process.",
+                        self.start.elapsed().as_micros(),
+                    )
+                    .map_err(|_| AikaError::LoggingWriteError)?;
+                }
+            }
+            for msg in msgs {
+                let id = msg.to.1;
+                if id == usize::MAX {
+                    for i in 0..self.actors.len() {
+                        self.actors[i].read_message(&mut self.context, msg, i)?;
+                    }
+                    continue;
+                }
+                self.actors[id].read_message(&mut self.context, msg, id)?;
+            }
+        }
+        // process events at the next time step
+        if let Ok(events) = self.event_system.clock.tick() {
+            let len = events.len();
+            if !events.is_empty() {
+                if let Some(file) = &mut self.log {
+                    writeln!(
+                        file,
+                        "[{}] Found {len} events to process.",
+                        self.start.elapsed().as_micros(),
+                    )
+                    .map_err(|_| AikaError::LoggingWriteError)?;
+                }
+            }
+            for event in events {
+                let task = self.actors[event.actor].step(&mut self.context, event.actor)?;
+                match task {
+                    SchedulingTask::Timeout(time) => {
+                        if (self.now() + time) > self.time.terminal {
+                            continue;
+                        }
+
+                        self.commit(Event::new(
+                            self.now(),
+                            self.now() + time,
+                            event.actor,
+                            SchedulingTask::Wait,
+                        ));
+                    }
+                    SchedulingTask::Schedule(time) => {
+                        self.commit(Event::new(
+                            self.now(),
+                            time,
+                            event.actor,
+                            SchedulingTask::Wait,
+                        ));
+                    }
+                    SchedulingTask::Trigger { time, idx } => {
+                        self.commit(Event::new(self.now(), time, idx, SchedulingTask::Wait));
+                    }
+                    SchedulingTask::Wait => {}
+                    SchedulingTask::Break => {
+                        self.brakes = true;
+                        break;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    // Take one step in local cluster time.
+    pub(crate) fn step(&mut self) -> Result<(), AikaError> {
+        let now = self.now();
+        if let Some(file) = &mut self.log {
+            writeln!(
+                file,
+                "[{}] step starting at now() time {:?}, scheduler times: {:?}",
+                self.start.elapsed().as_micros(),
+                now,
+                self.local_messages.clock.time
+            )
+            .map_err(|_| AikaError::LoggingWriteError)?;
+        }
+
+        self.drain_early_arrivals()?;
+
+        if !self.blocks.block.catchup_block || (self.now() < self.blocks.block.start) {
+            self.tick()?;
+        }
+        self.send_outbox()?;
         self.increment()?;
         Ok(())
     }
@@ -851,7 +865,7 @@ mod planet_tests {
         planet.event_system.clock.time = 50;
 
         for i in 0..10 {
-            let msg = Msg::new(TestMsg, i * 5, (i + 1) * 5 + 45, 0, Some(0));
+            let msg = Msg::new(TestMsg, i * 5, (i + 1) * 5 + 45, 0, 0);
             planet.commit_mail(msg);
         }
 
@@ -871,7 +885,7 @@ mod planet_tests {
         assert!(planet.step().is_ok());
         assert_eq!(planet.context.time, 1);
 
-        let msg = Msg::new(TestMsg, 0, 2, 0, Some(0));
+        let msg = Msg::new(TestMsg, 0, 2, 0, 0);
         planet.commit_mail(msg);
         assert!(planet.step().is_ok());
     }
@@ -880,12 +894,11 @@ mod planet_tests {
     fn test_planet_interplanetary_message_polling() {
         let mut planet = create_test_planet();
         planet.spawn_actor(TestActor { counter: 0 });
+        let mut msg = Msg::new(TestMsg, 5, 10, 0, 0);
+        msg.to.0 = 0;
+        msg.from.0 = 0;
+        let msg = Transfer::Msg(msg);
 
-        let msg = Mail::write_letter(
-            Transfer::Msg(Msg::new(TestMsg, 5, 10, 0, Some(0))),
-            0,
-            Some(0),
-        );
         planet.message_user.send(msg).unwrap();
 
         assert!(planet.poll_interplanetary_messenger().is_ok());
@@ -952,14 +965,14 @@ mod planet_tests {
         planet.spawn_actor(TestActor { counter: 0 });
         planet.spawn_actor(TestActor { counter: 0 });
 
-        let local_msg = Msg::new(TestMsg, 5, 10, 0, Some(1));
+        let local_msg = Msg::new(TestMsg, 5, 10, 0, 1);
         planet.context.send_mail(local_msg, 0).unwrap();
 
         assert_eq!(planet.context.outbox.len(), 1);
 
         planet.step().unwrap();
 
-        let remote_msg = Msg::new(TestMsg, 5, 10, 0, Some(0));
+        let remote_msg = Msg::new(TestMsg, 5, 10, 0, 0);
         planet.context.send_mail(remote_msg, 1).unwrap();
 
         assert_eq!(planet.context.outbox.len(), 1);

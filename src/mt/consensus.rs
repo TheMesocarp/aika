@@ -55,7 +55,7 @@ pub struct Block<const BANDWIDTH: usize> {
     /// Number of messages sent during this block.
     pub sends: usize,
     /// Number of messages received during this block, that were sent during this block as well.
-    pub recvs_current_block: usize,
+    pub recvs_current_block: isize,
     /// Number of messages received during this block, that were sent during prior blocks.
     pub delayed_recvs: [isize; BANDWIDTH],
     /// If a rollback occured that erased block-local messages, those corrections are logged here.
@@ -460,7 +460,7 @@ impl<const BANDWIDTH: usize> Consensus<BANDWIDTH> {
         }
 
         let normalized_sends = (sends.checked_add_signed(correction_factor).unwrap()) as isize;
-        let normalized_recvs = recvs as isize + lates;
+        let normalized_recvs = recvs + lates;
         if normalized_sends - normalized_recvs == 0 {
             if dur == 0 {
                 return Ok(None);
@@ -521,7 +521,7 @@ impl<const BANDWIDTH: usize> Consensus<BANDWIDTH> {
         }
 
         let normalized_sends = (sends.checked_add_signed(correction_factor).unwrap()) as isize;
-        let normalized_recvs = recvs as isize + lates;
+        let normalized_recvs = recvs + lates;
         writeln!(
             file,
             "[{:?}] Next block for each cluster is submitted with total sends: {sends}, total receives from the same block: {recvs}, with rollback corrections: {correction_factor}  and delayed receives found in later blocks: {lates}",
@@ -542,7 +542,7 @@ impl<const BANDWIDTH: usize> Consensus<BANDWIDTH> {
         start: u64,
         dur: u64,
         sends: usize,
-        recvs: usize,
+        recvs: isize,
         delayed_recvs: [isize; BANDWIDTH],
         net_corrections: isize,
     ) {

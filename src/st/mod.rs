@@ -2,6 +2,7 @@
 //! Provides a `LonePlanet` struct that manages actor execution, event scheduling, and local message
 //! delivery in a deterministic single-threaded environment with configurable time bounds.
 use bytemuck::{Pod, Zeroable};
+use mesocarp::comms::buses::Message;
 
 use crate::{
     actors::{Actor, ActorType, ConnectedActor, Context},
@@ -105,8 +106,8 @@ impl<const CLOCK_SLOTS: usize, const CLOCK_HEIGHT: usize, MessageType: Pod + Zer
             }
             if let Ok(msgs) = self.mail_scheduler.tick() {
                 for msg in msgs {
-                    let id = msg.to;
-                    if id.is_none() {
+                    let id = msg.to.1;
+                    if id == usize::MAX {
                         for i in 0..self.actors.len() {
                             match &mut self.actors[i] {
                                 ActorType::Basic(_) => {}
@@ -117,7 +118,6 @@ impl<const CLOCK_SLOTS: usize, const CLOCK_HEIGHT: usize, MessageType: Pod + Zer
                         }
                         continue;
                     }
-                    let id = id.unwrap();
                     if self.actors.len() <= id {
                         return Err(AikaError::MessagedNonExistent(self.actors.len(), id));
                     }
@@ -181,16 +181,16 @@ impl<const CLOCK_SLOTS: usize, const CLOCK_HEIGHT: usize, MessageType: Pod + Zer
 
             let sends = std::mem::take(&mut self.env.outbox);
             for msg in sends {
-                if msg.to_world.is_some() {
-                    if Some(self.env.cluster_id) == msg.to_world {
-                        match msg.open_letter() {
+                if msg.to() != Some(usize::MAX) {
+                    if Some(self.env.cluster_id) == msg.to() {
+                        match msg {
                             Transfer::Msg(msg) => self.commit_mail(msg),
                             Transfer::AntiMsg(_) => return Err(AikaError::ThreadPanic),
                         }
                         continue;
                     }
                 } else {
-                    match msg.open_letter() {
+                    match msg {
                         Transfer::Msg(msg) => self.commit_mail(msg),
                         Transfer::AntiMsg(_) => return Err(AikaError::ThreadPanic),
                     }
@@ -294,7 +294,7 @@ mod tests {
                     time,
                     time + 10,
                     self.id,
-                    Some(self.target),
+                    self.target,
                 );
                 env.send_mail(msg, 0)?;
                 self.messages_sent += 1;
@@ -378,7 +378,7 @@ mod tests {
                     time,
                     time + 5,
                     self.id,
-                    None, // None means broadcast
+                    usize::MAX, // None means broadcast
                 );
                 context.send_mail(msg, 0)?;
                 self.broadcasts_sent += 1;
@@ -473,8 +473,8 @@ mod tests {
         assert_eq!(messages.len(), 3);
         for (i, msg) in messages.iter().enumerate() {
             assert_eq!(msg.data, i as u8);
-            assert_eq!(msg.from, 0);
-            assert_eq!(msg.to, Some(1));
+            assert_eq!(msg.from.1, 0);
+            assert_eq!(msg.to.1, 1);
         }
     }
 
@@ -510,8 +510,8 @@ mod tests {
 
         // Verify broadcast content
         for msg in messages1.iter() {
-            assert_eq!(msg.from, 0);
-            assert_eq!(msg.to, None);
+            assert_eq!(msg.from.1, 0);
+            assert_eq!(msg.to.1, usize::MAX);
             assert!(msg.data >= 100);
         }
     }
@@ -573,7 +573,7 @@ mod tests {
         let mut from_2 = 0;
 
         for msg in messages.iter() {
-            match msg.from {
+            match msg.from.1 {
                 0 => from_0 += 1,
                 1 => from_1 += 1,
                 2 => from_2 += 1,
@@ -605,7 +605,7 @@ mod tests {
             ) -> Result<SchedulingTask, AikaError> {
                 let time = context.time;
                 self.attempted = true;
-                let msg = Msg::new(1, time, time + 5, id, Some(99));
+                let msg = Msg::new(1, time, time + 5, id, 99);
                 context.send_mail(msg, 0)?;
 
                 Ok(SchedulingTask::Wait)
@@ -666,7 +666,7 @@ mod lets_try_to_break_it {
                         ctx.time,
                         ctx.time + (self.id % 10) as u64 + 1,
                         actor_id,
-                        Some(target),
+                        target,
                     );
                     ctx.send_mail(msg, 0)?;
                 }
@@ -830,8 +830,13 @@ mod lets_try_to_break_it {
                 id: usize,
             ) -> Result<SchedulingTask, AikaError> {
                 if self.broadcast_count < 100 {
-                    let msg =
-                        Msg::new(self.broadcast_count as u8, ctx.time, ctx.time + 1, id, None);
+                    let msg = Msg::new(
+                        self.broadcast_count as u8,
+                        ctx.time,
+                        ctx.time + 1,
+                        id,
+                        usize::MAX,
+                    );
                     ctx.send_mail(msg, 0)?;
                     self.broadcast_count += 1;
                     Ok(SchedulingTask::Timeout(2))
@@ -931,7 +936,7 @@ mod lets_try_to_break_it {
                             ctx.time,
                             ctx.time + delay,
                             id,
-                            Some(id), // Self
+                            id, // Self
                         );
                         ctx.send_mail(msg, 0)?;
                     }
@@ -991,7 +996,7 @@ mod lets_try_to_break_it {
                         ctx.time,
                         ctx.time, // Zero delay!
                         id,
-                        Some(target),
+                        target,
                     );
                     ctx.send_mail(msg, 0)?;
                     self.pings += 1;

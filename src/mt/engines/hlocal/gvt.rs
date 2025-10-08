@@ -20,7 +20,7 @@ use crate::{
             HTime,
         },
     },
-    objects::Mail,
+    objects::Transfer,
     AikaError,
 };
 
@@ -33,7 +33,7 @@ pub struct Substrate<
 > {
     /// The temporal consensus routine for an updted GVT computation.
     pub consensus: Consensus<BLOCK_BW>,
-    pub(crate) messenger: ThreadedMessenger<MSG_BW, Mail<MessageType>>,
+    pub(crate) messenger: ThreadedMessenger<MSG_BW, Transfer<MessageType>>,
     /// Current time information.
     pub time: HTime,
     /// Maximum duration of a block. Also the expected length of a block unless the simulation terminates early.
@@ -410,7 +410,9 @@ mod unit_tests {
 
     #[test]
     fn test_galaxy_terminal_time_requirement() {
-        let substrate: Substrate<8, 16, TestMsg> = Substrate::new(2, 64).unwrap();
+        let mut substrate: Substrate<8, 16, TestMsg> = Substrate::new(2, 64).unwrap();
+        substrate.spawn_cluster::<128, 1>(Stateless).unwrap();
+        substrate.spawn_cluster::<128, 1>(Stateless).unwrap();
         let (galaxy, _) = substrate.split_substrate().unwrap();
         let result = galaxy.master();
         assert!(matches!(result, Err(AikaError::MustSetTerminalTime)));
@@ -424,7 +426,7 @@ mod unit_tests {
         let mut planet1 = galaxy.spawn_cluster::<32, 2>(Stateless).unwrap();
         let mut planet2 = galaxy.spawn_cluster::<32, 2>(Stateless).unwrap();
 
-        let msg = Msg::new(TestMsg, 0, 10, 0, Some(0));
+        let msg = Msg::new(TestMsg, 0, 10, 0, 0);
         planet1.context.send_mail(msg, 1).unwrap();
 
         let sends = std::mem::take(&mut planet1.context.outbox);

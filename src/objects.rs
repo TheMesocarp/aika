@@ -7,18 +7,17 @@ use std::{
 };
 
 use bytemuck::{Pod, Zeroable};
-use mesocarp::{
-    comms::buses::Message,
-    scheduling::{htw::Clock, Scheduleable},
-};
+use mesocarp::comms::buses::Message;
+use mesocarp::scheduling::{htw::Clock, Scheduleable};
 
 use crate::AikaError;
 
 /// A `Msg` is a direct message between two entities that shares a piece of data of type T
 #[derive(Copy, Clone, Debug)]
+#[repr(C)]
 pub struct Msg<T: Clone> {
-    pub from: usize,
-    pub to: Option<usize>,
+    pub from: (usize, usize),
+    pub to: (usize, usize),
     pub sent: u64,
     pub recv: u64,
     pub data: T,
@@ -26,10 +25,10 @@ pub struct Msg<T: Clone> {
 
 impl<T: Clone> Msg<T> {
     /// Create a new `Msg`. If `to: Option<usize>` is set to None, the `Msg` will be broadcasted to all entities.
-    pub fn new(data: T, sent: u64, recv: u64, from: usize, to: Option<usize>) -> Self {
+    pub fn new(data: T, sent: u64, recv: u64, sender_id: usize, target_actor: usize) -> Self {
         Self {
-            from,
-            to,
+            from: (usize::MAX, sender_id),
+            to: (usize::MAX, target_actor),
             sent,
             recv,
             data,
@@ -80,13 +79,13 @@ impl<T: Clone> Ord for Msg<T> {
 pub(crate) struct AntiMsg {
     pub(crate) sent: u64,
     pub(crate) received: u64,
-    pub(crate) from: usize,
-    pub(crate) to: Option<usize>,
+    pub(crate) from: (usize, usize),
+    pub(crate) to: (usize, usize),
 }
 
 impl AntiMsg {
     /// Create a new `AntiMsg`. Note that you won't need to manual call this to maintain synchronization, this is just for flexibility.
-    pub fn new(sent: u64, received: u64, from: usize, to: Option<usize>) -> Self {
+    pub fn new(sent: u64, received: u64, from: (usize, usize), to: (usize, usize)) -> Self {
         AntiMsg {
             sent,
             received,
@@ -133,16 +132,6 @@ impl Scheduleable for AntiMsg {
     }
 }
 
-impl Message for AntiMsg {
-    fn to(&self) -> Option<usize> {
-        self.to
-    }
-
-    fn from(&self) -> usize {
-        self.from
-    }
-}
-
 unsafe impl Pod for AntiMsg {}
 unsafe impl Zeroable for AntiMsg {}
 
@@ -153,18 +142,34 @@ pub(crate) enum Transfer<T: Pod + Zeroable + Clone> {
     AntiMsg(AntiMsg),
 }
 
-impl<T: Pod + Zeroable + Clone> Transfer<T> {
-    pub fn from(&self) -> usize {
+impl<T: Pod + Zeroable + Clone> Message for Transfer<T> {
+    fn from(&self) -> usize {
         match self {
-            Transfer::Msg(msg) => msg.from,
-            Transfer::AntiMsg(anti_msg) => anti_msg.from,
+            Transfer::Msg(msg) => msg.from.0,
+            Transfer::AntiMsg(anti_msg) => anti_msg.from.0,
         }
     }
 
-    pub fn to(&self) -> Option<usize> {
+    fn to(&self) -> Option<usize> {
         match self {
-            Transfer::Msg(msg) => msg.to,
-            Transfer::AntiMsg(anti_msg) => anti_msg.to,
+            Transfer::Msg(msg) => Some(msg.to.0),
+            Transfer::AntiMsg(anti_msg) => Some(anti_msg.to.0),
+        }
+    }
+}
+
+impl<T: Pod + Zeroable + Clone> Transfer<T> {
+    pub fn actor_from(&self) -> usize {
+        match self {
+            Transfer::Msg(msg) => msg.from.1,
+            Transfer::AntiMsg(anti_msg) => anti_msg.from.1,
+        }
+    }
+
+    pub fn actor_to(&self) -> usize {
+        match self {
+            Transfer::Msg(msg) => msg.to.1,
+            Transfer::AntiMsg(anti_msg) => anti_msg.to.1,
         }
     }
 }
@@ -210,46 +215,6 @@ impl<T: Pod + Zeroable + Clone> Ord for Transfer<T> {
 
 unsafe impl<T: Pod + Zeroable + Clone> Send for Transfer<T> {}
 unsafe impl<T: Pod + Zeroable + Clone> Sync for Transfer<T> {}
-
-unsafe impl<T: Pod + Zeroable + Clone> Pod for Transfer<T> {}
-unsafe impl<T: Pod + Zeroable + Clone> Zeroable for Transfer<T> {}
-
-/// Inter-planetary `Mail` carry data of type `T` for optimistic execution environments
-#[derive(Debug, Clone, Copy)]
-#[repr(C)]
-pub(crate) struct Mail<T: Pod + Zeroable + Clone> {
-    pub transfer: Transfer<T>,
-    pub to_world: Option<usize>,
-    pub from_world: usize,
-}
-
-impl<T: Pod + Zeroable + Clone> Mail<T> {
-    /// Create a new peice of `Mail`. if `to_world: Option<usize>` is set to `None`, the `Mail` broadcasts
-    pub fn write_letter(transfer: Transfer<T>, from_world: usize, to_world: Option<usize>) -> Self {
-        Self {
-            transfer,
-            to_world,
-            from_world,
-        }
-    }
-    /// Consume to receive a `Transfer`
-    pub fn open_letter(self) -> Transfer<T> {
-        self.transfer
-    }
-}
-
-impl<T: Pod + Zeroable + Clone> Message for Mail<T> {
-    fn to(&self) -> Option<usize> {
-        self.to_world
-    }
-
-    fn from(&self) -> usize {
-        self.from_world
-    }
-}
-
-unsafe impl<T: Pod + Zeroable + Clone> Pod for Mail<T> {}
-unsafe impl<T: Pod + Zeroable + Clone> Zeroable for Mail<T> {}
 
 /// A SchedulingTask that an `Actor` or `ConnectedActor` can take.
 #[derive(Copy, Clone, Debug)]
