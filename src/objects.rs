@@ -1,5 +1,5 @@
 //! Core data structures for simulation including messages, events, and scheduling primitives.
-//! Contains `Msg` for inter-agent communication, `Event` for agent scheduling, `AntiMsg` for
+//! Contains `Msg` for inter-actor communication, `Event` for actor scheduling, `AntiMsg` for
 //! optimistic rollback, and local event/mail systems for efficient time-based scheduling.
 use std::{
     cmp::{Ordering, Reverse},
@@ -7,18 +7,17 @@ use std::{
 };
 
 use bytemuck::{Pod, Zeroable};
-use mesocarp::{
-    comms::mailbox::Message,
-    scheduling::{htw::Clock, Scheduleable},
-};
+use mesocarp::comms::buses::Message;
+use mesocarp::scheduling::{htw::Clock, Scheduleable};
 
 use crate::AikaError;
 
 /// A `Msg` is a direct message between two entities that shares a piece of data of type T
 #[derive(Copy, Clone, Debug)]
+#[repr(C)]
 pub struct Msg<T: Clone> {
-    pub from: usize,
-    pub to: Option<usize>,
+    pub from: (usize, usize),
+    pub to: (usize, usize),
     pub sent: u64,
     pub recv: u64,
     pub data: T,
@@ -26,24 +25,14 @@ pub struct Msg<T: Clone> {
 
 impl<T: Clone> Msg<T> {
     /// Create a new `Msg`. If `to: Option<usize>` is set to None, the `Msg` will be broadcasted to all entities.
-    pub fn new(data: T, sent: u64, recv: u64, from: usize, to: Option<usize>) -> Self {
+    pub fn new(data: T, sent: u64, recv: u64, sender_id: usize, target_actor: usize) -> Self {
         Self {
-            from,
-            to,
+            from: (usize::MAX, sender_id),
+            to: (usize::MAX, target_actor),
             sent,
             recv,
             data,
         }
-    }
-}
-
-impl<T: Clone> Message for Msg<T> {
-    fn to(&self) -> Option<usize> {
-        self.to
-    }
-
-    fn from(&self) -> usize {
-        self.from
     }
 }
 
@@ -85,17 +74,18 @@ impl<T: Clone> Ord for Msg<T> {
 }
 
 #[derive(Debug, Copy, Clone)]
+#[repr(C)]
 /// An `AntiMsg` allows you to directly cancel messages with the same metadata in an optimistic execution environment
-pub struct AntiMsg {
-    pub sent: u64,
-    pub received: u64,
-    pub from: usize,
-    pub to: Option<usize>,
+pub(crate) struct AntiMsg {
+    pub(crate) sent: u64,
+    pub(crate) received: u64,
+    pub(crate) from: (usize, usize),
+    pub(crate) to: (usize, usize),
 }
 
 impl AntiMsg {
     /// Create a new `AntiMsg`. Note that you won't need to manual call this to maintain synchronization, this is just for flexibility.
-    pub fn new(sent: u64, received: u64, from: usize, to: Option<usize>) -> Self {
+    pub fn new(sent: u64, received: u64, from: (usize, usize), to: (usize, usize)) -> Self {
         AntiMsg {
             sent,
             received,
@@ -142,56 +132,44 @@ impl Scheduleable for AntiMsg {
     }
 }
 
-impl Message for AntiMsg {
-    fn to(&self) -> Option<usize> {
-        self.to
-    }
-
-    fn from(&self) -> usize {
-        self.from
-    }
-}
-
 unsafe impl Pod for AntiMsg {}
 unsafe impl Zeroable for AntiMsg {}
 
-/// A `Message` and `AntiMessage` aannihilate each other if they encounter again after creation.
-pub struct Annihilator<T: Clone>(pub Msg<T>, pub AntiMsg);
-
-impl<T: Clone> Annihilator<T> {
-    /// conjure an annihilator pair
-    pub fn conjure(
-        creation_time: u64,
-        from_id: usize,
-        to_id: Option<usize>,
-        process_time: u64,
-        data: T,
-    ) -> Self {
-        let msg = Msg::new(data, creation_time, process_time, from_id, to_id);
-        let anti = AntiMsg::new(creation_time, process_time, from_id, to_id);
-        Self(msg, anti)
-    }
-}
-
 /// An object that can be transfered between `Planet` threads during optimistic execution
 #[derive(Debug, Clone, Copy)]
-pub enum Transfer<T: Pod + Zeroable + Clone> {
+pub(crate) enum Transfer<T: Pod + Zeroable + Clone> {
     Msg(Msg<T>),
     AntiMsg(AntiMsg),
 }
 
 impl<T: Pod + Zeroable + Clone> Message for Transfer<T> {
-    fn to(&self) -> Option<usize> {
+    fn from(&self) -> usize {
         match self {
-            Transfer::Msg(msg) => msg.to(),
-            Transfer::AntiMsg(anti_msg) => anti_msg.to(),
+            Transfer::Msg(msg) => msg.from.0,
+            Transfer::AntiMsg(anti_msg) => anti_msg.from.0,
         }
     }
 
-    fn from(&self) -> usize {
+    fn to(&self) -> Option<usize> {
         match self {
-            Transfer::Msg(msg) => msg.from(),
-            Transfer::AntiMsg(anti_msg) => anti_msg.from(),
+            Transfer::Msg(msg) => Some(msg.to.0),
+            Transfer::AntiMsg(anti_msg) => Some(anti_msg.to.0),
+        }
+    }
+}
+
+impl<T: Pod + Zeroable + Clone> Transfer<T> {
+    pub fn actor_from(&self) -> usize {
+        match self {
+            Transfer::Msg(msg) => msg.from.1,
+            Transfer::AntiMsg(anti_msg) => anti_msg.from.1,
+        }
+    }
+
+    pub fn actor_to(&self) -> usize {
+        match self {
+            Transfer::Msg(msg) => msg.to.1,
+            Transfer::AntiMsg(anti_msg) => anti_msg.to.1,
         }
     }
 }
@@ -238,76 +216,9 @@ impl<T: Pod + Zeroable + Clone> Ord for Transfer<T> {
 unsafe impl<T: Pod + Zeroable + Clone> Send for Transfer<T> {}
 unsafe impl<T: Pod + Zeroable + Clone> Sync for Transfer<T> {}
 
-unsafe impl<T: Pod + Zeroable + Clone> Pod for Transfer<T> {}
-unsafe impl<T: Pod + Zeroable + Clone> Zeroable for Transfer<T> {}
-
-/// Inter-planetary `Mail` carry data of type `T` for optimistic execution environments
-#[derive(Debug, Clone, Copy)]
-pub struct Mail<T: Pod + Zeroable + Clone> {
-    pub transfer: Transfer<T>,
-    pub to_world: Option<usize>,
-    pub from_world: usize,
-}
-
-impl<T: Pod + Zeroable + Clone> Mail<T> {
-    /// Create a new peice of `Mail`. if `to_world: Option<usize>` is set to `None`, the `Mail` broadcasts
-    pub fn write_letter(transfer: Transfer<T>, from_world: usize, to_world: Option<usize>) -> Self {
-        Self {
-            transfer,
-            to_world,
-            from_world,
-        }
-    }
-    /// Consume to receive a `Transfer`
-    pub fn open_letter(self) -> Transfer<T> {
-        self.transfer
-    }
-}
-
-impl<T: Pod + Zeroable + Clone> Message for Mail<T> {
-    fn to(&self) -> Option<usize> {
-        self.to_world
-    }
-
-    fn from(&self) -> usize {
-        self.from_world
-    }
-}
-
-unsafe impl<T: Pod + Zeroable + Clone> Pod for Mail<T> {}
-unsafe impl<T: Pod + Zeroable + Clone> Zeroable for Mail<T> {}
-
-pub(crate) struct LocalMailSystem<
-    const CLOCK_SLOTS: usize,
-    const CLOCK_HEIGHT: usize,
-    MessageType: Clone,
-> {
-    pub(crate) overflow: BinaryHeap<Reverse<Msg<MessageType>>>,
-    pub(crate) schedule: Clock<Msg<MessageType>, CLOCK_SLOTS, CLOCK_HEIGHT>,
-}
-
-impl<const CLOCK_SLOTS: usize, const CLOCK_HEIGHT: usize, MessageType: Clone>
-    LocalMailSystem<CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>
-{
-    pub(crate) fn new() -> Result<Self, AikaError> {
-        let overflow = BinaryHeap::new();
-        let schedule = Clock::new()?;
-        Ok(Self { overflow, schedule })
-    }
-}
-
-unsafe impl<const CLOCK_SLOTS: usize, const CLOCK_HEIGHT: usize, MessageType: Clone> Send
-    for LocalMailSystem<CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>
-{
-}
-unsafe impl<const CLOCK_SLOTS: usize, const CLOCK_HEIGHT: usize, MessageType: Clone> Sync
-    for LocalMailSystem<CLOCK_SLOTS, CLOCK_HEIGHT, MessageType>
-{
-}
-
-/// A scheduling action that an `Agent` or `ThreadedAgent` can take.
+/// A SchedulingTask that an `Actor` or `ConnectedActor` can take.
 #[derive(Copy, Clone, Debug)]
-pub enum Action {
+pub enum SchedulingTask {
     Timeout(u64),
     Schedule(u64),
     Trigger { time: u64, idx: usize },
@@ -315,23 +226,23 @@ pub enum Action {
     Break,
 }
 
-/// An event that can be scheduled in a simulation. This is used to trigger an agent, or schedule another event.
+/// An event that can be scheduled in a simulation. This is used to trigger an actor, or schedule another event.
 #[derive(Copy, Clone, Debug)]
 #[repr(C)]
 pub struct Event {
     pub time: u64,
     pub commit_time: u64,
-    pub agent: usize,
-    pub yield_: Action,
+    pub actor: usize,
+    pub task: SchedulingTask,
 }
 
 impl Event {
-    pub fn new(commit_time: u64, time: u64, agent: usize, yield_: Action) -> Self {
+    pub fn new(commit_time: u64, time: u64, actor: usize, task: SchedulingTask) -> Self {
         Self {
             commit_time,
             time,
-            agent,
-            yield_,
+            actor,
+            task,
         }
     }
 
@@ -373,37 +284,52 @@ unsafe impl Pod for Event {}
 unsafe impl Send for Event {}
 unsafe impl Sync for Event {}
 
-pub(crate) struct LocalEventSystem<const CLOCK_SLOTS: usize, const CLOCK_HEIGHT: usize> {
-    pub(crate) overflow: BinaryHeap<Reverse<Event>>,
-    pub(crate) local_clock: Clock<Event, CLOCK_SLOTS, CLOCK_HEIGHT>,
+#[derive(Debug)]
+/// Thread-local scheduler of a single object type in simulation time.
+pub struct LocalScheduler<const CLOCK_BW: usize, const CLOCK_SCALES: usize, T: Scheduleable> {
+    pub(crate) overflow: BinaryHeap<Reverse<T>>,
+    pub(crate) clock: Clock<T, CLOCK_BW, CLOCK_SCALES>,
 }
 
-impl<const CLOCK_SLOTS: usize, const CLOCK_HEIGHT: usize>
-    LocalEventSystem<CLOCK_SLOTS, CLOCK_HEIGHT>
+impl<const CLOCK_BW: usize, const CLOCK_SCALES: usize, T: Scheduleable>
+    LocalScheduler<CLOCK_BW, CLOCK_SCALES, T>
 {
-    pub(crate) fn new() -> Result<Self, AikaError> {
+    pub fn new() -> Result<Self, AikaError> {
         let overflow = BinaryHeap::new();
-        let local_clock = Clock::new()?;
-        Ok(Self {
-            overflow,
-            local_clock,
-        })
+        let clock = Clock::new()?;
+        Ok(Self { overflow, clock })
     }
 
-    pub(crate) fn insert(&mut self, event: Event) {
-        let possible_overflow = self.local_clock.insert(event);
+    pub fn insert(&mut self, object: T) {
+        let possible_overflow = self.clock.insert(object);
         if possible_overflow.is_err() {
-            let event = possible_overflow.err().unwrap();
-            self.overflow.push(Reverse(event));
+            let object = possible_overflow.err().unwrap();
+            self.overflow.push(Reverse(object));
         }
     }
+
+    pub fn now(&self) -> u64 {
+        self.clock.time
+    }
+
+    pub fn increment(&mut self) {
+        self.clock.increment(&mut self.overflow)
+    }
+
+    pub fn tick(&mut self) -> Result<Vec<T>, AikaError> {
+        Ok(self.clock.tick()?)
+    }
+
+    pub fn rollback(&mut self, time: u64) {
+        self.clock.rollback(&mut self.overflow, time)
+    }
 }
 
-unsafe impl<const CLOCK_SLOTS: usize, const CLOCK_HEIGHT: usize> Send
-    for LocalEventSystem<CLOCK_SLOTS, CLOCK_HEIGHT>
+unsafe impl<const CLOCK_SLOTS: usize, const CLOCK_HEIGHT: usize, T: Scheduleable> Send
+    for LocalScheduler<CLOCK_SLOTS, CLOCK_HEIGHT, T>
 {
 }
-unsafe impl<const CLOCK_SLOTS: usize, const CLOCK_HEIGHT: usize> Sync
-    for LocalEventSystem<CLOCK_SLOTS, CLOCK_HEIGHT>
+unsafe impl<const CLOCK_SLOTS: usize, const CLOCK_HEIGHT: usize, T: Scheduleable> Sync
+    for LocalScheduler<CLOCK_SLOTS, CLOCK_HEIGHT, T>
 {
 }
