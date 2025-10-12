@@ -365,7 +365,7 @@ mod unit_tests {
 
     #[test]
     fn test_galaxy_creation() {
-        let galaxy: Substrate<8, 16, TestMsg> = Substrate::new(4, 128, 16).unwrap();
+        let galaxy: Substrate<8, TestMsg> = Substrate::new(4, 128, 16).unwrap();
         assert_eq!(galaxy.planet_count, 4);
         assert_eq!(galaxy.registered, 0);
         assert_eq!(galaxy.time.terminal, u64::MAX);
@@ -375,7 +375,7 @@ mod unit_tests {
 
     #[test]
     fn test_galaxy_configuration() {
-        let mut galaxy: Substrate<8, 16, TestMsg> = Substrate::new(2, 64, 16).unwrap();
+        let mut galaxy: Substrate<8, TestMsg> = Substrate::new(2, 64, 16).unwrap();
 
         galaxy.set_time_scale(1000);
         assert_eq!(galaxy.time.terminal, 1000);
@@ -389,7 +389,7 @@ mod unit_tests {
 
     #[test]
     fn test_planet_spawning() {
-        let mut galaxy: Substrate<8, 16, TestMsg> = Substrate::new(3, 64, 16).unwrap();
+        let mut galaxy: Substrate<8, TestMsg> = Substrate::new(3, 64, 16).unwrap();
 
         let planet1 = galaxy.spawn_cluster::<32, 2>(Stateless).unwrap();
         assert_eq!(galaxy.registered, 1);
@@ -409,7 +409,7 @@ mod unit_tests {
 
     #[test]
     fn test_galaxy_terminal_time_requirement() {
-        let mut substrate: Substrate<8, 16, TestMsg> = Substrate::new(2, 64, 16).unwrap();
+        let mut substrate: Substrate<8, TestMsg> = Substrate::new(2, 64, 16).unwrap();
         substrate.spawn_cluster::<128, 1>(Stateless).unwrap();
         substrate.spawn_cluster::<128, 1>(Stateless).unwrap();
         let (galaxy, _) = substrate.split_substrate().unwrap();
@@ -419,7 +419,7 @@ mod unit_tests {
 
     #[test]
     fn test_message_delivery() {
-        let mut galaxy: Substrate<8, 16, TestMsg> = Substrate::new(2, 64, 16).unwrap();
+        let mut galaxy: Substrate<8, TestMsg> = Substrate::new(2, 64, 16).unwrap();
         galaxy.set_time_scale(100);
 
         let mut planet1 = galaxy.spawn_cluster::<32, 2>(Stateless).unwrap();
@@ -444,7 +444,7 @@ mod unit_tests {
 
     #[test]
     fn test_check_all_terminal() {
-        let mut galaxy: Substrate<8, 16, TestMsg> = Substrate::new(2, 64, 16).unwrap();
+        let mut galaxy: Substrate<8, TestMsg> = Substrate::new(2, 64, 16).unwrap();
         galaxy.set_time_scale(100);
         galaxy.with_block_duration(50);
 
@@ -462,12 +462,12 @@ mod unit_tests {
         planet1
             .blocks
             .submitter
-            .write(planet1.blocks.block)
+            .push(planet1.blocks.block)
             .unwrap();
         planet2
             .blocks
             .submitter
-            .write(planet2.blocks.block)
+            .push(planet2.blocks.block)
             .unwrap();
 
         galaxy.consensus.poll_n_slot().unwrap();

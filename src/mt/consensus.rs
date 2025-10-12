@@ -317,7 +317,7 @@ impl<const BANDWIDTH: usize> BlockProcessor<BANDWIDTH> {
         if self.mode != ComputeLayout::HubSpoke {
             return Err(AikaError::ComputeLayoutExpectationMismatch(self.mode));
         }
-        self.safe_point_centralized.as_mut().unwrap().push(gvt);
+        self.safe_point_centralized.as_mut().unwrap().push(gvt)?;
         Ok(())
     }
 }
@@ -604,7 +604,7 @@ mod unit_tests {
     }
 
     fn submit_block(spoke: &mut BlockSpoke<BANDWIDTH>, block: Block<BANDWIDTH>) {
-        spoke.submitter.write(block).unwrap();
+        spoke.submitter.push(block).unwrap();
     }
 
     #[test]
@@ -906,7 +906,7 @@ mod unit_tests {
                     }
 
                     // Submit block via the lock-free SPSC channel.
-                    spoke.submitter.write(block).unwrap();
+                    spoke.submitter.push(block).unwrap();
                     thread::sleep(Duration::from_micros(5));
                 }
             });

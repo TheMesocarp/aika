@@ -53,7 +53,7 @@ fn bench_events_per_second(c: &mut Criterion) {
                     || {
                         let mut stager = stager!((), BLOCK_BW = 512).unwrap();
                         stager
-                            .config(Config::new(6, 40, 1024, sim_time, 1000000))
+                            .config(Config::new(6, 128, 40, 1024, sim_time, 1000000))
                             .unwrap();
 
                         for _ in 0..6 {

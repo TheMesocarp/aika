@@ -377,7 +377,7 @@ impl<
             // submit the current block than initialize the new one.
             self.blocks
                 .submitter
-                .push(std::mem::take(&mut self.blocks.block));
+                .push(std::mem::take(&mut self.blocks.block)).map_err(|_| AikaError::MesoError(mesocarp::MesoError::BuffersFull))?;
             self.blocks.block.block_nmb = new_id.1;
             self.blocks.block.producer_id = new_id.0;
             self.blocks.block.start = self.context.time;
@@ -810,8 +810,8 @@ mod planet_tests {
         }
     }
 
-    fn create_test_planet() -> Planet<8, 16, 32, 2, TestMsg> {
-        let mut galaxy: Substrate<8, 16, TestMsg> = Substrate::new(1, 64, 16).unwrap();
+    fn create_test_planet() -> Planet<8, 32, 2, TestMsg> {
+        let mut galaxy: Substrate<8, TestMsg> = Substrate::new(1, 64, 16).unwrap();
         galaxy.set_time_scale(1000);
         galaxy.with_block_duration(10);
         galaxy.spawn_cluster(Stateless).unwrap()
@@ -917,7 +917,7 @@ mod planet_tests {
 
     #[test]
     fn test_planet_checkpoint_handling() {
-        let mut galaxy: Substrate<8, 16, TestMsg> = Substrate::new(1, 64, 16).unwrap();
+        let mut galaxy: Substrate<8, TestMsg> = Substrate::new(1, 64, 16).unwrap();
         galaxy.set_time_scale(100);
         galaxy.with_block_duration(10);
         galaxy.checkpoints(2);
