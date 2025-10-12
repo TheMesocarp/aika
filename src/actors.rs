@@ -2,7 +2,7 @@
 //! Provides `Agent` trait for single-threaded clusters and `ThreadedAgent` for multi-threaded planets,
 //! along with their respective context structures that manage state and inter-agent communication.
 use bytemuck::{Pod, Zeroable};
-use mesocarp::logging::journal::Journal;
+use mesocarp::logging::Journal;
 
 use crate::{
     env::Environment,

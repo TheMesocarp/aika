@@ -9,21 +9,21 @@ use std::{
 };
 
 use bytemuck::{Pod, Zeroable};
-use mesocarp::comms::buses::ThreadedMessenger;
+use mesocarp::comms::mt::ThreadedMessenger;
 use mesocarp::MesoError;
 
 use crate::{objects::Transfer, AikaError};
 
-pub struct MessageBus<const MSG_BW: usize, MessageType: Pod + Zeroable + Clone> {
-    pub(crate) messenger: ThreadedMessenger<MSG_BW, Transfer<MessageType>>,
+pub struct MessageBus<MessageType: Pod + Zeroable + Clone> {
+    pub(crate) messenger: ThreadedMessenger<Transfer<MessageType>>,
     pub(crate) terminal_flag: Arc<AtomicBool>,
     pub(crate) log: Option<File>,
     pub(crate) start: Instant,
 }
 
-impl<const MSG_BW: usize, MessageType: Pod + Zeroable + Clone> MessageBus<MSG_BW, MessageType> {
+impl<MessageType: Pod + Zeroable + Clone> MessageBus<MessageType> {
     pub(crate) fn from_substrate(
-        messenger: ThreadedMessenger<MSG_BW, Transfer<MessageType>>,
+        messenger: ThreadedMessenger<Transfer<MessageType>>,
         log: Option<File>,
         start: Instant,
         terminal_flag: Arc<AtomicBool>,

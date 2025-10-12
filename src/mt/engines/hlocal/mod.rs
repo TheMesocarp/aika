@@ -37,6 +37,7 @@ mod gvt;
 /// A `Config` packages all of the configuration information for the simulation's GVT/consensus algorithm.
 pub struct Config {
     pub clusters: usize,
+    pub message_bandwidth: usize,
     pub batch_size: usize,
     pub block_duration: u64,
     pub terminal: u64,
@@ -46,6 +47,7 @@ pub struct Config {
 impl Config {
     pub fn new(
         clusters: usize,
+        message_bandwidth: usize,
         batch_size: usize,
         block_duration: u64,
         terminal: u64,
@@ -53,6 +55,7 @@ impl Config {
     ) -> Self {
         Self {
             clusters,
+            message_bandwidth,
             batch_size,
             block_duration,
             terminal,
@@ -64,23 +67,21 @@ impl Config {
 /// A `Stager` is the main entry point to simulations. It provides a clean interface for staging and running `hlocal` simulations.
 pub struct Stager<
     const BLOCK_BW: usize,
-    const MSG_BW: usize,
     const CLOCK_BW: usize,
     const CLOCK_SCALES: usize,
     MessageType: Pod + Zeroable + Clone,
 > {
-    pub substrate: Option<Substrate<BLOCK_BW, MSG_BW, MessageType>>,
-    pub clusters: Vec<Planet<BLOCK_BW, MSG_BW, CLOCK_BW, CLOCK_SCALES, MessageType>>,
+    pub substrate: Option<Substrate<BLOCK_BW, MessageType>>,
+    pub clusters: Vec<Planet<BLOCK_BW, CLOCK_BW, CLOCK_SCALES, MessageType>>,
     configured: bool,
 }
 
 impl<
         const BLOCK_BW: usize,
-        const MSG_BW: usize,
         const CLOCK_BW: usize,
         const CLOCK_SCALES: usize,
         MessageType: Pod + Zeroable + Clone,
-    > Stager<BLOCK_BW, MSG_BW, CLOCK_BW, CLOCK_SCALES, MessageType>
+    > Stager<BLOCK_BW, CLOCK_BW, CLOCK_SCALES, MessageType>
 {
     pub fn new() -> Result<Self, AikaError> {
         Ok(Self {
@@ -91,7 +92,7 @@ impl<
     }
 
     pub fn config(&mut self, config: Config) -> Result<(), AikaError> {
-        let mut substrate = Substrate::new(config.clusters, config.batch_size)?;
+        let mut substrate = Substrate::new(config.clusters, config.batch_size, config.message_bandwidth)?;
         substrate.set_time_scale(config.terminal);
         substrate.with_block_duration(config.block_duration);
         substrate.checkpoints(config.checkpoint_frequency);
@@ -198,7 +199,7 @@ impl<
                             barrier_clone.wait();
                             let planet = planet.run()?;
                             Ok::<
-                                Planet<BLOCK_BW, MSG_BW, CLOCK_BW, CLOCK_SCALES, MessageType>,
+                                Planet<BLOCK_BW, CLOCK_BW, CLOCK_SCALES, MessageType>,
                                 AikaError,
                             >(planet)
                         })
@@ -224,7 +225,7 @@ impl<
                                 barrier_clone.wait();
                                 let planet = planet.run_debug()?;
                                 Ok::<
-                                    Planet<BLOCK_BW, MSG_BW, CLOCK_BW, CLOCK_SCALES, MessageType>,
+                                    Planet<BLOCK_BW, CLOCK_BW, CLOCK_SCALES, MessageType>,
                                     AikaError,
                                 >(planet)
                             })
@@ -256,7 +257,7 @@ impl<
             .spawn(move || {
                 barrier.wait();
                 let bus = bus.master()?;
-                Ok::<MessageBus<MSG_BW, MessageType>, AikaError>(bus)
+                Ok::<MessageBus<MessageType>, AikaError>(bus)
             })
             .map_err(|_| AikaError::ThreadPanic)?;
 
@@ -504,15 +505,15 @@ mod unit_tests {
         block_dur: u64,
     ) -> Result<
         (
-            Substrate<BLOCK_BANDWIDTH, MSG_BANDWIDTH, MessageType>,
-            Planet<BLOCK_BANDWIDTH, MSG_BANDWIDTH, CLOCK_BW, CLOCK_SCALES, MessageType>,
+            Substrate<BLOCK_BANDWIDTH, MessageType>,
+            Planet<BLOCK_BANDWIDTH, CLOCK_BW, CLOCK_SCALES, MessageType>,
         ),
         AikaError,
     >
     where
         TestAgent: ConnectedActor<MessageType>,
     {
-        let mut substrate = Substrate::<BLOCK_BANDWIDTH, MSG_BANDWIDTH, MessageType>::new(1, 12)?;
+        let mut substrate = Substrate::<BLOCK_BANDWIDTH, MessageType>::new(1, 12, MSG_BANDWIDTH)?;
         substrate.set_time_scale(terminal);
         substrate.with_block_duration(block_dur);
         let mut planet = substrate.spawn_cluster::<CLOCK_BW, CLOCK_SCALES>(SimpleUnified {
@@ -574,10 +575,11 @@ mod unit_tests {
     fn test_multiplanet_setup() {
         const CLUSTERS: usize = 6;
         let mut stager =
-            Stager::<BLOCK_BANDWIDTH, MSG_BANDWIDTH, 64, 2, TestMessage>::new().unwrap();
+            Stager::<BLOCK_BANDWIDTH, 64, 2, TestMessage>::new().unwrap();
 
         let config = Config {
             clusters: CLUSTERS,
+            message_bandwidth: MSG_BANDWIDTH,
             batch_size: 12,
             block_duration: 1,
             terminal: 20,
@@ -608,7 +610,7 @@ mod unit_tests {
 
     #[test]
     fn test_rollback_accounting() {
-        let mut substrate: Substrate<8, 8, TestMessage> = Substrate::new(1, 1).unwrap();
+        let mut substrate: Substrate<8, TestMessage> = Substrate::new(1, 1, 8).unwrap();
         let mut planet = substrate
             .spawn_cluster::<16, 2>(SimpleUnified {
                 inner: Journal::init(1024),
@@ -767,10 +769,10 @@ mod messaging_tests {
 
     #[test]
     fn test_local_messaging() {
-        let mut stager: Stager<BLOCK_BW, MSG_BW, CLOCK_BW, CLOCK_SCALES, Message> =
+        let mut stager: Stager<BLOCK_BW, CLOCK_BW, CLOCK_SCALES, Message> =
             Stager::new().unwrap();
 
-        let config = Config::new(1, 128, 20, 2048, 10000000);
+        let config = Config::new(1, MSG_BW, 128, 20, 2048, 10000000);
         stager.config(config).unwrap();
 
         stager.create_cluster(Stateless).unwrap();
@@ -789,10 +791,10 @@ mod messaging_tests {
 
     #[test]
     fn test_local_messaging_heavy() {
-        let mut stager: Stager<BLOCK_BW, MSG_BW, CLOCK_BW, CLOCK_SCALES, Message> =
+        let mut stager: Stager<BLOCK_BW, CLOCK_BW, CLOCK_SCALES, Message> =
             Stager::new().unwrap();
 
-        let config = Config::new(1, 128, 20, 204, 10000000);
+        let config = Config::new(1, MSG_BW, 128, 20, 204, 10000000);
         stager.config(config).unwrap();
 
         stager.create_cluster(Stateless).unwrap();
@@ -808,9 +810,9 @@ mod messaging_tests {
 
     #[test]
     fn test_intercluster_messaging() {
-        let mut stager: Stager<216, 1024, CLOCK_BW, CLOCK_SCALES, Message> = Stager::new().unwrap();
+        let mut stager: Stager<216, CLOCK_BW, CLOCK_SCALES, Message> = Stager::new().unwrap();
 
-        let config = Config::new(2, 128, 128, 2048, 10);
+        let config = Config::new(2, 1024, 128, 128, 2048, 10);
         stager.config(config).unwrap();
 
         stager.create_cluster(Stateless).unwrap();

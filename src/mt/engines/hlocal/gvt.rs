@@ -9,7 +9,7 @@ use std::{
 };
 
 use bytemuck::{Pod, Zeroable};
-use mesocarp::comms::buses::ThreadedMessenger;
+use mesocarp::comms::mt::ThreadedMessenger;
 
 use crate::{
     env::Environment,
@@ -28,12 +28,11 @@ use crate::{
 /// A `Substrate` is an inter-cluster message bus and GVT updater, intended to own its own thread.
 pub struct Substrate<
     const BLOCK_BW: usize,
-    const MSG_BW: usize,
     MessageType: Pod + Zeroable + Clone,
 > {
     /// The temporal consensus routine for an updted GVT computation.
     pub consensus: Consensus<BLOCK_BW>,
-    pub(crate) messenger: ThreadedMessenger<MSG_BW, Transfer<MessageType>>,
+    pub(crate) messenger: ThreadedMessenger<Transfer<MessageType>>,
     /// Current time information.
     pub time: HTime,
     /// Maximum duration of a block. Also the expected length of a block unless the simulation terminates early.
@@ -48,20 +47,20 @@ pub struct Substrate<
     start: Instant,
 }
 
-impl<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + Clone>
-    Substrate<BLOCK_BW, MSG_BW, MessageType>
+impl<const BLOCK_BW: usize, MessageType: Pod + Zeroable + Clone>
+    Substrate<BLOCK_BW, MessageType>
 {
     /// Create a new `Substrate` with `planet_count: usize` maximum number of clusters, and `block_batch_size` arena allocation sizing for block logging.
-    pub fn new(planet_count: usize, block_batch_size: usize) -> Result<Self, AikaError> {
+    pub fn new(planet_count: usize, block_batch_size: usize, message_bandwidth: usize) -> Result<Self, AikaError> {
         let start = Instant::now();
         let mut planet_ids = Vec::new();
         for i in 0..planet_count {
             planet_ids.push(i);
         }
-        let messenger = ThreadedMessenger::new(planet_count)?;
+        let messenger = ThreadedMessenger::new(planet_count, message_bandwidth)?;
 
         Ok(Self {
-            consensus: Consensus::new(ComputeLayout::HubSpoke, block_batch_size)?,
+            consensus: Consensus::new(ComputeLayout::HubSpoke, block_batch_size, planet_count)?,
             messenger,
             time: HTime {
                 gvt: 0,
@@ -95,7 +94,7 @@ impl<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + C
     pub fn spawn_cluster<const CLOCK_BW: usize, const CLOCK_SCALES: usize>(
         &mut self,
         env: impl Environment + 'static,
-    ) -> Result<Planet<BLOCK_BW, MSG_BW, CLOCK_BW, CLOCK_SCALES, MessageType>, AikaError> {
+    ) -> Result<Planet<BLOCK_BW, CLOCK_BW, CLOCK_SCALES, MessageType>, AikaError> {
         if self.registered == self.planet_count {
             return Err(AikaError::MaximumClustersAllowed);
         }
@@ -115,7 +114,7 @@ impl<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + C
 
     pub fn split_substrate(
         self,
-    ) -> Result<(GVT<BLOCK_BW>, MessageBus<MSG_BW, MessageType>), AikaError> {
+    ) -> Result<(GVT<BLOCK_BW>, MessageBus<MessageType>), AikaError> {
         if self.registered != self.planet_count {
             return Err(AikaError::NotAllClustersRegistered);
         }
@@ -142,7 +141,7 @@ impl<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + C
         Ok((gvt, bus))
     }
 
-    pub fn rejoin_substrate(gvt: GVT<BLOCK_BW>, bus: MessageBus<MSG_BW, MessageType>) -> Self {
+    pub fn rejoin_substrate(gvt: GVT<BLOCK_BW>, bus: MessageBus<MessageType>) -> Self {
         let count = bus.messenger.capacity;
         let mut log = None;
         if bus.log.is_some() {
@@ -163,12 +162,12 @@ impl<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + C
     }
 }
 
-unsafe impl<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + Clone> Send
-    for Substrate<BLOCK_BW, MSG_BW, MessageType>
+unsafe impl<const BLOCK_BW: usize, MessageType: Pod + Zeroable + Clone> Send
+    for Substrate<BLOCK_BW, MessageType>
 {
 }
-unsafe impl<const BLOCK_BW: usize, const MSG_BW: usize, MessageType: Pod + Zeroable + Clone> Sync
-    for Substrate<BLOCK_BW, MSG_BW, MessageType>
+unsafe impl<const BLOCK_BW: usize, MessageType: Pod + Zeroable + Clone> Sync
+    for Substrate<BLOCK_BW, MessageType>
 {
 }
 
@@ -366,7 +365,7 @@ mod unit_tests {
 
     #[test]
     fn test_galaxy_creation() {
-        let galaxy: Substrate<8, 16, TestMsg> = Substrate::new(4, 128).unwrap();
+        let galaxy: Substrate<8, 16, TestMsg> = Substrate::new(4, 128, 16).unwrap();
         assert_eq!(galaxy.planet_count, 4);
         assert_eq!(galaxy.registered, 0);
         assert_eq!(galaxy.time.terminal, u64::MAX);
@@ -376,7 +375,7 @@ mod unit_tests {
 
     #[test]
     fn test_galaxy_configuration() {
-        let mut galaxy: Substrate<8, 16, TestMsg> = Substrate::new(2, 64).unwrap();
+        let mut galaxy: Substrate<8, 16, TestMsg> = Substrate::new(2, 64, 16).unwrap();
 
         galaxy.set_time_scale(1000);
         assert_eq!(galaxy.time.terminal, 1000);
@@ -390,7 +389,7 @@ mod unit_tests {
 
     #[test]
     fn test_planet_spawning() {
-        let mut galaxy: Substrate<8, 16, TestMsg> = Substrate::new(3, 64).unwrap();
+        let mut galaxy: Substrate<8, 16, TestMsg> = Substrate::new(3, 64, 16).unwrap();
 
         let planet1 = galaxy.spawn_cluster::<32, 2>(Stateless).unwrap();
         assert_eq!(galaxy.registered, 1);
@@ -410,7 +409,7 @@ mod unit_tests {
 
     #[test]
     fn test_galaxy_terminal_time_requirement() {
-        let mut substrate: Substrate<8, 16, TestMsg> = Substrate::new(2, 64).unwrap();
+        let mut substrate: Substrate<8, 16, TestMsg> = Substrate::new(2, 64, 16).unwrap();
         substrate.spawn_cluster::<128, 1>(Stateless).unwrap();
         substrate.spawn_cluster::<128, 1>(Stateless).unwrap();
         let (galaxy, _) = substrate.split_substrate().unwrap();
@@ -420,7 +419,7 @@ mod unit_tests {
 
     #[test]
     fn test_message_delivery() {
-        let mut galaxy: Substrate<8, 16, TestMsg> = Substrate::new(2, 64).unwrap();
+        let mut galaxy: Substrate<8, 16, TestMsg> = Substrate::new(2, 64, 16).unwrap();
         galaxy.set_time_scale(100);
 
         let mut planet1 = galaxy.spawn_cluster::<32, 2>(Stateless).unwrap();
@@ -445,7 +444,7 @@ mod unit_tests {
 
     #[test]
     fn test_check_all_terminal() {
-        let mut galaxy: Substrate<8, 16, TestMsg> = Substrate::new(2, 64).unwrap();
+        let mut galaxy: Substrate<8, 16, TestMsg> = Substrate::new(2, 64, 16).unwrap();
         galaxy.set_time_scale(100);
         galaxy.with_block_duration(50);
 
