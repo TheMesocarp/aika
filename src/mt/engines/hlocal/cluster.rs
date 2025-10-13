@@ -8,7 +8,7 @@ use std::{
 
 use bytemuck::{Pod, Zeroable};
 use mesocarp::{
-    comms::buses::{Message, ThreadedMessengerUser},
+    comms::mt::{Message, ThreadedMessengerUser},
     scheduling::Scheduleable,
 };
 
@@ -28,7 +28,6 @@ use crate::{
 /// triggered in inter-cluster messaging.
 pub struct Planet<
     const BLOCK_BW: usize,
-    const MSG_BW: usize,
     const CLOCK_BW: usize,
     const CLOCK_SCALES: usize,
     MessageType: Pod + Zeroable + Clone,
@@ -41,7 +40,7 @@ pub struct Planet<
     local_messages: LocalScheduler<CLOCK_BW, CLOCK_SCALES, Msg<MessageType>>,
     early_arrivals: Vec<Msg<MessageType>>,
     early_anti_arrivals: Vec<AntiMsg>,
-    pub(crate) message_user: ThreadedMessengerUser<MSG_BW, Transfer<MessageType>>,
+    pub(crate) message_user: ThreadedMessengerUser<Transfer<MessageType>>,
     pub(crate) blocks: BlockSpoke<BLOCK_BW>,
     /// Current time information of the simulation. these should always be the same across simulation clusters in the same `Substrate`.
     pub time: HTime,
@@ -56,36 +55,33 @@ pub struct Planet<
 
 unsafe impl<
         const BLOCK_BW: usize,
-        const MSG_BW: usize,
         const CLOCK_BW: usize,
         const CLOCK_SCALES: usize,
         MessageType: Pod + Zeroable + Clone,
-    > Send for Planet<BLOCK_BW, MSG_BW, CLOCK_BW, CLOCK_SCALES, MessageType>
+    > Send for Planet<BLOCK_BW, CLOCK_BW, CLOCK_SCALES, MessageType>
 {
 }
 unsafe impl<
         const BLOCK_BW: usize,
-        const MSG_BW: usize,
         const CLOCK_BW: usize,
         const CLOCK_SCALES: usize,
         MessageType: Pod + Zeroable + Clone,
-    > Sync for Planet<BLOCK_BW, MSG_BW, CLOCK_BW, CLOCK_SCALES, MessageType>
+    > Sync for Planet<BLOCK_BW, CLOCK_BW, CLOCK_SCALES, MessageType>
 {
 }
 
 impl<
         const BLOCK_BW: usize,
-        const MSG_BW: usize,
         const CLOCK_BW: usize,
         const CLOCK_SCALES: usize,
         MessageType: Pod + Zeroable + Clone,
-    > Planet<BLOCK_BW, MSG_BW, CLOCK_BW, CLOCK_SCALES, MessageType>
+    > Planet<BLOCK_BW, CLOCK_BW, CLOCK_SCALES, MessageType>
 {
     pub(crate) fn from_galaxy_registration(
         env: impl Environment + 'static,
         time: HTime,
         blocks: BlockSpoke<BLOCK_BW>,
-        message_user: ThreadedMessengerUser<MSG_BW, Transfer<MessageType>>,
+        message_user: ThreadedMessengerUser<Transfer<MessageType>>,
         id: usize,
         start: Instant,
     ) -> Result<Self, AikaError> {
@@ -267,7 +263,7 @@ impl<
         }
         for msg in maybe.unwrap() {
             let to = msg.to();
-            if to != Some(usize::MAX) && to != Some(self.context.cluster_id) {
+            if to != usize::MAX && to != self.context.cluster_id {
                 if let Some(file) = &mut self.log {
                     writeln!(
                         file,
@@ -281,7 +277,7 @@ impl<
                 return Err(AikaError::MismatchedDeliveryAddress(
                     msg.from(),
                     self.context.cluster_id,
-                    to.unwrap(),
+                    to,
                 ));
             }
             let time = msg.time();
@@ -380,7 +376,7 @@ impl<
             // submit the current block than initialize the new one.
             self.blocks
                 .submitter
-                .write(std::mem::take(&mut self.blocks.block))?;
+                .push(std::mem::take(&mut self.blocks.block)).map_err(|_| AikaError::MesoError(mesocarp::MesoError::BuffersFull))?;
             self.blocks.block.block_nmb = new_id.1;
             self.blocks.block.producer_id = new_id.0;
             self.blocks.block.start = self.context.time;
@@ -471,7 +467,7 @@ impl<
         if !self.blocks.block.catchup_block || (self.now() < self.blocks.block.start) {
             for msg in sends {
                 let mut local = false;
-                if Some(self.context.cluster_id) == msg.to() {
+                if self.context.cluster_id == msg.to() {
                     match msg {
                         Transfer::Msg(msg) => self.commit_mail(msg),
                         Transfer::AntiMsg(anti_msg) => self.annihilate(anti_msg),
@@ -501,7 +497,7 @@ impl<
                     continue;
                 }
                 if !local {
-                    if msg.to() == Some(usize::MAX) {
+                    if msg.to() == usize::MAX {
                         // number of worlds add to sends
                     }
                     self.blocks.block.sends += 1;
@@ -630,7 +626,7 @@ impl<
             return Err(AikaError::MustSetBlockDuration);
         }
         loop {
-            if let Some(gvt) = self.blocks.subscriber.try_recv() {
+            if let Some(gvt) = self.blocks.subscriber.pop() {
                 if gvt < self.time.gvt {
                     return Err(AikaError::GVTisDecreasing);
                 }
@@ -686,7 +682,7 @@ impl<
             return Err(AikaError::MustSetBlockDuration);
         }
         loop {
-            if let Some(gvt) = self.blocks.subscriber.try_recv() {
+            if let Some(gvt) = self.blocks.subscriber.pop() {
                 writeln!(
                     self.log.as_mut().unwrap(),
                     "[{}] new GVT found: {gvt}",
@@ -813,8 +809,8 @@ mod planet_tests {
         }
     }
 
-    fn create_test_planet() -> Planet<8, 16, 32, 2, TestMsg> {
-        let mut galaxy: Substrate<8, 16, TestMsg> = Substrate::new(1, 64).unwrap();
+    fn create_test_planet() -> Planet<8, 32, 2, TestMsg> {
+        let mut galaxy: Substrate<8, TestMsg> = Substrate::new(1, 64, 16).unwrap();
         galaxy.set_time_scale(1000);
         galaxy.with_block_duration(10);
         galaxy.spawn_cluster(Stateless).unwrap()
@@ -920,7 +916,7 @@ mod planet_tests {
 
     #[test]
     fn test_planet_checkpoint_handling() {
-        let mut galaxy: Substrate<8, 16, TestMsg> = Substrate::new(1, 64).unwrap();
+        let mut galaxy: Substrate<8, TestMsg> = Substrate::new(1, 64, 16).unwrap();
         galaxy.set_time_scale(100);
         galaxy.with_block_duration(10);
         galaxy.checkpoints(2);

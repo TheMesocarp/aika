@@ -1,5 +1,5 @@
 use downcast_rs::{impl_downcast, Downcast};
-use mesocarp::logging::journal::Journal;
+use mesocarp::logging::Journal;
 
 pub trait Environment: Downcast + std::fmt::Debug {
     fn rollback(&mut self, time: u64);

@@ -37,6 +37,7 @@ mod gvt;
 /// A `Config` packages all of the configuration information for the simulation's GVT/consensus algorithm.
 pub struct Config {
     pub clusters: usize,
+    pub message_bandwidth: usize,
     pub batch_size: usize,
     pub block_duration: u64,
     pub terminal: u64,
@@ -46,6 +47,7 @@ pub struct Config {
 impl Config {
     pub fn new(
         clusters: usize,
+        message_bandwidth: usize,
         batch_size: usize,
         block_duration: u64,
         terminal: u64,
@@ -53,6 +55,7 @@ impl Config {
     ) -> Self {
         Self {
             clusters,
+            message_bandwidth,
             batch_size,
             block_duration,
             terminal,
@@ -64,23 +67,21 @@ impl Config {
 /// A `Stager` is the main entry point to simulations. It provides a clean interface for staging and running `hlocal` simulations.
 pub struct Stager<
     const BLOCK_BW: usize,
-    const MSG_BW: usize,
     const CLOCK_BW: usize,
     const CLOCK_SCALES: usize,
     MessageType: Pod + Zeroable + Clone,
 > {
-    pub substrate: Option<Substrate<BLOCK_BW, MSG_BW, MessageType>>,
-    pub clusters: Vec<Planet<BLOCK_BW, MSG_BW, CLOCK_BW, CLOCK_SCALES, MessageType>>,
+    pub substrate: Option<Substrate<BLOCK_BW, MessageType>>,
+    pub clusters: Vec<Planet<BLOCK_BW, CLOCK_BW, CLOCK_SCALES, MessageType>>,
     configured: bool,
 }
 
 impl<
         const BLOCK_BW: usize,
-        const MSG_BW: usize,
         const CLOCK_BW: usize,
         const CLOCK_SCALES: usize,
         MessageType: Pod + Zeroable + Clone,
-    > Stager<BLOCK_BW, MSG_BW, CLOCK_BW, CLOCK_SCALES, MessageType>
+    > Stager<BLOCK_BW, CLOCK_BW, CLOCK_SCALES, MessageType>
 {
     pub fn new() -> Result<Self, AikaError> {
         Ok(Self {
@@ -91,7 +92,7 @@ impl<
     }
 
     pub fn config(&mut self, config: Config) -> Result<(), AikaError> {
-        let mut substrate = Substrate::new(config.clusters, config.batch_size)?;
+        let mut substrate = Substrate::new(config.clusters, config.batch_size, config.message_bandwidth)?;
         substrate.set_time_scale(config.terminal);
         substrate.with_block_duration(config.block_duration);
         substrate.checkpoints(config.checkpoint_frequency);
@@ -198,7 +199,7 @@ impl<
                             barrier_clone.wait();
                             let planet = planet.run()?;
                             Ok::<
-                                Planet<BLOCK_BW, MSG_BW, CLOCK_BW, CLOCK_SCALES, MessageType>,
+                                Planet<BLOCK_BW, CLOCK_BW, CLOCK_SCALES, MessageType>,
                                 AikaError,
                             >(planet)
                         })
@@ -224,7 +225,7 @@ impl<
                                 barrier_clone.wait();
                                 let planet = planet.run_debug()?;
                                 Ok::<
-                                    Planet<BLOCK_BW, MSG_BW, CLOCK_BW, CLOCK_SCALES, MessageType>,
+                                    Planet<BLOCK_BW, CLOCK_BW, CLOCK_SCALES, MessageType>,
                                     AikaError,
                                 >(planet)
                             })
@@ -256,7 +257,7 @@ impl<
             .spawn(move || {
                 barrier.wait();
                 let bus = bus.master()?;
-                Ok::<MessageBus<MSG_BW, MessageType>, AikaError>(bus)
+                Ok::<MessageBus<MessageType>, AikaError>(bus)
             })
             .map_err(|_| AikaError::ThreadPanic)?;
 
@@ -304,37 +305,22 @@ impl<
 macro_rules! stager {
     // Just the message type - use all defaults
     ($msg_type:ty) => {
-        $crate::mt::engines::hlocal::Stager::<32, 128, 128, 2, $msg_type>::new()
+        $crate::mt::engines::hlocal::Stager::<32, 128, 2, $msg_type>::new()
     };
 
     // With BLOCK_BW only
     ($msg_type:ty, BLOCK_BW = $block_bw:expr) => {
-        $crate::mt::engines::hlocal::Stager::<$block_bw, 128, 128, 2, $msg_type>::new()
-    };
-
-    // With MSG_BW only
-    ($msg_type:ty, MSG_BW = $msg_bw:expr) => {
-        $crate::mt::engines::hlocal::Stager::<32, $msg_bw, 128, 2, $msg_type>::new()
+        $crate::mt::engines::hlocal::Stager::<$block_bw, 128, 2, $msg_type>::new()
     };
 
     // With CLOCK_BW only
     ($msg_type:ty, CLOCK_BW = $clock_bw:expr) => {
-        $crate::mt::engines::hlocal::Stager::<32, 128, $clock_bw, 2, $msg_type>::new()
+        $crate::mt::engines::hlocal::Stager::<32, $clock_bw, 2, $msg_type>::new()
     };
 
     // With CLOCK_SCALES only
     ($msg_type:ty, CLOCK_SCALES = $clock_scales:expr) => {
-        $crate::mt::engines::hlocal::Stager::<32, 128, 128, $clock_scales, $msg_type>::new()
-    };
-
-    // With BLOCK_BW and MSG_BW
-    ($msg_type:ty, BLOCK_BW = $block_bw:expr, MSG_BW = $msg_bw:expr) => {
-        $crate::mt::engines::hlocal::Stager::<$block_bw, $msg_bw, 128, 2, $msg_type>::new()
-    };
-
-    // With MSG_BW and BLOCK_BW
-    ($msg_type:ty, MSG_BW = $msg_bw:expr, BLOCK_BW = $block_bw:expr) => {
-        $crate::mt::engines::hlocal::Stager::<$block_bw, $msg_bw, 128, 2, $msg_type>::new()
+        $crate::mt::engines::hlocal::Stager::<32, 128, $clock_scales, $msg_type>::new()
     };
 
     // With BLOCK_BW and CLOCK_BW
@@ -348,43 +334,43 @@ macro_rules! stager {
     };
 
     // With MSG_BW and CLOCK_BW
-    ($msg_type:ty, MSG_BW = $msg_bw:expr, CLOCK_BW = $clock_bw:expr) => {
-        $crate::mt::engines::hlocal::Stager::<32, $msg_bw, $clock_bw, 2, $msg_type>::new()
+    ($msg_type:ty, CLOCK_BW = $clock_bw:expr) => {
+        $crate::mt::engines::hlocal::Stager::<32, $clock_bw, 2, $msg_type>::new()
     };
 
     // With MSG_BW and CLOCK_SCALES
-    ($msg_type:ty, MSG_BW = $msg_bw:expr, CLOCK_SCALES = $clock_scales:expr) => {
-        $crate::mt::engines::hlocal::Stager::<32, $msg_bw, 128, $clock_scales, $msg_type>::new()
+    ($msg_type:ty, CLOCK_SCALES = $clock_scales:expr) => {
+        $crate::mt::engines::hlocal::Stager::<32, $clock_scales, $msg_type>::new()
     };
 
     // With CLOCK_BW and CLOCK_SCALES
     ($msg_type:ty, CLOCK_BW = $clock_bw:expr, CLOCK_SCALES = $clock_scales:expr) => {
-        $crate::mt::engines::hlocal::Stager::<32, 128, $clock_bw, $clock_scales, $msg_type>::new()
+        $crate::mt::engines::hlocal::Stager::<32, $clock_bw, $clock_scales, $msg_type>::new()
     };
 
     // With BLOCK_BW, MSG_BW, and CLOCK_BW
-    ($msg_type:ty, BLOCK_BW = $block_bw:expr, MSG_BW = $msg_bw:expr, CLOCK_BW = $clock_bw:expr) => {
-        $crate::mt::engines::hlocal::Stager::<$block_bw, $msg_bw, $clock_bw, 2, $msg_type>::new()
+    ($msg_type:ty, BLOCK_BW = $block_bw:expr, CLOCK_BW = $clock_bw:expr) => {
+        $crate::mt::engines::hlocal::Stager::<$block_bw, $clock_bw, 2, $msg_type>::new()
     };
 
     // With BLOCK_BW, MSG_BW, and CLOCK_SCALES
-    ($msg_type:ty, BLOCK_BW = $block_bw:expr, MSG_BW = $msg_bw:expr, CLOCK_SCALES = $clock_scales:expr) => {
-        $crate::mt::engines::hlocal::Stager::<$block_bw, $msg_bw, 128, $clock_scales, $msg_type>::new()
+    ($msg_type:ty, BLOCK_BW = $block_bw:expr, CLOCK_SCALES = $clock_scales:expr) => {
+        $crate::mt::engines::hlocal::Stager::<$block_bw, 128, $clock_scales, $msg_type>::new()
     };
 
     // With BLOCK_BW, CLOCK_BW, and CLOCK_SCALES
     ($msg_type:ty, BLOCK_BW = $block_bw:expr, CLOCK_BW = $clock_bw:expr, CLOCK_SCALES = $clock_scales:expr) => {
-        $crate::mt::engines::hlocal::Stager::<$block_bw, 128, $clock_bw, $clock_scales, $msg_type>::new()
+        $crate::mt::engines::hlocal::Stager::<$block_bw, $clock_bw, $clock_scales, $msg_type>::new()
     };
 
     // With MSG_BW, CLOCK_BW, and CLOCK_SCALES
-    ($msg_type:ty, MSG_BW = $msg_bw:expr, CLOCK_BW = $clock_bw:expr, CLOCK_SCALES = $clock_scales:expr) => {
-        $crate::mt::engines::hlocal::Stager::<32, $msg_bw, $clock_bw, $clock_scales, $msg_type>::new()
+    ($msg_type:ty, CLOCK_BW = $clock_bw:expr, CLOCK_SCALES = $clock_scales:expr) => {
+        $crate::mt::engines::hlocal::Stager::<32, $clock_bw, $clock_scales, $msg_type>::new()
     };
 
     // With all parameters
-    ($msg_type:ty, BLOCK_BW = $block_bw:expr, MSG_BW = $msg_bw:expr, CLOCK_BW = $clock_bw:expr, CLOCK_SCALES = $clock_scales:expr) => {
-        $crate::mt::engines::hlocal::Stager::<$block_bw, $msg_bw, $clock_bw, $clock_scales, $msg_type>::new()
+    ($msg_type:ty, BLOCK_BW = $block_bw:expr, CLOCK_BW = $clock_bw:expr, CLOCK_SCALES = $clock_scales:expr) => {
+        $crate::mt::engines::hlocal::Stager::<$block_bw, $clock_bw, $clock_scales, $msg_type>::new()
     };
 }
 
@@ -397,7 +383,7 @@ mod unit_tests {
     use crate::env::SimpleUnified;
     use crate::objects::{AntiMsg, Msg, SchedulingTask};
     use bytemuck::{Pod, Zeroable};
-    use mesocarp::logging::journal::Journal;
+    use mesocarp::logging::Journal;
     use mesocarp::scheduling::Scheduleable;
     use mesocarp::MesoError;
 
@@ -504,15 +490,15 @@ mod unit_tests {
         block_dur: u64,
     ) -> Result<
         (
-            Substrate<BLOCK_BANDWIDTH, MSG_BANDWIDTH, MessageType>,
-            Planet<BLOCK_BANDWIDTH, MSG_BANDWIDTH, CLOCK_BW, CLOCK_SCALES, MessageType>,
+            Substrate<BLOCK_BANDWIDTH, MessageType>,
+            Planet<BLOCK_BANDWIDTH, CLOCK_BW, CLOCK_SCALES, MessageType>,
         ),
         AikaError,
     >
     where
         TestAgent: ConnectedActor<MessageType>,
     {
-        let mut substrate = Substrate::<BLOCK_BANDWIDTH, MSG_BANDWIDTH, MessageType>::new(1, 12)?;
+        let mut substrate = Substrate::<BLOCK_BANDWIDTH, MessageType>::new(1, 12, MSG_BANDWIDTH)?;
         substrate.set_time_scale(terminal);
         substrate.with_block_duration(block_dur);
         let mut planet = substrate.spawn_cluster::<CLOCK_BW, CLOCK_SCALES>(SimpleUnified {
@@ -530,7 +516,7 @@ mod unit_tests {
         const CLOCK_SCALES: usize,
         MessageType: Pod + Zeroable + Clone,
     >(
-        cluster: &mut Planet<BLOCK_BANDWIDTH, MSG_BANDWIDTH, CLOCK_BW, CLOCK_SCALES, MessageType>,
+        cluster: &mut Planet<BLOCK_BANDWIDTH, CLOCK_BW, CLOCK_SCALES, MessageType>,
         time: u64,
     ) -> Result<(), AikaError> {
         for i in 0..AGENTS {
@@ -543,8 +529,8 @@ mod unit_tests {
     fn test_stager_macro() {
         stager!(TestMessage).unwrap();
         stager!(TestMessage, BLOCK_BW = 48).unwrap();
-        stager!(TestMessage, BLOCK_BW = 48, MSG_BW = 12).unwrap();
-        stager!(TestMessage, MSG_BW = 12, CLOCK_BW = 128).unwrap();
+        stager!(TestMessage, BLOCK_BW = 48).unwrap();
+        stager!(TestMessage, CLOCK_BW = 128).unwrap();
         stager!(TestMessage, CLOCK_BW = 128, CLOCK_SCALES = 1).unwrap();
     }
 
@@ -575,10 +561,11 @@ mod unit_tests {
     fn test_multiplanet_setup() {
         const CLUSTERS: usize = 6;
         let mut stager =
-            Stager::<BLOCK_BANDWIDTH, MSG_BANDWIDTH, 64, 2, TestMessage>::new().unwrap();
+            Stager::<BLOCK_BANDWIDTH, 64, 2, TestMessage>::new().unwrap();
 
         let config = Config {
             clusters: CLUSTERS,
+            message_bandwidth: MSG_BANDWIDTH,
             batch_size: 12,
             block_duration: 1,
             terminal: 20,
@@ -609,7 +596,7 @@ mod unit_tests {
 
     #[test]
     fn test_rollback_accounting() {
-        let mut substrate: Substrate<8, 8, TestMessage> = Substrate::new(1, 1).unwrap();
+        let mut substrate: Substrate<8, TestMessage> = Substrate::new(1, 1, 8).unwrap();
         let mut planet = substrate
             .spawn_cluster::<16, 2>(SimpleUnified {
                 inner: Journal::init(1024),
@@ -768,10 +755,10 @@ mod messaging_tests {
 
     #[test]
     fn test_local_messaging() {
-        let mut stager: Stager<BLOCK_BW, MSG_BW, CLOCK_BW, CLOCK_SCALES, Message> =
+        let mut stager: Stager<BLOCK_BW, CLOCK_BW, CLOCK_SCALES, Message> =
             Stager::new().unwrap();
 
-        let config = Config::new(1, 128, 20, 2048, 10000000);
+        let config = Config::new(1, MSG_BW, 128, 20, 2048, 10000000);
         stager.config(config).unwrap();
 
         stager.create_cluster(Stateless).unwrap();
@@ -790,10 +777,10 @@ mod messaging_tests {
 
     #[test]
     fn test_local_messaging_heavy() {
-        let mut stager: Stager<BLOCK_BW, MSG_BW, CLOCK_BW, CLOCK_SCALES, Message> =
+        let mut stager: Stager<BLOCK_BW, CLOCK_BW, CLOCK_SCALES, Message> =
             Stager::new().unwrap();
 
-        let config = Config::new(1, 128, 20, 204, 10000000);
+        let config = Config::new(1, MSG_BW, 128, 20, 204, 10000000);
         stager.config(config).unwrap();
 
         stager.create_cluster(Stateless).unwrap();
@@ -809,9 +796,9 @@ mod messaging_tests {
 
     #[test]
     fn test_intercluster_messaging() {
-        let mut stager: Stager<216, 1024, CLOCK_BW, CLOCK_SCALES, Message> = Stager::new().unwrap();
+        let mut stager: Stager<216, CLOCK_BW, CLOCK_SCALES, Message> = Stager::new().unwrap();
 
-        let config = Config::new(2, 128, 128, 2048, 10);
+        let config = Config::new(2, 1024, 128, 128, 2048, 10);
         stager.config(config).unwrap();
 
         stager.create_cluster(Stateless).unwrap();
@@ -827,32 +814,32 @@ mod messaging_tests {
         stager.schedule_cluster(0, 1).unwrap();
         stager.schedule_cluster(1, 1).unwrap();
 
-        stager.run(RunMode::Debug).unwrap();
+        stager.run(RunMode::Fast).unwrap();
     }
 
-    // #[test]
-    // fn test_intercluster_messaging_heavy() {
-    //     let mut stager = stager!(Message, MSG_BW = { 16 * 1024 }, BLOCK_BW = 128).unwrap();
-    //     let config = Config::new(4, 32, 48, 2048, 10);
-    //     stager.config(config).unwrap();
+    #[test]
+    fn test_intercluster_messaging_heavy() {
+        let mut stager = stager!(Message, BLOCK_BW = 128).unwrap();
+        let config = Config::new(4, 16 * 1024, 32, 48, 2048, 10);
+        stager.config(config).unwrap();
 
-    //     stager.create_cluster(Stateless).unwrap();
-    //     stager.create_cluster(Stateless).unwrap();
-    //     stager.create_cluster(Stateless).unwrap();
-    //     stager.create_cluster(Stateless).unwrap();
+        stager.create_cluster(Stateless).unwrap();
+        stager.create_cluster(Stateless).unwrap();
+        stager.create_cluster(Stateless).unwrap();
+        stager.create_cluster(Stateless).unwrap();
 
-    //     for i in 0..4 {
-    //         for j in 0..10 {
-    //             stager
-    //                 .spawn_actor_on_cluster(
-    //                     i,
-    //                     MessagingActor::new((j + 1) % 10, (i + 1) % 4, 2, 2),
-    //                 )
-    //                 .unwrap();
-    //         }
-    //     }
+        for i in 0..4 {
+            for j in 0..10 {
+                stager
+                    .spawn_actor_on_cluster(
+                        i,
+                        MessagingActor::new((j + 1) % 10, (i + 1) % 4, 2, 2),
+                    )
+                    .unwrap();
+            }
+        }
 
-    //     stager.schedule_all(1).unwrap();
-    //     stager.run(RunMode::Debug).unwrap();
-    // }
+        stager.schedule_all(1).unwrap();
+        stager.run(RunMode::Fast).unwrap();
+    }
 }

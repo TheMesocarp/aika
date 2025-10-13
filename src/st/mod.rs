@@ -2,7 +2,7 @@
 //! Provides a `LonePlanet` struct that manages actor execution, event scheduling, and local message
 //! delivery in a deterministic single-threaded environment with configurable time bounds.
 use bytemuck::{Pod, Zeroable};
-use mesocarp::comms::buses::Message;
+use mesocarp::comms::mt::Message;
 
 use crate::{
     actors::{Actor, ActorType, ConnectedActor, Context},
@@ -181,8 +181,8 @@ impl<const CLOCK_SLOTS: usize, const CLOCK_HEIGHT: usize, MessageType: Pod + Zer
 
             let sends = std::mem::take(&mut self.env.outbox);
             for msg in sends {
-                if msg.to() != Some(usize::MAX) {
-                    if Some(self.env.cluster_id) == msg.to() {
+                if msg.to() != usize::MAX {
+                    if self.env.cluster_id == msg.to() {
                         match msg {
                             Transfer::Msg(msg) => self.commit_mail(msg),
                             Transfer::AntiMsg(_) => return Err(AikaError::ThreadPanic),

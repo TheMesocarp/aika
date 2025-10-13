@@ -7,8 +7,8 @@ use std::{
 };
 
 use bytemuck::{Pod, Zeroable};
-use mesocarp::comms::buses::Message;
-use mesocarp::scheduling::{htw::Clock, Scheduleable};
+use mesocarp::comms::mt::Message;
+use mesocarp::scheduling::{Clock, Scheduleable};
 
 use crate::AikaError;
 
@@ -150,10 +150,10 @@ impl<T: Pod + Zeroable + Clone> Message for Transfer<T> {
         }
     }
 
-    fn to(&self) -> Option<usize> {
+    fn to(&self) -> usize {
         match self {
-            Transfer::Msg(msg) => Some(msg.to.0),
-            Transfer::AntiMsg(anti_msg) => Some(anti_msg.to.0),
+            Transfer::Msg(msg) => msg.to.0,
+            Transfer::AntiMsg(anti_msg) => anti_msg.to.0,
         }
     }
 }

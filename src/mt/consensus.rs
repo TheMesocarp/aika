@@ -11,13 +11,9 @@ use std::{fmt::Display, fs::File, io::Write, sync::Arc, time::Instant};
 
 use bytemuck::{Pod, Zeroable};
 
+use crossbeam_queue::ArrayQueue;
 use mesocarp::{
-    comms::{
-        spmc::{Broadcast, Subscriber},
-        spsc::BufferWheel,
-    },
-    logging::journal::Journal,
-    MesoError,
+    comms::mt::{Broadcaster, Subscriber}, logging::Journal, MesoError
 };
 
 use crate::AikaError;
@@ -205,21 +201,21 @@ impl<const BANDWIDTH: usize> Default for Block<BANDWIDTH> {
 /// a fully decentralized set up, just specify the mode with `ComputeLayout`.
 pub struct BlockProcessor<const BANDWIDTH: usize> {
     mode: ComputeLayout,
-    block_receiver_centralized: Option<Vec<Arc<BufferWheel<BANDWIDTH, Block<BANDWIDTH>>>>>,
-    safe_point_centralized: Option<Arc<Broadcast<BANDWIDTH, u64>>>,
+    block_receiver_centralized: Option<Vec<Arc<ArrayQueue<Block<BANDWIDTH>>>>>,
+    safe_point_centralized: Option<Arc<Broadcaster<u64>>>,
     centralized_registrations: usize,
-    block_receiver_decentralized: Option<Vec<Subscriber<BANDWIDTH, Block<BANDWIDTH>>>>,
+    block_receiver_decentralized: Option<Vec<Subscriber<Block<BANDWIDTH>>>>,
 }
 
 impl<const BANDWIDTH: usize> BlockProcessor<BANDWIDTH> {
     /// Spawn a new `BlockProcessor<const BANDWIDTH: usize>`.
-    pub fn new(mode: ComputeLayout) -> Result<Self, MesoError> {
+    pub fn new(mode: ComputeLayout, feeders: usize) -> Result<Self, MesoError> {
         let block_receiver_centralized = match mode {
             ComputeLayout::HubSpoke => Some(Vec::new()),
             ComputeLayout::Decentralized => None,
         };
         let safe_point_centralized = match mode {
-            ComputeLayout::HubSpoke => Some(Arc::new(Broadcast::new()?)),
+            ComputeLayout::HubSpoke => Some(Arc::new(Broadcaster::new(feeders, BANDWIDTH))),
             ComputeLayout::Decentralized => None,
         };
         let block_receiver_decentralized = match mode {
@@ -240,7 +236,7 @@ impl<const BANDWIDTH: usize> BlockProcessor<BANDWIDTH> {
         if self.mode != ComputeLayout::HubSpoke {
             return Err(AikaError::ComputeLayoutExpectationMismatch(self.mode));
         }
-        let wheel = Arc::new(BufferWheel::new());
+        let wheel = Arc::new(ArrayQueue::new(BANDWIDTH));
         let cloned = Arc::clone(&wheel);
         self.block_receiver_centralized
             .as_mut()
@@ -250,7 +246,7 @@ impl<const BANDWIDTH: usize> BlockProcessor<BANDWIDTH> {
             .safe_point_centralized
             .as_mut()
             .unwrap()
-            .register_subscriber();
+            .subscribe(self.centralized_registrations);
         self.centralized_registrations += 1;
         Ok(BlockSpoke {
             submitter: cloned,
@@ -262,7 +258,7 @@ impl<const BANDWIDTH: usize> BlockProcessor<BANDWIDTH> {
     /// Register a producer in the decentralized layout. Will be rejected if the layout mode is not set correctly.
     pub fn register_decentralized_producer(
         &mut self,
-        sub: Subscriber<BANDWIDTH, Block<BANDWIDTH>>,
+        sub: Subscriber<Block<BANDWIDTH>>,
     ) -> Result<(), AikaError> {
         if self.mode != ComputeLayout::Decentralized {
             return Err(AikaError::ComputeLayoutExpectationMismatch(self.mode));
@@ -277,7 +273,7 @@ impl<const BANDWIDTH: usize> BlockProcessor<BANDWIDTH> {
     /// Wrapper for producer registration on any compute layout.
     pub fn register_producer(
         &mut self,
-        sub: Option<Subscriber<BANDWIDTH, Block<BANDWIDTH>>>,
+        sub: Option<Subscriber<Block<BANDWIDTH>>>,
     ) -> Result<Option<BlockSpoke<BANDWIDTH>>, AikaError> {
         match self.mode {
             ComputeLayout::HubSpoke => Ok(Some(self.register_centralized_producer()?)),
@@ -298,14 +294,8 @@ impl<const BANDWIDTH: usize> BlockProcessor<BANDWIDTH> {
                 for i in comms {
                     let mut planet_blocks = Vec::new();
                     for _ in 0..BANDWIDTH {
-                        match i.read() {
-                            Ok(block) => planet_blocks.push(block),
-                            Err(err) => {
-                                if let MesoError::NoPendingUpdates = err {
-                                    break;
-                                }
-                                return Err(err);
-                            }
+                        if let Some(block) = i.pop() {
+                            planet_blocks.push(block)
                         }
                     }
                     if !planet_blocks.is_empty() {
@@ -327,7 +317,7 @@ impl<const BANDWIDTH: usize> BlockProcessor<BANDWIDTH> {
         if self.mode != ComputeLayout::HubSpoke {
             return Err(AikaError::ComputeLayoutExpectationMismatch(self.mode));
         }
-        self.safe_point_centralized.as_mut().unwrap().broadcast(gvt);
+        self.safe_point_centralized.as_mut().unwrap().push(gvt)?;
         Ok(())
     }
 }
@@ -351,10 +341,10 @@ pub struct Consensus<const BANDWIDTH: usize> {
 impl<const BANDWIDTH: usize> Consensus<BANDWIDTH> {
     /// Spawn a new `Consensus` with a given compute layout.
     /// `batch_size: usize` input defines the size of the arena allocation used in the `Journal`.
-    pub fn new(mode: ComputeLayout, batch_size: usize) -> Result<Self, MesoError> {
+    pub fn new(mode: ComputeLayout, batch_size: usize, feeders: usize) -> Result<Self, MesoError> {
         let blocksize = BANDWIDTH * 16 + 48;
         Ok(Self {
-            processor: BlockProcessor::new(mode)?,
+            processor: BlockProcessor::new(mode, feeders)?,
             queue: Vec::new(),
             next: Vec::new(),
             blocks: Journal::init(batch_size * blocksize),
@@ -367,7 +357,7 @@ impl<const BANDWIDTH: usize> Consensus<BANDWIDTH> {
     #[inline(always)]
     pub fn register_producer(
         &mut self,
-        sub: Option<Subscriber<BANDWIDTH, Block<BANDWIDTH>>>,
+        sub: Option<Subscriber<Block<BANDWIDTH>>>,
     ) -> Result<Option<BlockSpoke<BANDWIDTH>>, AikaError> {
         let out = self.processor.register_producer(sub)?;
         self.queue.push([None; BANDWIDTH]);
@@ -574,9 +564,9 @@ impl<const BANDWIDTH: usize> Consensus<BANDWIDTH> {
 /// Wrapper struct for the block management utils necessary to manage and communicate block updates in GVT Master layout.
 pub struct BlockSpoke<const BANDWIDTH: usize> {
     /// Block submitter back to the GVT Master thread.
-    pub submitter: Arc<BufferWheel<BANDWIDTH, Block<BANDWIDTH>>>,
+    pub submitter: Arc<ArrayQueue<Block<BANDWIDTH>>>,
     /// Subscriber for GVT updates sent out by the GVT Master thread.
-    pub subscriber: Subscriber<BANDWIDTH, u64>,
+    pub subscriber: Subscriber<u64>,
     /// Current block.
     pub block: Block<BANDWIDTH>,
 }
@@ -599,7 +589,7 @@ mod unit_tests {
 
     fn setup_consensus(num_producers: usize) -> (Consensus<BANDWIDTH>, Vec<BlockSpoke<BANDWIDTH>>) {
         let mut consensus =
-            Consensus::<BANDWIDTH>::new(ComputeLayout::HubSpoke, num_producers).unwrap();
+            Consensus::<BANDWIDTH>::new(ComputeLayout::HubSpoke, num_producers, num_producers).unwrap();
         let mut spokes = Vec::new();
 
         for _ in 0..num_producers {
@@ -614,7 +604,7 @@ mod unit_tests {
     }
 
     fn submit_block(spoke: &mut BlockSpoke<BANDWIDTH>, block: Block<BANDWIDTH>) {
-        spoke.submitter.write(block).unwrap();
+        spoke.submitter.push(block).unwrap();
     }
 
     #[test]
@@ -881,7 +871,7 @@ mod unit_tests {
 
         // Setup consensus that can be shared via Mutex
         let mut consensus =
-            Consensus::<BANDWIDTH>::new(ComputeLayout::HubSpoke, PARALLEL_PRODUCERS).unwrap();
+            Consensus::<BANDWIDTH>::new(ComputeLayout::HubSpoke, PARALLEL_PRODUCERS, PARALLEL_PRODUCERS).unwrap();
         let mut spokes = Vec::new();
         for _ in 0..PARALLEL_PRODUCERS {
             spokes.push(consensus.register_producer(None).unwrap().unwrap());
@@ -916,7 +906,7 @@ mod unit_tests {
                     }
 
                     // Submit block via the lock-free SPSC channel.
-                    spoke.submitter.write(block).unwrap();
+                    spoke.submitter.push(block).unwrap();
                     thread::sleep(Duration::from_micros(5));
                 }
             });
