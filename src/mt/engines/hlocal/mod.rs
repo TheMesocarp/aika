@@ -551,7 +551,8 @@ mod unit_tests {
         assert!(substrate_result.is_ok());
         assert!(
             planet_result.is_ok(),
-            "Planet run loop failed: {planet_result:?}"
+            "Planet run loop failed: {:?}",
+            planet_result.err().unwrap()
         );
         assert!(bus_result.is_ok())
     }
