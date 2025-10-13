@@ -23,7 +23,6 @@ use crate::{
     AikaError,
 };
 
-#[derive(Debug)]
 /// A `Planet` is a local simulation cluster within a `Substrate` system, owns a partition of global simulation state.
 /// It operates conservative with respect to its local actors, but allows rollbacks from causality violations
 /// triggered in inter-cluster messaging.

@@ -15,7 +15,7 @@ license = "LGPL-2.1"
 name = "aika"
 readme = "README.md"
 repository = "https://github.com/TheMesocarp/aika"
-version = "0.2.0"
+version = "0.2.1"
 
 
 [profile.release]
